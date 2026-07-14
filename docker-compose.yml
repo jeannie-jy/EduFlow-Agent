@@ -1,0 +1,55 @@
+# EduFlow-Agent Docker Compose
+# 启动：docker compose up -d
+# 停止：docker compose down
+
+version: "3.9"
+
+services:
+  # ── Agent API (Python) ──────────────────────────────────
+  agent-api:
+    build: ./agent
+    ports: ["8000:8000"]
+    environment:
+      - DATABASE_URL=postgresql://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
+      - REDIS_URL=redis://redis:6379
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - EMBEDDING_ENDPOINT=${EMBEDDING_ENDPOINT:-https://api.openai.com/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    # profiles: [agent]   # 待 agent 目录创建后取消注释
+
+  # ── Database (PostgreSQL + pgvector) ────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports: ["5432:5432"]
+    environment:
+      - POSTGRES_DB=eduflow
+      - POSTGRES_USER=agent
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d eduflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Cache (Redis) ───────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+
+volumes:
+  pgdata:
