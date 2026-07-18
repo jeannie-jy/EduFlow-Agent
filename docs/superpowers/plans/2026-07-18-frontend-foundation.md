@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status:** Superseded by the approved shadcn and motion-governance amendment. Do not execute this revision. Replace it after the project poster has been mapped into the design system.
+
 **Goal:** 在 `web/` 中建立可运行、可测试的 React 前端基础工程，交付 7 条业务路由、404 页面、应用外壳、Query Provider 和完整质量门禁。
 
 **Architecture:** 本计划只实现 Mock-First MVP 系列中的 foundation 子系统。应用采用 React 18 CSR，路由定义与页面组件分离，根级 Provider 只负责跨页面基础设施；业务数据契约、MSW、播放器和教师编辑器分别在后续独立计划中实现。
