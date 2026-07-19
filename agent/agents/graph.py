@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 _END = None
 _StateGraph = None
 _planner_node = None
+_knowledge_node = None
 _coder_node = None
 _quality_node = None
 _reflection_node = None
@@ -59,6 +60,14 @@ def _get_coder_node():
         from .nodes import coder_node
         _coder_node = coder_node
     return _coder_node
+
+
+def _get_knowledge_node():
+    global _knowledge_node
+    if _knowledge_node is None:
+        from .nodes import knowledge_node
+        _knowledge_node = knowledge_node
+    return _knowledge_node
 
 
 def _get_quality_node():

@@ -13,7 +13,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session
+from db.database import get_session, get_readonly_session
+from schema.project import FrameUpdateRequest, FrameLockRequest
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/projects", tags=["frames"])
 async def list_frames(
     project_id: str,
     version: int = 1,
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """获取项目的帧列表。"""
     from db.models import Frame as FrameModel
@@ -81,7 +82,7 @@ async def list_frames(
 async def update_frame(
     project_id: str,
     fid: str,
-    body: dict,
+    body: FrameUpdateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """编辑单帧内容。"""
@@ -103,11 +104,10 @@ async def update_frame(
     if frame.is_locked:
         raise HTTPException(status_code=409, detail="Frame is locked")
 
-    # 更新字段
-    updatable = ["title", "narration", "visual_objects", "state_snapshot", "animations"]
-    for field in updatable:
-        if field in body:
-            setattr(frame, field, body[field])
+    # 更新字段（只更新显式传入的非 None 字段）
+    updates = body.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(frame, field, value)
 
     await session.flush()
 
@@ -123,7 +123,7 @@ async def update_frame(
 async def lock_frame(
     project_id: str,
     fid: str,
-    body: dict,
+    body: FrameLockRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """锁定或解锁帧。"""
@@ -141,8 +141,7 @@ async def lock_frame(
     if frame is None:
         raise HTTPException(status_code=404, detail="Frame not found")
 
-    is_locked = body.get("is_locked", False)
-    frame.is_locked = is_locked
+    frame.is_locked = body.is_locked
     await session.flush()
 
     return {"id": str(frame.id), "is_locked": frame.is_locked}

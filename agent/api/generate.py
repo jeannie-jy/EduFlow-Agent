@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from db.database import get_session
 from services.generate_service import run_generation_stream
-from schema.project import GenerateRequest
+from schema.project import GenerateRequest, RegenerateRequest
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ async def start_generation(
     # 更新状态
     project.status = "planning"
 
-    logger.info("生成启动: project=%s | action=%s", project_id, body.get("action", "full"))
+    logger.info("生成启动: project=%s | action=%s", project_id, body.action)
 
     return {
         "stream_url": f"/api/projects/{project_id}/generate/stream",
@@ -93,7 +93,7 @@ async def generation_stream(
 @router.post("/{project_id}/regenerate", status_code=202)
 async def regenerate_frames(
     project_id: str,
-    body: dict,
+    body: RegenerateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """局部重生成指定帧范围。"""
@@ -103,7 +103,7 @@ async def regenerate_frames(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    scope = body.get("scope", {})
+    scope = body.scope
 
     logger.info("重生成: project=%s | scope=%s", project_id, scope.get("type", "unknown"))
 

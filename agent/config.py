@@ -8,6 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,8 +32,18 @@ class Settings(BaseSettings):
     db_port: int = 5432
     db_name: str = "eduflow"
 
+    # 允许通过 DATABASE_URL 环境变量直接覆盖（CI 切 SQLite 用）
+    database_url_override: str | None = Field(
+        default=None,
+        alias="DATABASE_URL",
+        description="完整数据库 URL。设置后将忽略拆分字段。",
+    )
+
     @property
     def database_url(self) -> str:
+        """数据库连接 URL。环境变量 DATABASE_URL 优先，否则从拆分字段拼接。"""
+        if self.database_url_override:
+            return self.database_url_override
         return (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
