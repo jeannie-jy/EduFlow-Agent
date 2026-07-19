@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session
+from db.database import get_session, get_readonly_session
+from schema.project import ProjectCreateRequest
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 @router.post("", status_code=201)
 async def create_project(
-    body: dict,
+    body: ProjectCreateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """创建推演项目。"""
@@ -33,9 +34,9 @@ async def create_project(
 
     project = Project(
         id=uuid.uuid4(),
-        title=body.get("title", "Untitled"),
-        audience=body.get("audience", "undergraduate_cs"),
-        difficulty=body.get("difficulty", "intermediate"),
+        title=body.title,
+        audience=body.audience,
+        difficulty=body.difficulty,
         status="draft",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -45,12 +46,10 @@ async def create_project(
     await session.flush()
 
     # 存储用户输入到 DSL snapshot
-    input_content = body.get("input_content", "")
-    constraints = body.get("constraints", {})
     project.dsl_snapshot = {
-        "input_content": input_content,
-        "input_type": body.get("input_type", "natural_language"),
-        "constraints": constraints,
+        "input_content": body.input_content,
+        "input_type": body.input_type,
+        "constraints": body.constraints,
     }
 
     logger.info("项目创建: id=%s | title=%s", project.id, project.title)
@@ -68,7 +67,7 @@ async def list_projects(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status: str | None = Query(default=None),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """获取项目列表。"""
     from db.models import Project
@@ -109,7 +108,7 @@ async def list_projects(
 @router.get("/{project_id}")
 async def get_project(
     project_id: str,
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """获取项目详情（含最新 DSL）。"""
     from db.models import Project, Frame

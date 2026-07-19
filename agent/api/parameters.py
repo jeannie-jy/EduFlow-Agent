@@ -12,7 +12,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session
+from db.database import get_session, get_readonly_session
+from schema.project import RecomputeRequest
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/projects", tags=["parameters"])
 @router.get("/{project_id}/parameters")
 async def list_parameters(
     project_id: str,
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """获取项目的参数列表。"""
     # 优先从 DSL snapshot 获取
@@ -68,7 +69,7 @@ async def list_parameters(
 @router.post("/{project_id}/recompute", status_code=202)
 async def recompute_project(
     project_id: str,
-    body: dict,
+    body: RecomputeRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """参数变更触发状态重算。"""
@@ -78,7 +79,7 @@ async def recompute_project(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    changed_params = body.get("changed_params", {})
+    changed_params = body.changed_params
 
     logger.info("重算: project=%s | changed_keys=%s", project_id, list(changed_params.keys()))
 

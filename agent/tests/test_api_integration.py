@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -17,42 +17,106 @@ from httpx import ASGITransport, AsyncClient
 # ============================================================================
 
 
-def _make_session() -> AsyncMock:
+def _make_session(with_project: bool = False) -> AsyncMock:
     """创建 mock 数据库会话。
-    - .get() 返回 None（触发 404）
-    - .execute() 返回空结果
-    - .flush() / .commit() / .rollback() 无操作
+
+    Args:
+        with_project: True 时 .get() 返回 mock 项目对象（停用 404）
     """
     session = AsyncMock()
-    session.get = AsyncMock(return_value=None)
-    session.execute = AsyncMock()
-    # 模拟 execute 返回值
-    exec_result = AsyncMock()
-    exec_result.scalar = AsyncMock(return_value=0)
-    exec_result.scalar_one_or_none = AsyncMock(return_value=None)
-    exec_result.scalars = MagicMock(return_value=[])
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+
+    # 模拟 execute 返回值 — scalars().all() 返回空列表
+    # 注意：scalar/scalar_one_or_none/scalars 是同步方法，不用 AsyncMock
+    scalars_mock = MagicMock()
+    scalars_mock.all = MagicMock(return_value=[])
+    exec_result = MagicMock()
+    exec_result.scalar = MagicMock(return_value=0)
+    exec_result.scalar_one_or_none = MagicMock(return_value=None)
+    exec_result.scalars = MagicMock(return_value=scalars_mock)
     exec_result.fetchall = MagicMock(return_value=[])
     session.execute = AsyncMock(return_value=exec_result)
+
+    # 模拟 get() — 返回 mock 帧（含 is_locked 属性）
+    mock_frame = MagicMock()
+    mock_frame.id = "mock-frame-id"
+    mock_frame.frame_id = "f_001"
+    mock_frame.order_index = 1
+    mock_frame.title = "mock"
+    mock_frame.narration = "mock"
+    mock_frame.visual_objects = []
+    mock_frame.state_snapshot = {}
+    mock_frame.animations = []
+    mock_frame.interaction_hooks = []
+    mock_frame.quality_status = "ok"
+    mock_frame.is_locked = False
+    mock_frame.updated_at = None
+
+    mock_project = MagicMock()
+    mock_project.id = "mock-project-id"
+    mock_project.title = "mock"
+    mock_project.status = "draft"
+    mock_project.dsl_snapshot = {"frames": [], "parameters": []}
+    mock_project.audience = "undergraduate_cs"
+    mock_project.difficulty = "intermediate"
+    mock_project.created_at = None
+    mock_project.updated_at = None
+
+    session.get = AsyncMock(return_value=mock_project if with_project else mock_frame)
     return session
 
 
 @pytest_asyncio.fixture
 async def client():
-    """创建异步 HTTP 测试客户端。"""
-    # Mock DB session 和 langgraph 的 get_graph，避免真实连接
-    mock_session = _make_session()
-    with (
-        patch("api.projects.get_session", return_value=mock_session),
-        patch("api.generate.get_session", return_value=mock_session),
-        patch("api.frames.get_session", return_value=mock_session),
-        patch("api.parameters.get_session", return_value=mock_session),
-        patch("api.feedback.get_session", return_value=mock_session),
-    ):
-        from main import app
+    """创建异步 HTTP 测试客户端。
 
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            yield ac
+    使用 FastAPI 内置的 dependency_overrides 替换 DB 会话，
+    避免真实数据库连接。
+    """
+    from main import app
+    from db.database import get_session, get_readonly_session
+
+    mock_session = _make_session()
+
+    # mock 项目对象（普通类实例，避免 MagicMock 的 coroutine 序列化问题）
+    class _MockRow:
+        def __init__(self, **kw):
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    mock_project = _MockRow(
+        id="mock-project-id", title="mock", status="draft", topic=None,
+        dsl_snapshot={"frames": [], "parameters": []},
+        audience="undergraduate_cs", difficulty="intermediate",
+        created_at=None, updated_at=None,
+    )
+    mock_frame = _MockRow(
+        id="mock-frame-id", frame_id="f_001", order_index=1, version=1,
+        title="mock", narration="mock",
+        visual_objects=[], state_snapshot={}, animations=[],
+        interaction_hooks=[], quality_status="ok", is_locked=False,
+        updated_at=None,
+    )
+
+    async def _mock_get(model_cls, ident, **kw):
+        # 特殊 UUID 用于 404 测试
+        if str(ident) == "00000000-0000-0000-0000-000000000000":
+            return None
+        return mock_project if "Project" in str(model_cls) else mock_frame
+
+    mock_session.get = _mock_get
+
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[get_readonly_session] = lambda: mock_session
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
 
 
 # ============================================================================
