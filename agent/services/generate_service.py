@@ -113,6 +113,17 @@ async def run_generation_stream(
             if final_state and final_state.values:
                 dsl = final_state.values.get("dsl", {})
                 quality_report = final_state.values.get("quality_report", {})
+
+                # 自动保存版本快照
+                try:
+                    from db.database import async_session_factory
+                    from api.versions import save_version
+                    async with async_session_factory() as db_session:
+                        await save_version(project_id, dsl, "Agent 生成", db_session)
+                        await db_session.commit()
+                except Exception as verr:
+                    logger.warning("版本自动保存失败: %s", verr)
+
                 yield _sse_event("done", {
                     "phase": "done",
                     "pct": 100,

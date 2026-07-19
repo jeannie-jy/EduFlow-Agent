@@ -25,15 +25,30 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """应用生命周期：启动时连接基础设施，关闭时释放资源。"""
+    """应用生命周期：启动时配置日志，关闭时释放资源。"""
     settings = get_settings()
-    logger.info("EduFlow-Agent 启动中 | log_level=%s", settings.log_level)
+    _setup_logging(settings)
+    logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
     # TODO: 初始化 DB 连接池、Redis 客户端
     yield
 
     # TODO: 关闭 DB 连接池、Redis 客户端
     logger.info("EduFlow-Agent 已关闭")
+
+
+def _setup_logging(settings) -> None:
+    """配置根日志记录器，支持 text / json 格式。"""
+    if settings.log_format == "json":
+        import sys
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(
+            '{"timestamp":"%(asctime)s","level":"%(levelname)s",'
+            '"logger":"%(name)s","message":"%(message)s"}',
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        ))
+        logging.getLogger().handlers = [handler]
+    logging.getLogger().setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
 
 # ── App ───────────────────────────────────────────────────────
@@ -61,6 +76,10 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
     )
+
+    # 请求日志与 request_id 追踪
+    from api.middleware import RequestLoggingMiddleware
+    app.add_middleware(RequestLoggingMiddleware)
 
     # 注册路由
     from api.router import api_router
