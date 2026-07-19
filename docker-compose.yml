@@ -24,7 +24,7 @@ services:
       redis:
         condition: service_started
     restart: unless-stopped
-    # profiles: [agent]   # 待 agent 目录创建后取消注释
+    profiles: [agent]
 
   # ── Database (PostgreSQL + pgvector) ────────────────────
   postgres:
