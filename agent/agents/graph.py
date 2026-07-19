@@ -80,11 +80,11 @@ def _get_reflection_node():
 # ── 条件路由 ────────────────────────────────────────────────
 
 
-def _should_continue_after_planner(state: AgentState) -> Literal["coder", "__end__"]:
+def _should_continue_after_planner(state: AgentState) -> Literal["knowledge", "__end__"]:
     """Planner 完成后：检查是否有 Human-in-the-Loop 审批。"""
     if state.get("pending_approval"):
         return "__end__"  # 使用字符串，由 add_conditional_edges 映射到 END
-    return "coder"
+    return "knowledge"
 
 
 def _should_reflect(state: AgentState) -> Literal["reflection", "__end__"]:
@@ -132,6 +132,7 @@ def build_graph() -> "CompiledStateGraph":
 
     # 注册节点
     workflow.add_node("planner", _get_planner_node())
+    workflow.add_node("knowledge", _get_knowledge_node())
     workflow.add_node("coder", _get_coder_node())
     workflow.add_node("quality", _get_quality_node())
     workflow.add_node("reflection", _get_reflection_node())
@@ -139,12 +140,15 @@ def build_graph() -> "CompiledStateGraph":
     # 入口
     workflow.set_entry_point("planner")
 
-    # Planner → Coder (或中断等待审批)
+    # Planner → Knowledge (或中断等待审批)
     workflow.add_conditional_edges(
         "planner",
         _should_continue_after_planner,
-        {"coder": "coder", "__end__": END},
+        {"knowledge": "knowledge", "__end__": END},
     )
+
+    # Knowledge → Coder
+    workflow.add_edge("knowledge", "coder")
 
     # Coder → Quality
     workflow.add_edge("coder", "quality")

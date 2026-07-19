@@ -11,6 +11,8 @@ from .frames import router as frames_router
 from .parameters import router as parameters_router
 from .knowledge import router as knowledge_router
 from .feedback import router as feedback_router
+from .export import router as export_router
+from .materials import router as materials_router
 
 api_router = APIRouter()
 
@@ -21,6 +23,8 @@ api_router.include_router(frames_router)
 api_router.include_router(parameters_router)
 api_router.include_router(knowledge_router)
 api_router.include_router(feedback_router)
+api_router.include_router(export_router)
+api_router.include_router(materials_router)
 
 
 @api_router.get("/ping")

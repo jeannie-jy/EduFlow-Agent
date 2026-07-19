@@ -51,5 +51,42 @@ services:
     command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
     restart: unless-stopped
 
+  # ── Manim Render Worker ──────────────────────────────────
+  manim-worker:
+    build: ./agent/workers
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - OUTPUT_DIR=/app/output
+      - SCRIPTS_DIR=/app/scripts
+      - MANIM_TIMEOUT=600
+    volumes:
+      - manim_output:/app/output
+      - manim_scripts:/app/scripts
+      - ./agent/adapters:/app/adapters  # 共享 Manim Adapter
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+
+  # ── Object Storage (MinIO S3-compatible) ──────────────────
+  minio:
+    image: minio/minio:latest
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      - MINIO_ROOT_USER=${MINIO_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  manim_output:
+  manim_scripts:
+  minio_data:
