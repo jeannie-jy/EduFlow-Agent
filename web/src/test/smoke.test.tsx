@@ -1,12 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { App } from "@/app/App";
+import { renderWithProviders } from "@/test/render";
 
 it("renders the EduFlow application", () => {
-  render(<App />);
-  expect(screen.getByText("EduFlow")).toBeInTheDocument();
+  renderWithProviders(<App />);
+  expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
 });
 
-it("renders an accessible EduFlow brand image", () => {
-  render(<App />);
-  expect(screen.getByRole("img", { name: "EduFlow" })).toBeInTheDocument();
+it("renders an accessible EduFlow brand link", () => {
+  renderWithProviders(<App />);
+  expect(screen.getByRole("link", { name: "EduFlow 工作台" })).toBeInTheDocument();
 });

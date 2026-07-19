@@ -6,7 +6,11 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
-import { resolveInitialTheme, type ThemeId } from "./theme";
+import {
+  resolveInitialTheme,
+  THEME_STORAGE_KEY,
+  type ThemeId,
+} from "./theme";
 
 type ThemeContextValue = {
   theme: ThemeId;
@@ -20,7 +24,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("eduflow-theme", theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const value = useMemo(() => ({ theme, setTheme }), [theme]);

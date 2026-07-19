@@ -1,8 +1,11 @@
+import { AppShell } from "@/components/layout/AppShell";
+
 export function App() {
   return (
-    <main>
-      <img src="/brand/eduflow-mark.png" alt="EduFlow" />
-      <h1>EduFlow</h1>
-    </main>
+    <AppShell>
+      <main>
+        <h1>工作区</h1>
+      </main>
+    </AppShell>
   );
 }

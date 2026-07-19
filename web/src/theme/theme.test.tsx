@@ -1,4 +1,6 @@
-import { act, renderHook } from "@testing-library/react";
+import { render, renderHook, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import indexHtml from "../../index.html?raw";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
 import { themeScript } from "./theme-script";
@@ -24,9 +26,31 @@ it("defaults a light system to canvas", () => {
   expect(result.current.theme).toBe("canvas");
 });
 
-it("persists a selected theme without replacing children", () => {
-  const { result } = renderHook(() => useTheme(), { wrapper: ThemeProvider });
-  act(() => result.current.setTheme("dawn"));
+it("persists a selected theme without replacing children", async () => {
+  function StatefulThemeProbe() {
+    const { setTheme } = useTheme();
+    const [edits, setEdits] = useState(0);
+
+    return (
+      <>
+        <button onClick={() => setEdits((count) => count + 1)}>编辑草稿</button>
+        <button onClick={() => setTheme("dawn")}>切换到晨光</button>
+        <span>草稿编辑次数：{edits}</span>
+      </>
+    );
+  }
+
+  render(
+    <ThemeProvider>
+      <StatefulThemeProbe />
+    </ThemeProvider>,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+  const stateNode = screen.getByText("草稿编辑次数：1");
+  await userEvent.click(screen.getByRole("button", { name: "切换到晨光" }));
+
+  expect(screen.getByText("草稿编辑次数：1")).toBe(stateNode);
   expect(localStorage.getItem("eduflow-theme")).toBe("dawn");
   expect(document.documentElement.dataset.theme).toBe("dawn");
 });
