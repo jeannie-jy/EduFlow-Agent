@@ -1,4 +1,5 @@
 import { BotIcon, RotateCcwIcon } from "lucide-react";
+import { GenerationBorder } from "@/components/effects/GenerationBorder";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
@@ -32,7 +33,7 @@ export function AiStatusStrip({ generation, onRecover }: AiStatusStripProps) {
   const status = statusCopy[generation];
 
   return (
-    <Alert role="status" aria-live="polite" className="items-start py-3 pr-28">
+    <Alert role="status" aria-live="polite" className="relative items-start py-3 pr-28">
       <BotIcon />
       <AlertTitle>{status.title}</AlertTitle>
       <AlertDescription className="flex flex-col gap-2">
@@ -48,6 +49,7 @@ export function AiStatusStrip({ generation, onRecover }: AiStatusStripProps) {
           恢复
         </Button>
       </AlertAction>
+      <GenerationBorder generation={generation} />
     </Alert>
   );
 }

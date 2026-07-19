@@ -26,6 +26,15 @@ it("turns a teaching brief into an observable mock plan", async () => {
   expect(screen.getByText("识别知识结构")).toBeVisible();
 });
 
+it("keeps workbench effects decorative while planning", async () => {
+  renderWithProviders(<WorkbenchPage />);
+
+  await userEvent.click(screen.getByRole("button", { name: "生成推演计划" }));
+
+  expect(document.querySelector("main > [aria-hidden='true']")).toBeTruthy();
+  expect(screen.getByRole("status").querySelector("[aria-hidden='true']")).toBeTruthy();
+});
+
 it("shows a mathematically consistent Dijkstra relaxation state", () => {
   renderWithProviders(<WorkbenchPage />);
 
