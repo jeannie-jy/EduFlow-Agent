@@ -1,11 +1,10 @@
 import { AppShell } from "@/components/layout/AppShell";
+import { WorkbenchPage } from "@/components/workbench/WorkbenchPage";
 
 export function App() {
   return (
     <AppShell>
-      <main>
-        <h1>工作区</h1>
-      </main>
+      <WorkbenchPage />
     </AppShell>
   );
 }
