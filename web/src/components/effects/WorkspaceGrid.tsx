@@ -1,5 +1,9 @@
-import type { CSSProperties } from "react";
-import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
+import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
+
+const DeferredAnimatedGridPattern = lazy(async () => {
+  const module = await import("./magicui/animated-grid-pattern");
+  return { default: module.AnimatedGridPattern };
+});
 
 const themeGridStyle = {
   "--workspace-grid-fill": "color-mix(in oklch, var(--primary) 11%, transparent)",
@@ -7,7 +11,47 @@ const themeGridStyle = {
 } as CSSProperties;
 
 export function WorkspaceGrid() {
-  const canAnimate = typeof ResizeObserver !== "undefined";
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const [shouldLoadAnimation, setShouldLoadAnimation] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncPreference = () => setPrefersReducedMotion(mediaQuery.matches);
+
+    mediaQuery.addEventListener?.("change", syncPreference);
+    return () => mediaQuery.removeEventListener?.("change", syncPreference);
+  }, []);
+
+  useEffect(() => {
+    if (prefersReducedMotion || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    let cancelled = false;
+    const loadAnimation = () => {
+      if (!cancelled) {
+        setShouldLoadAnimation(true);
+      }
+    };
+    const idleWindow = window as typeof window & {
+      cancelIdleCallback?: (handle: number) => void;
+      requestIdleCallback?: (callback: () => void) => number;
+    };
+    const idleHandle = idleWindow.requestIdleCallback?.(loadAnimation);
+    const timeoutHandle = idleHandle === undefined ? window.setTimeout(loadAnimation, 0) : undefined;
+
+    return () => {
+      cancelled = true;
+      if (idleHandle !== undefined) {
+        idleWindow.cancelIdleCallback?.(idleHandle);
+      }
+      if (timeoutHandle !== undefined) {
+        window.clearTimeout(timeoutHandle);
+      }
+    };
+  }, [prefersReducedMotion]);
 
   return (
     <div
@@ -32,17 +76,19 @@ export function WorkspaceGrid() {
         </defs>
         <rect width="100%" height="100%" fill="url(#workspace-grid-static)" />
       </svg>
-      {canAnimate ? (
-        <AnimatedGridPattern
-          className="motion-reduce:hidden opacity-55"
-          duration={6}
-          maxOpacity={0.28}
-          numSquares={24}
-          style={{
-            fill: "var(--workspace-grid-fill)",
-            stroke: "var(--workspace-grid-stroke)",
-          }}
-        />
+      {shouldLoadAnimation && !prefersReducedMotion ? (
+        <Suspense fallback={null}>
+          <DeferredAnimatedGridPattern
+            className="opacity-55"
+            duration={6}
+            maxOpacity={0.28}
+            numSquares={24}
+            style={{
+              fill: "var(--workspace-grid-fill)",
+              stroke: "var(--workspace-grid-stroke)",
+            }}
+          />
+        </Suspense>
       ) : null}
     </div>
   );
