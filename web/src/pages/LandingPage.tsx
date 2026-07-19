@@ -39,11 +39,7 @@ export function LandingPage() {
           <BookHeroScene />
         </section>
 
-        <section className="capability-section" id="capabilities" aria-labelledby="capability-title">
-          <div className="section-heading">
-            <p className="eyebrow">不只是观看，而是真正参与</p>
-            <h2 id="capability-title">把复杂知识，变成可以触摸的学习流</h2>
-          </div>
+        <section className="capability-section" id="capabilities" aria-label="把复杂知识变成可以触摸的学习流">
           <div className="capability-grid">
             {capabilities.map(({ icon: Icon, kicker, title, copy, meta }) => (
               <article className="capability-card" key={title}>
