@@ -373,6 +373,7 @@ service-account*.json
 # Sandbox temp files
 sandbox-tmp/
 e2b-tmp/
+.worktrees/
 
 # vLLM
 vllm-model-cache/

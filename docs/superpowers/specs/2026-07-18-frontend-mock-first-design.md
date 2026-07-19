@@ -2,9 +2,11 @@
 
 **日期：** 2026-07-18
 
-**状态：** 已确认，视觉系统待项目海报映射
+**状态：** 已确认，视觉系统已完成项目海报映射
 
 **适用范围：** `web/` 前端应用、前后端数据契约、Mock 服务、交互式播放器与教师编辑器
+
+**视觉规范：** 见 `docs/superpowers/specs/2026-07-19-eduflow-multi-theme-ui-design.md` 与 `design-system/eduflow/MASTER.md`
 
 ## 1. 背景与目标
 
