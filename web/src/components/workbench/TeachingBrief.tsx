@@ -172,7 +172,7 @@ export function TeachingBrief({
               onGenerate();
             }}
           >
-            <FieldGroup className="flex-1 gap-5 p-4">
+            <FieldGroup className="min-h-0 flex-1 gap-5 overflow-y-auto p-4">
               <Field>
                 <FieldLabel htmlFor="teaching-brief">教学简报</FieldLabel>
                 <InputGroup>

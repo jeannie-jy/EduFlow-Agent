@@ -89,3 +89,14 @@ it("uses zero-minimum desktop columns to prevent shell overflow", () => {
     "xl:grid-cols-[minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,1.55fr)]",
   );
 });
+
+it("keeps the desktop AI status inside the viewport workspace", () => {
+  renderWithProviders(<WorkbenchPage />);
+
+  expect(screen.getByTestId("workbench-page")).toHaveClass(
+    "xl:h-[calc(100svh-6.5rem)]",
+    "xl:overflow-hidden",
+  );
+  expect(screen.getByTestId("workbench-regions")).toHaveClass("xl:overflow-hidden");
+  expect(screen.getByRole("status")).toHaveClass("shrink-0");
+});

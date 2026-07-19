@@ -1,10 +1,11 @@
 import {
-  ArchiveIcon,
-  BookOpenIcon,
+  DownloadIcon,
   LayoutDashboardIcon,
-  LibraryIcon,
-  WaypointsIcon,
+  LayoutTemplateIcon,
+  PencilRulerIcon,
+  SparklesIcon,
 } from "lucide-react";
+import { matchPath, NavLink, useLocation } from "react-router-dom";
 import { EduFlowBrand } from "@/components/brand/EduFlowBrand";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -24,26 +25,27 @@ import {
 } from "@/components/ui/sidebar";
 
 const navigationItems = [
-  { label: "工作台", href: "#workspace", icon: LayoutDashboardIcon },
-  { label: "课程", href: "#courses", icon: BookOpenIcon },
-  { label: "学习路径", href: "#paths", icon: WaypointsIcon },
-  { label: "资源库", href: "#library", icon: LibraryIcon },
-  { label: "归档", href: "#archive", icon: ArchiveIcon },
+  { label: "工作台", to: "/", icon: LayoutDashboardIcon, end: true },
+  { label: "新建推演", to: "/new", icon: SparklesIcon, end: false },
+  { label: "教师编辑器", to: "/project/demo/edit", icon: PencilRulerIcon, end: false },
+  { label: "模板库", to: "/templates", icon: LayoutTemplateIcon, end: false },
+  { label: "导出中心", to: "/project/demo/export", icon: DownloadIcon, end: false },
 ] as const;
 
 export function AppSidebar() {
-  const { state } = useSidebar();
+  const { state, isMobile, setOpenMobile } = useSidebar();
+  const { pathname } = useLocation();
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <a
-          href="#workspace"
-          className="flex h-10 items-center rounded-md px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        <NavLink
+          to="/"
+          className="flex min-h-11 items-center rounded-md px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           aria-label="EduFlow 工作台"
         >
           <EduFlowBrand compact={state === "collapsed"} />
-        </a>
+        </NavLink>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -51,18 +53,33 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <nav aria-label="主导航">
               <SidebarMenu>
-                {navigationItems.map(({ label, href, icon: Icon }, index) => (
+                {navigationItems.map(({ label, to, icon: Icon, ...item }) => {
+                  const isActive = Boolean(
+                    matchPath({ path: to, end: item.end }, pathname),
+                  );
+
+                  return (
                   <SidebarMenuItem key={label}>
                     <SidebarMenuButton
-                      render={<a href={href} />}
-                      isActive={index === 0}
-                      tooltip={label}
+                      render={
+                        <NavLink
+                          to={to}
+                          end={item.end}
+                          title={state === "collapsed" ? label : undefined}
+                          onClick={() => {
+                            if (isMobile) setOpenMobile(false);
+                          }}
+                        />
+                      }
+                      isActive={isActive}
+                      className="min-h-11 group-data-[collapsible=icon]:size-11!"
                     >
                       <Icon />
                       <span>{label}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                ))}
+                  );
+                })}
               </SidebarMenu>
             </nav>
           </SidebarGroupContent>

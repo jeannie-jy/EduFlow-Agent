@@ -95,7 +95,7 @@ export function SimulationPreview() {
         <Badge variant="outline">步骤 3 / 14</Badge>
       </header>
 
-      <div className="flex flex-1 flex-col gap-4 p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold tracking-tight">Dijkstra 最短路径算法</h3>

@@ -1,4 +1,5 @@
 import type { PropsWithChildren } from "react";
+import { useLocation } from "react-router-dom";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -14,7 +15,20 @@ import {
 import { AppSidebar } from "./AppSidebar";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
+const routeLabels: Record<string, string> = {
+  "/": "教学工作台",
+  "/new": "新建推演",
+  "/project/demo/plan": "教学计划确认",
+  "/project/demo/edit": "教师编辑器",
+  "/project/demo/play": "交互式播放器",
+  "/project/demo/export": "导出中心",
+  "/templates": "知识点模板库",
+};
+
 export function AppShell({ children }: PropsWithChildren) {
+  const { pathname } = useLocation();
+  const routeLabel = routeLabels[pathname] ?? "页面未找到";
+
   return (
     <SidebarProvider>
       <a
@@ -32,7 +46,7 @@ export function AppShell({ children }: PropsWithChildren) {
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
-                  <BreadcrumbPage>教学工作台</BreadcrumbPage>
+                  <BreadcrumbPage>{routeLabel}</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
