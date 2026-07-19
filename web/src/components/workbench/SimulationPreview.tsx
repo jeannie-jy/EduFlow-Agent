@@ -24,33 +24,39 @@ import { cn } from "@/lib/utils";
 const nodes = [
   { id: "A", distance: "0", x: 10, y: 52, state: "fixed" },
   { id: "B", distance: "2", x: 34, y: 20, state: "fixed" },
-  { id: "C", distance: "5", x: 45, y: 52, state: "current" },
-  { id: "D", distance: "9", x: 23, y: 82, state: "unvisited" },
-  { id: "E", distance: "8", x: 70, y: 76, state: "unvisited" },
-  { id: "F", distance: "∞", x: 84, y: 35, state: "unvisited" },
+  { id: "C", distance: "3", x: 45, y: 52, state: "current" },
+  { id: "D", distance: "6", x: 23, y: 82, state: "unvisited" },
+  { id: "E", distance: "6", x: 70, y: 76, state: "unvisited" },
+  { id: "F", distance: "4", x: 84, y: 35, state: "unvisited" },
 ] as const;
 
 const edges = [
-  { key: "ab", label: "2", left: 12, top: 49, width: 29, rotate: -38 },
-  { key: "ac", label: "5", left: 13, top: 52, width: 30, rotate: 0 },
-  { key: "ad", label: "9", left: 13, top: 55, width: 23, rotate: 48 },
-  { key: "bc", label: "1", left: 36, top: 24, width: 28, rotate: 68 },
-  { key: "bf", label: "2", left: 38, top: 21, width: 45, rotate: 16 },
-  { key: "cd", label: "3", left: 28, top: 74, width: 24, rotate: -48 },
-  { key: "ce", label: "3", left: 48, top: 55, width: 27, rotate: 34 },
-  { key: "cf", label: "4", left: 49, top: 49, width: 35, rotate: -25 },
-  { key: "de", label: "5", left: 27, top: 82, width: 43, rotate: -6 },
-  { key: "ef", label: "1", left: 72, top: 72, width: 39, rotate: -66 },
+  { key: "ab", from: "A", to: "B", label: "2", left: 12, top: 49, width: 29, rotate: -38 },
+  { key: "ac", from: "A", to: "C", label: "5", left: 13, top: 52, width: 30, rotate: 0 },
+  { key: "ad", from: "A", to: "D", label: "9", left: 13, top: 55, width: 23, rotate: 48 },
+  { key: "bc", from: "B", to: "C", label: "1", left: 36, top: 24, width: 28, rotate: 68 },
+  { key: "bf", from: "B", to: "F", label: "2", left: 38, top: 21, width: 45, rotate: 16 },
+  { key: "cd", from: "C", to: "D", label: "3", left: 28, top: 74, width: 24, rotate: -48 },
+  { key: "ce", from: "C", to: "E", label: "3", left: 48, top: 55, width: 27, rotate: 34 },
+  { key: "cf", from: "C", to: "F", label: "4", left: 49, top: 49, width: 35, rotate: -25 },
+  { key: "de", from: "D", to: "E", label: "5", left: 27, top: 82, width: 43, rotate: -6 },
+  { key: "ef", from: "E", to: "F", label: "1", left: 72, top: 72, width: 39, rotate: -66 },
 ];
 
 const distanceRows = [
   { node: "A", distance: "0", previous: "—", status: "已确定" },
   { node: "B", distance: "2", previous: "A", status: "已确定" },
-  { node: "C", distance: "5", previous: "A", status: "当前节点" },
-  { node: "D", distance: "9", previous: "A", status: "未访问" },
-  { node: "E", distance: "8", previous: "C", status: "未访问" },
-  { node: "F", distance: "∞", previous: "—", status: "未访问" },
+  { node: "C", distance: "3", previous: "B", status: "当前节点" },
+  { node: "D", distance: "6", previous: "C", status: "未访问" },
+  { node: "E", distance: "6", previous: "C", status: "未访问" },
+  { node: "F", distance: "4", previous: "B", status: "未访问" },
 ];
+
+const nodeStateLabels = {
+  fixed: "已确定",
+  current: "当前节点",
+  unvisited: "未访问",
+} as const;
 
 function LegendDot({ state }: { state: (typeof nodes)[number]["state"] }) {
   return (
@@ -70,7 +76,7 @@ export function SimulationPreview() {
   return (
     <section
       aria-labelledby="preview-heading"
-      className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card md:col-span-2 xl:col-span-1"
+      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card md:col-span-2 xl:col-span-1"
     >
       <header className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4">
         <div className="flex items-start gap-3">
@@ -104,8 +110,8 @@ export function SimulationPreview() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(20rem,1fr)_minmax(15rem,0.62fr)]">
-          <figure className="relative min-h-80 overflow-hidden rounded-xl border bg-muted/20">
+        <div className="grid min-h-0 min-w-0 flex-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,0.62fr)]">
+          <figure className="relative min-h-80 min-w-0 overflow-hidden rounded-xl border bg-muted/20">
             <figcaption className="sr-only">
               六节点 Dijkstra 演示图，节点 C 为当前节点
             </figcaption>
@@ -113,7 +119,7 @@ export function SimulationPreview() {
               {edges.map((edge) => (
                 <li
                   key={edge.key}
-                  aria-label={`边权重 ${edge.label}`}
+                  aria-label={`边 ${edge.from} 到 ${edge.to}，权重 ${edge.label}`}
                   className="absolute h-px origin-left bg-border"
                   style={{
                     left: `${edge.left}%`,
@@ -130,7 +136,7 @@ export function SimulationPreview() {
               {nodes.map((node) => (
                 <li
                   key={node.id}
-                  aria-label={`节点 ${node.id}，距离 ${node.distance}`}
+                  aria-label={`节点 ${node.id}，${nodeStateLabels[node.state]}，距离 ${node.distance}`}
                   className={cn(
                     "absolute flex size-12 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 text-sm font-semibold shadow-sm",
                     node.state === "fixed" && "border-primary bg-primary text-primary-foreground",
@@ -146,7 +152,7 @@ export function SimulationPreview() {
             </ol>
           </figure>
 
-          <div className="overflow-hidden rounded-xl border">
+          <div className="min-w-0 overflow-hidden rounded-xl border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -197,7 +203,7 @@ export function SimulationPreview() {
           <InfoIcon />
           <AlertTitle>本步更新规则</AlertTitle>
           <AlertDescription>
-            若 dist[C] + w(C, v) &lt; dist[v]，则更新 dist[v] 与前驱。本步将 E 的距离更新为 8。
+            若 dist[C] + w(C, v) &lt; dist[v]，则更新 dist[v] 与前驱。本步将 D 与 E 的距离更新为 6；F 通过 B 保持为 4。
           </AlertDescription>
         </Alert>
       </div>

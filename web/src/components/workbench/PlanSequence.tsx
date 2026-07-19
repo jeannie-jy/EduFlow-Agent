@@ -57,7 +57,7 @@ export function PlanSequence({ isPlanning }: PlanSequenceProps) {
   return (
     <section
       aria-labelledby="plan-heading"
-      className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card"
+      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
     >
       <header className="flex items-start gap-3 border-b px-4 py-4">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
@@ -80,7 +80,7 @@ export function PlanSequence({ isPlanning }: PlanSequenceProps) {
               type="button"
               variant="ghost"
               size="sm"
-              className="mx-3 mt-3 hidden justify-between md:flex xl:hidden"
+              className="mx-3 mt-3 flex justify-between"
             />
           }
         >

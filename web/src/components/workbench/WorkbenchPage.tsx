@@ -11,9 +11,12 @@ export function WorkbenchPage() {
   );
 
   return (
-    <main className="flex min-h-[calc(100svh-7.5rem)] flex-col gap-3">
+    <main className="flex min-h-[calc(100svh-7.5rem)] min-w-0 flex-col gap-3">
       <h1 className="sr-only">工作区</h1>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(20rem,0.9fr)_minmax(32rem,1.55fr)]">
+      <div
+        data-testid="workbench-regions"
+        className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,1.55fr)]"
+      >
         <TeachingBrief
           brief={brief}
           isPlanning={generation === "planning"}

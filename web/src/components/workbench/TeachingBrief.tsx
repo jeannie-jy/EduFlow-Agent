@@ -100,15 +100,17 @@ function SecondarySettings({ suffix }: { suffix: string }) {
 
       <Field>
         <div className="flex items-center justify-between gap-3">
-          <FieldLabel htmlFor={`duration-${suffix}`}>课堂时长</FieldLabel>
+          <FieldLabel id={`duration-label-${suffix}`}>课堂时长</FieldLabel>
           <span className="text-sm tabular-nums text-muted-foreground">{duration} 分钟</span>
         </div>
         <Slider
           id={`duration-${suffix}`}
+          aria-labelledby={`duration-label-${suffix}`}
           value={[duration]}
           min={15}
           max={90}
           step={5}
+          thumbAlignment="center"
           onValueChange={(value) => setDuration((value as number[])[0] ?? 45)}
         />
       </Field>
@@ -130,7 +132,7 @@ export function TeachingBrief({
   return (
     <section
       aria-labelledby="brief-heading"
-      className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card"
+      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
     >
       <header className="flex items-start justify-between gap-3 border-b px-4 py-4">
         <div className="flex items-start gap-3">
@@ -155,7 +157,7 @@ export function TeachingBrief({
               type="button"
               variant="ghost"
               size="sm"
-              className="mx-3 mt-3 hidden justify-between md:flex xl:hidden"
+              className="mx-3 mt-3 flex justify-between"
             />
           }
         >
