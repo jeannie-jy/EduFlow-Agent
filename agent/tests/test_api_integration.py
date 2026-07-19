@@ -206,7 +206,7 @@ class TestKnowledgeAPI:
         )
         assert response.status_code == 200
         data = response.json()
-        assert len(data["results"]) <= 5  # 种子数据只有 5 条
+        assert len(data["results"]) <= 22  # Phase 2: 22 条种子数据
 
     async def test_templates_list(self, client: AsyncClient):
         response = await client.get("/api/knowledge/templates")

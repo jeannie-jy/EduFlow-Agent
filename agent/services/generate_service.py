@@ -58,7 +58,7 @@ async def run_generation_stream(
 
             if event_type == "on_chain_start":
                 chain_name = event.get("name", "")
-                if chain_name in ("planner", "coder", "quality", "reflection"):
+                if chain_name in ("planner", "knowledge", "coder", "quality", "reflection"):
                     yield _sse_event("progress", {
                         "phase": chain_name,
                         "message": f"正在执行 {chain_name}...",
@@ -73,9 +73,19 @@ async def run_generation_stream(
                     teaching_plan = output.get("teaching_plan", {})
                     yield _sse_event("progress", {
                         "phase": "planning",
-                        "message": "教学计划已生成，等待确认",
+                        "message": "教学计划已生成",
                         "pct": 30,
                         "teaching_plan": teaching_plan,
+                    })
+
+                elif chain_name == "knowledge" and isinstance(output, dict):
+                    kg = output.get("knowledge_graph", {})
+                    terms = output.get("key_terms", [])
+                    yield _sse_event("progress", {
+                        "phase": "knowledge",
+                        "message": f"知识图谱构建完成 ({len(kg.get('concepts', []))} 概念, {len(terms)} 术语)",
+                        "pct": 40,
+                        "knowledge_graph": kg,
                     })
 
                 elif chain_name == "quality" and isinstance(output, dict):
@@ -167,6 +177,7 @@ def _phase_pct(phase: str) -> int:
     """各阶段的进度百分比。"""
     mapping = {
         "planner": 10,
+        "knowledge": 25,
         "coder": 50,
         "quality": 80,
         "reflection": 85,

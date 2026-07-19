@@ -1,42 +1,24 @@
 [
-  {
-    "concept": "冒泡排序",
-    "content": "冒泡排序是一种简单的比较排序算法。它重复遍历数组，比较相邻元素，如果顺序错误则交换它们。每次遍历后，最大的未排序元素'冒泡'到正确位置。\n\n核心思想：\n1. 重复遍历数组\n2. 比较相邻元素\n3. 如果前一个大于后一个，交换\n4. 每轮确定一个最大值的位置\n\n时间复杂度：O(n²) 最坏/平均，O(n) 最好（已排序）。空间复杂度：O(1)。稳定排序。\n\n教学要点：\n- 双重循环结构\n- 相邻比较-交换操作\n- 已排序区与未排序区的边界移动\n- 提前终止优化（flag 检测）",
-    "subject": "algorithm",
-    "difficulty": 1,
-    "object_types": ["array", "code_block"],
-    "animation_types": ["compare", "swap", "highlight", "appear"]
-  },
-  {
-    "concept": "Dijkstra最短路径算法",
-    "content": "Dijkstra 算法用于在带权有向图中找到从单一源节点到所有其他节点的最短路径。它采用贪心策略：每次选择距离最小的未访问节点，通过松弛其邻接边更新距离。\n\n核心思想：\n1. 初始化距离表（源=0, 其余=∞）\n2. 选择距离最小的未访问节点\n3. 对该节点的每条出边执行松弛操作\n4. 标记节点为已访问\n5. 重复直到所有节点被访问\n\n关键概念：\n- 距离表（distance table）\n- 松弛操作（relaxation）：if dist[u] + w(u,v) < dist[v]: dist[v] = dist[u] + w(u,v)\n- 已访问集合\n- 贪心选择性质\n\n约束：不允许负权边（负权边会导致贪心策略失效）。\n时间复杂度：O(V²) 朴素实现，O((V+E)log V) 使用优先队列。",
-    "subject": "algorithm",
-    "difficulty": 3,
-    "object_types": ["graph", "node", "edge", "table", "code_block"],
-    "animation_types": ["highlight", "relax_edge", "update_value", "appear", "disappear"]
-  },
-  {
-    "concept": "进程调度",
-    "content": "操作系统进程调度是决定哪个就绪进程获得 CPU 时间的关键机制。不同的调度策略适用于不同场景。\n\n常见调度算法：\n- FCFS（先来先服务）：非抢占，简单但可能导致护航效应\n- SJF（最短作业优先）：非抢占或抢占（SRTF），最小化平均等待时间\n- Round Robin：抢占式，时间片轮转，公平性好\n- 优先级调度：抢占或非抢占，可能导致饥饿\n- 多级反馈队列：结合多种策略，适应性强\n\n关键指标：\n- 平均等待时间\n- 平均周转时间\n- 响应时间\n- CPU 利用率\n\n教学要点：\n- 就绪队列与 CPU 时间线\n- 时间片大小对 RR 的影响\n- 抢占 vs 非抢占\n- 护航效应与饥饿问题",
-    "subject": "operating_system",
-    "difficulty": 3,
-    "object_types": ["process", "timeline", "table", "code_block"],
-    "animation_types": ["schedule", "enqueue", "dequeue", "highlight", "update_value"]
-  },
-  {
-    "concept": "红黑树插入",
-    "content": "红黑树是一种自平衡二叉搜索树，通过节点颜色（红/黑）和旋转/重染色操作维持平衡性质。\n\n红黑树性质：\n1. 每个节点是红色或黑色\n2. 根节点是黑色\n3. 所有叶子（NIL）是黑色\n4. 红色节点的子节点必须是黑色（不能有两个连续红色）\n5. 从任意节点到其所有后代叶子的路径包含相同数量的黑色节点\n\n插入步骤：\n1. 按 BST 规则插入新节点，颜色为红色\n2. 检查红黑树性质是否被破坏\n3. 根据 uncle 节点的颜色决定修复策略：\n   - Case 1: uncle 红色 → 重染色父、叔、祖父\n   - Case 2/3: uncle 黑色 → 旋转（LL/LR/RR/RL）+ 重染色\n4. 确保根节点为黑色\n\n教学要点：\n- 四种旋转情况（左旋/右旋的组合）\n- 颜色的意义与性质\n- 黑高（black height）一致性\n- 插入后自底向上的修复过程\n时间复杂度：O(log n)。",
-    "subject": "data_structure",
-    "difficulty": 4,
-    "object_types": ["tree", "node", "code_block", "card"],
-    "animation_types": ["transform", "highlight", "appear", "disappear", "update_value"]
-  },
-  {
-    "concept": "TCP三次握手",
-    "content": "TCP（传输控制协议）通过三次握手建立可靠的双向通信连接。握手过程同步双方的序列号和确认号，建立全双工通信。\n\n三次握手流程：\n1. SYN：客户端 → 服务器\n   - 客户端发送 SYN=1, seq=x（随机初始序列号）\n   - 客户端进入 SYN_SENT 状态\n\n2. SYN-ACK：服务器 → 客户端\n   - 服务器收到 SYN 后回复 SYN=1, ACK=1, seq=y, ack=x+1\n   - 服务器进入 SYN_RCVD 状态\n\n3. ACK：客户端 → 服务器\n   - 客户端回复 ACK=1, seq=x+1, ack=y+1\n   - 双方进入 ESTABLISHED 状态\n\n关键字段：\n- 序列号（Sequence Number）\n- 确认号（Acknowledgment Number）\n- SYN / ACK / FIN 标志位\n\n常见误区：\n- 为什么必须是三次（不是两次或四次）？\n- 两次无法防止已失效的连接请求到达服务器\n- 初始序列号为什么是随机的？\n教学要点：状态转换图、报文格式、为什么三次。",
-    "subject": "computer_network",
-    "difficulty": 3,
-    "object_types": ["node", "edge", "timeline", "table", "card", "code_block"],
-    "animation_types": ["appear", "disappear", "highlight", "move", "update_value"]
-  }
+  {"concept": "冒泡排序", "content": "冒泡排序是一种简单的比较排序算法。重复遍历数组，比较相邻元素，如果顺序错误则交换。每次遍历后最大未排序元素'冒泡'到正确位置。时间复杂度 O(n²)，空间 O(1)，稳定排序。", "subject": "algorithm", "difficulty": 1, "object_types": ["array", "code_block"], "animation_types": ["compare", "swap", "highlight", "appear"]},
+  {"concept": "快速排序", "content": "快速排序是分治法典范。选取 pivot，partition 将数组分为小于和大于 pivot 的两部分，递归排序子数组。平均 O(n log n)，最坏 O(n²)。不稳定排序。关键：pivot 选择策略（随机/三数中值）。", "subject": "algorithm", "difficulty": 3, "object_types": ["array", "code_block"], "animation_types": ["compare", "swap", "highlight", "split"]},
+  {"concept": "归并排序", "content": "归并排序也是分治法。将数组递归二分至单元素，然后合并两个有序子数组。时间复杂度稳定 O(n log n)，空间 O(n)，稳定排序。适合外部排序和链表排序。", "subject": "algorithm", "difficulty": 3, "object_types": ["array", "code_block"], "animation_types": ["merge", "split", "compare", "highlight"]},
+  {"concept": "二分查找", "content": "在有序数组中查找目标值。每次比较中间元素，排除一半搜索空间。时间复杂度 O(log n)，空间 O(1)。变体：查找第一个/最后一个等于 target 的位置。前提是数据有序。", "subject": "algorithm", "difficulty": 2, "object_types": ["array", "code_block"], "animation_types": ["highlight", "appear", "disappear"]},
+  {"concept": "递归", "content": "递归是函数调用自身的编程技术。包含 base case（终止条件）和 recursive case（缩小问题规模）。经典例子：阶乘、斐波那契、汉诺塔、树的遍历。关键概念：调用栈、栈溢出风险、尾递归优化。", "subject": "algorithm", "difficulty": 2, "object_types": ["tree", "code_block", "card"], "animation_types": ["appear", "disappear", "highlight", "transform"]},
+  {"concept": "Dijkstra最短路径算法", "content": "Dijkstra 算法在带权图中找到从源节点到所有其他节点的最短路径。贪心策略：每次选距离最小的未访问节点，松弛其邻接边。要求边权非负。时间复杂度 O((V+E)log V)。", "subject": "algorithm", "difficulty": 3, "object_types": ["graph", "node", "edge", "table", "code_block"], "animation_types": ["highlight", "relax_edge", "update_value", "appear"]},
+  {"concept": "BFS与DFS", "content": "BFS（广度优先）使用队列逐层遍历图/树，适合最短路径（无权）、层级遍历。DFS（深度优先）使用栈/递归深入探索，适合拓扑排序、连通分量、回溯。BFS 空间可能 O(V)，DFS 递归深度可能 O(V)。", "subject": "algorithm", "difficulty": 3, "object_types": ["graph", "tree", "node", "edge", "code_block"], "animation_types": ["enqueue", "dequeue", "highlight", "appear", "disappear"]},
+  {"concept": "动态规划", "content": "动态规划解决重叠子问题和最优子结构问题。自顶向下（记忆化递归）+ 自底向上（填表）。经典问题：背包、最长公共子序列、编辑距离、矩阵链乘。关键步骤：定义状态、推导转移方程、确定边界条件。", "subject": "algorithm", "difficulty": 4, "object_types": ["table", "array", "code_block", "card"], "animation_types": ["highlight", "update_value", "appear", "compare"]},
+  {"concept": "最小生成树", "content": "最小生成树（MST）连接图中所有节点且总权重最小。Prim 算法从任意节点开始贪心扩展。Kruskal 算法按边权排序用并查集避免环。时间复杂度 O(E log V)。应用：网络布线、聚类。", "subject": "algorithm", "difficulty": 4, "object_types": ["graph", "node", "edge", "table"], "animation_types": ["highlight", "appear", "relax_edge", "update_value"]},
+  {"concept": "哈希表", "content": "哈希表通过哈希函数将 key 映射到数组索引，实现 O(1) 平均查找。解决冲突：链地址法（链表）、开放寻址法（线性探测/二次探测）。关键：负载因子、rehashing、哈希函数设计。应用：数据库索引、缓存、去重。", "subject": "data_structure", "difficulty": 3, "object_types": ["array", "linked_list", "table", "code_block"], "animation_types": ["appear", "highlight", "update_value", "enqueue"]},
+  {"concept": "二叉树与AVL树", "content": "二叉树每个节点最多两个子节点。BST 左<根<右。AVL 是自平衡 BST，通过旋转维持 |平衡因子|≤1。旋转类型：LL（右旋）、RR（左旋）、LR（左-右旋）、RL（右-左旋）。平衡因子 = 左子树高 - 右子树高。", "subject": "data_structure", "difficulty": 4, "object_types": ["tree", "node", "code_block", "card"], "animation_types": ["transform", "highlight", "update_value"]},
+  {"concept": "栈与队列", "content": "栈是 LIFO（后进先出），操作 push/pop/peek，O(1)。用于函数调用栈、撤销操作、表达式求值、括号匹配。队列是 FIFO（先进先出），操作 enqueue/dequeue，O(1)。用于 BFS、任务调度、缓冲区。", "subject": "data_structure", "difficulty": 2, "object_types": ["array", "linked_list", "code_block"], "animation_types": ["enqueue", "dequeue", "appear", "disappear", "highlight"]},
+  {"concept": "红黑树插入", "content": "红黑树是自平衡 BST。性质：根黑、红子必黑、所有路径黑高相同。插入：先按 BST 插入红色节点，再根据 uncle 颜色决定修复策略（重染色/旋转）。时间复杂度 O(log n)。广泛应用：Java TreeMap、C++ std::map。", "subject": "data_structure", "difficulty": 4, "object_types": ["tree", "node", "code_block", "card"], "animation_types": ["transform", "highlight", "appear", "disappear", "update_value"]},
+  {"concept": "进程调度", "content": "操作系统进程调度决定哪个就绪进程获得 CPU。策略：FCFS（非抢占，可能护航效应）、SJF（最短作业，最小平均等待）、Round Robin（时间片轮转，公平）、优先级调度（可能饥饿）、多级反馈队列（综合）。关键指标：平均等待时间、周转时间、响应时间。", "subject": "operating_system", "difficulty": 3, "object_types": ["process", "timeline", "table", "code_block"], "animation_types": ["schedule", "enqueue", "dequeue", "highlight", "update_value"]},
+  {"concept": "同步与互斥", "content": "多线程共享数据需要同步机制防止竞态条件。互斥锁（Mutex）保证临界区互斥访问。信号量（Semaphore）控制并发访问数量。条件变量用于线程间通知。经典问题：生产者-消费者、读者-写者、哲学家就餐。关键：死锁四个必要条件。", "subject": "operating_system", "difficulty": 3, "object_types": ["process", "code_block", "table", "card"], "animation_types": ["lock", "unlock", "highlight", "enqueue", "dequeue"]},
+  {"concept": "死锁", "content": "死锁是多线程/多进程互相等待对方释放资源的僵局。四个必要条件：互斥、持有并等待、不可抢占、循环等待。预防（破坏任一条件）、避免（银行家算法）、检测与恢复。银行家算法检查安全序列，避免进入不安全状态。", "subject": "operating_system", "difficulty": 4, "object_types": ["process", "table", "code_block", "card"], "animation_types": ["lock", "highlight", "appear", "transform"]},
+  {"concept": "分页与虚拟内存", "content": "虚拟内存将逻辑地址空间映射到物理内存，每个进程有独立地址空间。分页将内存分为固定大小的页框和页面。页表记录虚拟页→物理页框映射。TLB 加速地址转换。缺页中断加载缺失页面。页面置换算法：FIFO、LRU、Clock。", "subject": "operating_system", "difficulty": 4, "object_types": ["memory_block", "table", "code_block", "timeline"], "animation_types": ["highlight", "update_value", "appear", "disappear", "move"]},
+  {"concept": "TCP三次握手", "content": "TCP 通过三次握手建立可靠双向连接。1) 客户端→服务器 SYN（seq=x）；2) 服务器→客户端 SYN-ACK（seq=y, ack=x+1）；3) 客户端→服务器 ACK（ack=y+1）。双方进入 ESTABLISHED 状态。为什么是三次？防止旧连接请求到达导致错误连接。", "subject": "computer_network", "difficulty": 3, "object_types": ["node", "edge", "timeline", "table", "card"], "animation_types": ["appear", "disappear", "highlight", "move", "update_value"]},
+  {"concept": "HTTP协议", "content": "HTTP 是应用层无状态协议，基于请求-响应模型。方法：GET（获取）、POST（提交）、PUT（更新）、DELETE（删除）。状态码：2xx 成功、3xx 重定向、4xx 客户端错误、5xx 服务端错误。HTTP/1.1 持久连接，HTTP/2 多路复用，HTTP/3 基于 QUIC。", "subject": "computer_network", "difficulty": 2, "object_types": ["node", "edge", "timeline", "table", "code_block"], "animation_types": ["appear", "disappear", "highlight", "move"]},
+  {"concept": "数据库索引与B+树", "content": "索引加速数据库查询。B+ 树是最常用的索引结构，所有数据存储在叶子节点，叶子节点形成有序链表便于范围查询。非叶子节点仅存 key 用于导航。与 B 树的区别：B+ 树数据只在叶子。聚簇索引（主键）与非聚簇索引（二级）。复合索引遵循最左前缀原则。", "subject": "database", "difficulty": 4, "object_types": ["tree", "table", "code_block", "card"], "animation_types": ["transform", "highlight", "split", "merge", "appear"]},
+  {"concept": "数据库事务与隔离级别", "content": "事务是数据库操作的最小逻辑单元，具有 ACID 特性：原子性（Atomicity）、一致性（Consistency）、隔离性（Isolation）、持久性（Durability）。隔离级别：读未提交、读已提交、可重复读、串行化。并发问题：脏读、不可重复读、幻读。MVCC（多版本并发控制）实现高并发。", "subject": "database", "difficulty": 4, "object_types": ["table", "timeline", "code_block", "card", "process"], "animation_types": ["lock", "unlock", "highlight", "compare", "appear"]},
+  {"concept": "设计模式", "content": "设计模式是软件设计中反复出现的问题的通用解决方案。创建型：单例、工厂、建造者。结构型：适配器、装饰器、代理。行为型：观察者、策略、模板方法。原则：开闭原则、单一职责、依赖倒置。不是银弹，需要根据场景权衡。", "subject": "software_engineering", "difficulty": 3, "object_types": ["card", "code_block", "mindmap"], "animation_types": ["appear", "highlight", "transform"]}
 ]
