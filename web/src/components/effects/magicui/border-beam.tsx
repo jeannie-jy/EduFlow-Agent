@@ -1,9 +1,14 @@
 "use client"
 
-import { motion } from "motion/react"
+import { lazy, Suspense } from "react"
 import type { MotionStyle, Transition } from "motion/react"
 
 import { cn } from "@/lib/utils"
+
+const MotionDiv = lazy(async () => {
+  const module = await import("./motion")
+  return { default: module.motion.div }
+})
 
 interface BorderBeamProps {
   /**
@@ -74,35 +79,37 @@ export const BorderBeam = ({
         } as React.CSSProperties
       }
     >
-      <motion.div
-        className={cn(
-          "absolute aspect-square",
-          "bg-linear-to-l from-(--color-from) via-(--color-to) to-transparent",
-          className
-        )}
-        style={
-          {
-            width: size,
-            offsetPath: `rect(0 auto auto 0 round ${size}px)`,
-            "--color-from": colorFrom,
-            "--color-to": colorTo,
-            ...style,
-          } as MotionStyle
-        }
-        initial={{ offsetDistance: `${initialOffset}%` }}
-        animate={{
-          offsetDistance: reverse
-            ? [`${100 - initialOffset}%`, `${-initialOffset}%`]
-            : [`${initialOffset}%`, `${100 + initialOffset}%`],
-        }}
-        transition={{
-          repeat: Infinity,
-          ease: "linear",
-          duration,
-          delay: -delay,
-          ...transition,
-        }}
-      />
+      <Suspense fallback={null}>
+        <MotionDiv
+          className={cn(
+            "absolute aspect-square",
+            "bg-linear-to-l from-(--color-from) via-(--color-to) to-transparent",
+            className
+          )}
+          style={
+            {
+              width: size,
+              offsetPath: `rect(0 auto auto 0 round ${size}px)`,
+              "--color-from": colorFrom,
+              "--color-to": colorTo,
+              ...style,
+            } as MotionStyle
+          }
+          initial={{ offsetDistance: `${initialOffset}%` }}
+          animate={{
+            offsetDistance: reverse
+              ? [`${100 - initialOffset}%`, `${-initialOffset}%`]
+              : [`${initialOffset}%`, `${100 + initialOffset}%`],
+          }}
+          transition={{
+            repeat: Infinity,
+            ease: "linear",
+            duration,
+            delay: -delay,
+            ...transition,
+          }}
+        />
+      </Suspense>
     </div>
   )
 }

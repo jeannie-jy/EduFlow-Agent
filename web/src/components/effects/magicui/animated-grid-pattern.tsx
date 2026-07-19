@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -6,9 +8,13 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from "react"
-import { motion } from "motion/react"
 
 import { cn } from "@/lib/utils"
+
+const MotionRect = lazy(async () => {
+  const module = await import("./motion")
+  return { default: module.motion.rect }
+})
 
 export interface AnimatedGridPatternProps extends ComponentPropsWithoutRef<"svg"> {
   width?: number
@@ -149,25 +155,26 @@ export function AnimatedGridPattern({
       <rect width="100%" height="100%" fill={`url(#${id})`} />
       <svg x={x} y={y} className="overflow-visible">
         {squares.map(({ pos: [squareX, squareY], id, iteration }, index) => (
-          <motion.rect
-            initial={{ opacity: 0 }}
-            animate={{ opacity: maxOpacity }}
-            transition={{
-              duration,
-              repeat: 1,
-              delay: index * 0.1,
-              repeatType: "reverse",
-              repeatDelay,
-            }}
-            onAnimationComplete={() => updateSquarePosition(id)}
-            key={`${id}-${iteration}`}
-            width={width - 1}
-            height={height - 1}
-            x={squareX * width + 1}
-            y={squareY * height + 1}
-            fill="currentColor"
-            strokeWidth="0"
-          />
+          <Suspense fallback={null} key={`${id}-${iteration}`}>
+            <MotionRect
+              initial={{ opacity: 0 }}
+              animate={{ opacity: maxOpacity }}
+              transition={{
+                duration,
+                repeat: 1,
+                delay: index * 0.1,
+                repeatType: "reverse",
+                repeatDelay,
+              }}
+              onAnimationComplete={() => updateSquarePosition(id)}
+              width={width - 1}
+              height={height - 1}
+              x={squareX * width + 1}
+              y={squareY * height + 1}
+              fill="currentColor"
+              strokeWidth="0"
+            />
+          </Suspense>
         ))}
       </svg>
     </svg>
