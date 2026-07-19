@@ -23,5 +23,5 @@ it("uses the application shell in the live app", () => {
   renderWithProviders(<App />);
 
   expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "工作区" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "教学工作台" })).toBeVisible();
 });

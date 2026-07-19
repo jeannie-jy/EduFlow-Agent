@@ -1,10 +1,6 @@
-import { AppShell } from "@/components/layout/AppShell";
-import { WorkbenchPage } from "@/components/workbench/WorkbenchPage";
+import { RouterProvider } from "react-router-dom";
+import { appRouter } from "@/app/router";
 
 export function App() {
-  return (
-    <AppShell>
-      <WorkbenchPage />
-    </AppShell>
-  );
+  return <RouterProvider router={appRouter} />;
 }

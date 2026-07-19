@@ -14,7 +14,7 @@ export function WorkbenchPage() {
   return (
     <main className="relative flex min-h-[calc(100svh-7.5rem)] min-w-0 flex-col gap-3">
       <WorkspaceGrid />
-      <h1 className="relative sr-only">工作区</h1>
+      <h1 className="relative sr-only">教学工作台</h1>
       <div
         data-testid="workbench-regions"
         className="relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,1.55fr)]"
