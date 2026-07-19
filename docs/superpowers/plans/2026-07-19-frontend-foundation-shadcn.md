@@ -125,7 +125,21 @@ Run: `npm test`
 
 Expected: FAIL because `src/app/App.tsx` does not yet expose the EduFlow application.
 
-- [ ] **Step 5: Commit the scaffold**
+- [ ] **Step 5: Add the minimal application and verify green**
+
+Create `web/src/app/App.tsx`:
+
+```tsx
+export function App() {
+  return <main><h1>EduFlow</h1></main>;
+}
+```
+
+Run: `npm test && npm run typecheck && npm run build`
+
+Expected: the smoke test passes, TypeScript exits 0, and the production build succeeds.
+
+- [ ] **Step 6: Commit the scaffold**
 
 ```powershell
 git add web
