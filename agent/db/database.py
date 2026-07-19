@@ -43,7 +43,7 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI 依赖注入：获取异步数据库会话。"""
+    """FastAPI 依赖注入：获取异步数据库会话（读写操作使用）。"""
     async with async_session_factory() as session:
         try:
             yield session
@@ -51,3 +51,12 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def get_readonly_session() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI 依赖注入：只读数据库会话（避免不必要的 commit 开销）。"""
+    async with async_session_factory() as session:
+        try:
+            yield session
+        finally:
+            await session.rollback()

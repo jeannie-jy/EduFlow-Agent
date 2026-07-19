@@ -58,7 +58,7 @@ class Project(Base):
 
     # 关联
     frames: Mapped[list["Frame"]] = relationship(back_populates="project", lazy="raise")
-    parameters: Mapped[list["Parameter"]] = relationship(back_populates="project", lazy="raise")
+    parameters: Mapped[list["ParameterModel"]] = relationship(back_populates="project", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Project id={self.id!s} title={self.title[:30]!r}>"

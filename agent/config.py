@@ -25,8 +25,18 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # ── 数据库 ────────────────────────────────────────────
-    database_url: str = "postgresql+asyncpg://agent:changeme@localhost:5432/eduflow"
+    db_user: str = "agent"
     db_password: str = "changeme"
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_name: str = "eduflow"
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
 
     # ── Redis ─────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379"
