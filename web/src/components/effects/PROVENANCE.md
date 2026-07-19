@@ -1,5 +1,7 @@
 # Effect provenance
 
+English | [简体中文](PROVENANCE.zh-CN.md)
+
 | Local file | Upstream component | Exact URL | License | Installed dependencies | Local modifications |
 | --- | --- | --- | --- | --- | --- |
 | `WorkspaceGrid.tsx` | Magic UI Animated Grid Pattern | `https://magicui.design/docs/components/animated-grid-pattern` | MIT | `motion@^12.42.2` | The upstream source is isolated at `effects/magicui/animated-grid-pattern.tsx`, lazy-loaded after first paint/idle, and uses the local `effects/magicui/motion.ts` dynamic bridge so Motion is fetched only after the lazy effect path. The wrapper provides semantic CSS variables, an `aria-hidden`/pointer-inert container, and a static SVG fallback for reduced motion or unavailable `ResizeObserver`. |

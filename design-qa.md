@@ -1,62 +1,55 @@
-# EduFlow Chrome 设计验收记录
+# EduFlow 互动推演设计验收记录
 
-final result: passed
+## 验收结论
 
-## 验收基线
+- 未发现阻塞交付的视觉、状态同步或交互问题。
+- [P3] 生产构建提示主入口包约 671 kB，超过 500 kB 建议阈值；不影响当前页面功能与视觉验收，可在后续通过按路由拆包继续优化首屏加载。
 
-- 设计来源：`C:\Users\Clausius Fan\.codex\generated_images\019f74ca-1090-79c3-902e-dc2cedd6b073\exec-00e9b1c2-1646-4d49-92b3-f3ed164b54f3.png`
-- 实现地址：`http://127.0.0.1:4173/#workspace`
-- 浏览器：用户指定的 Chrome
-- 桌面视口：1440 × 900 CSS px（三主题最终基线）；1440 × 1034 CSS px（首轮问题复现）
-- 状态：画布主题；教学简报为“用 Dijkstra 演示校园最短路径”；已触发“生成推演计划”
-- 最终实现截图：`.superpowers/sdd/qa-final-chrome-canvas-planning.jpg`
-- 最终全屏并排证据：`.superpowers/sdd/qa-final-compare-1425x1023.png`
-- 最终底部聚焦对照：`.superpowers/sdd/qa-final-bottom-compare-1425x280.png`
-- 移动端证据：`.superpowers/sdd/qa-mobile-canvas-planning-390x844.jpg`
-- 平板端证据：`.superpowers/sdd/qa-tablet-workbench-top-768x900.jpg`
-- 三主题同视口对照：`.superpowers/sdd/qa-three-theme-comparison-1440x900.png`（左上为统一视觉目标；右上为画布；左下为深海；右下为晨光）
+## 已实施修正
 
-## 发现与修复
+- 使用 `@xyflow/react` 图形渲染器替代固定定位和旋转的手工连线，节点、端点、边权和缩放在桌面与窄屏下均保持稳定。
+- 建立统一 Dijkstra 模型并生成 14 个算法快照；画布、讲解、距离表、已确定集合、活动边与时间轴全部读取同一帧。
+- 修正状态语义：只有前驱与子节点都已确定时才显示绿色最短路径；当前节点使用蓝色，本帧更新使用蓝色虚线，未访问边使用中性灰。
+- 第 8 帧讲解完整呈现 `F 更新为 7，D 保持 9，E 保持 5`，与画布和距离表一致。
+- 增加画布图例、强化距离表当前行标识，并隐藏移动端计划栏滚动条。
+- 使用容器 `ResizeObserver` 在真实尺寸稳定后重新执行 fit-view，解决桌面首次渲染时顶部节点被裁切的问题。
+- 窄屏采用紧凑节点坐标和更低最小缩放，六个节点均完整可见。
 
-### P1 · AI 状态反馈未进入桌面首屏
+## 关键还原范围
 
-- 设计证据：统一视觉目标把 AI 生成状态条固定在三栏工作区下方，并在首屏内完整可见。
-- 实现证据：同视口下三栏区域底部约为 1049.5px；AI 状态条顶部约为 1061.5px，而浏览器可视高度为 1034px；页面总高度约 1198px。
-- 影响：教师触发生成后无法立即看到核心反馈，需要额外滚动，输入、生成和反馈之间的闭环被打断；也与选定目标的工作台式首屏层级不一致。
-- 建议修复：仅在桌面断点把工作台约束到可视区域，三栏区域使用 `min-h-0` 与内部滚动，AI 状态条保持 `shrink-0`；移动端继续使用页面自然滚动，避免滚动陷阱。
-- 涉及表面：布局、行为、响应式。
-- 修复结果：桌面端工作台高度按 `100svh - 6.5rem` 计入 56px 顶栏与 48px 上下内边距，三栏区域改用内部滚动，状态条保持固定在工作区底部；1440 × 900 下文档宽高均与视口一致，状态条顶部 764px、底部 876px，完整可见。
+- Fonts and typography: 沿用 Inter / Noto Sans SC 体系，标题、辅助文字、表格和状态信息层级清晰。
+- Spacing and layout rhythm: 保留 Codex 风格的固定侧栏、轻量顶栏、AI 计划、主画布与右侧检查器；画布成为视觉主焦点。
+- Colors and visual tokens: 默认白色、可切换黑色；蓝色用于当前/活动状态，绿色用于已确定状态，中性灰用于未访问状态。
+- Image quality and asset fidelity: 页面无照片类资产；交互图由专用图形渲染器绘制，缩放后仍保持清晰。
+- Copy and content: AI 讲解、阶段标题、距离、前驱和算法统计均由当前帧生成。
 
-### P1 · 侧栏视觉链接没有进入业务路由
+## 对照证据
 
-- 设计证据：侧栏是应用级业务导航，目标流程要求导航、链接与核心入口可用。
-- 实现证据：初始链接使用 `#courses` 等页内锚点；地址变化后仍停留在教学工作台，课程空状态没有渲染。
-- 影响：用户无法从侧栏进入已建立的新建推演、教师编辑器、模板库和导出中心等页面。
-- 修复：侧栏改为 React Router 的真实业务链接，活动路由使用 `aria-current="page"`，移动端点击后关闭侧栏；导航项收敛为工作台、新建推演、教师编辑器、模板库、导出中心。
-- 修复结果：Chrome 中“新建推演”进入 `/new` 并显示对应空状态；“教师编辑器”进入 `/project/demo/edit`；未知路径显示“页面未找到”。
+- Source visual truth: `design-references/eduflow-simulation-stage-light.png`
+- Pre-fix implementation: `design-references/user-reported-mock-divergence.png`
+- Final light implementation: `design-references/implementation-final-desktop-full.png`
+- Final dark implementation: `design-references/implementation-final-dark.png`
+- Final mobile implementation: `design-references/implementation-final-mobile.png`
+- Verified desktop viewport and state: 1440 × 1024 CSS px；白色主题；第 8 / 14 帧；当前节点 C；状态页签。
+- Full-view comparison: 参考图与最终白色实现已在同一轮检查；布局层级、信息密度和主画布比例一致，且最终实现消除了参考图中生成态与算法数据之间的冲突。
+- Focused-region comparison: 图画布的六个节点、九条边、边权、节点光环、图例、距离表及讲解在桌面和移动截图中均可读且互相一致。
 
-### P2 · 路由上下文、触控尺寸与活动匹配
+## 对照历史
 
-- 非首页的面包屑曾持续显示“教学工作台”；现已按当前路由显示新建推演、教师编辑器、模板库、导出中心或页面未找到。
-- 侧栏业务链接与品牌入口曾低于 44px；现统一为至少 `min-h-11`，折叠态保持 44 × 44px。
-- 活动态曾使用字符串前缀，可能在 `/newer` 等 404 路径误选中；现改用 React Router `matchPath`。
+1. 用户截图：手工百分比线段越界；节点光环、固定状态表和旧距离标签互相冲突。Result: failed.
+2. 第一轮修复：引入统一算法快照与图形渲染器，删除三套独立 mock 状态和手工线段几何。
+3. 用户复核：整体结构成立，但暂定前驱被过早标绿，讲解未包含保持不变的候选结果。Result: needs refinement.
+4. 第二轮修复：收紧绿色路径语义，补充画布图例和完整松弛讲解。
+5. 移动验收：发现计划栏滚动条与节点裁切；改用紧凑坐标、隐藏滚动条并调整最小缩放。Result: passed.
+6. 桌面验收：发现 fit-view 早于画布高度稳定，B/D 顶部可能被裁切；增加 ResizeObserver 后复测全部节点位于画布内。Result: passed.
+7. 最终对照：白色、黑色、桌面、窄屏、帧切换与恢复默认状态均通过；控制台错误为 0。Result: passed.
 
-## 已验证项目
+## 主要交互与控制台
 
-- Chrome 中页面可加载，未发现来自应用地址的控制台错误；仅见浏览器扩展自身的网络失败。
-- 主题菜单可打开，画布主题可选择并写入根节点主题状态。
-- 教学简报可编辑。
-- “生成推演计划”可触发规划状态，按钮禁用并显示进度反馈；状态条语义为 `status`。
-- 图节点、边权、距离表与播放控制均出现在无障碍树中。
-- 晨光、深海、画布三套主题均可通过主题菜单切换，切换过程中教师简报和生成状态保持不变。
-- 晨光、深海、画布已在同一 1440 × 900 Chrome 视口、同一“规划中”状态下分别截图并组合比较；三套主题保持相同信息层级、布局和交互状态，仅视觉令牌变化。
-- 390 × 844 与 768 × 900 下均无横向溢出；移动端课堂约束面板可打开和关闭，AI 状态可自然滚动到达。
-- 最终一次完整刷新后的 Chrome 日志中没有应用错误；此前发现并修复了侧栏链接与 Base UI 按钮语义组合产生的警告。浏览器扩展自身的请求失败不计入应用问题。
+- 已在真实浏览器中验证主题切换：浅色 → 深色 → 浅色。
+- 已验证下一帧：第 8 帧 C → 第 9 帧 E；随后通过时间轴恢复第 8 帧。
+- 已验证画布缩放控件、时间轴按钮和播放控制具有可读的辅助技术名称。
+- 浏览器控制台 error 日志：0。
+- Engineering verification: typecheck passed；7 test files / 34 tests passed；production build passed；lint passed with nine pre-existing Fast Refresh warnings。
 
-## 比较历史
-
-1. 桌面 / 画布 / 规划中：发现 P1 首屏状态条不可见；结果 blocked。
-2. 桌面 / 画布 / 规划中：状态条已完整进入首屏；全屏与底部聚焦对照通过。
-3. 桌面导航：发现 P1 锚点链接没有进入业务路由；结果 blocked。
-4. 桌面导航与空状态：真实路由、活动状态、教师编辑器和 404 均通过；最终结果 passed。
-5. 独立审查复验：修正 1rem 高度差、动态面包屑、44px 点击区、精确活动匹配，并补齐三主题 1440 × 900 对照；Chrome 结果 passed。
+最终结果：通过

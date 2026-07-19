@@ -15,44 +15,54 @@
 
 ```
 main ───────●────────────── (稳定版本)
-            └── develop ─── (集成分支)
-                  ├── feature/xxx  (功能模块分支)
-                  └── docs/xxx     (文档分支)
+            ├── codex/xxx   (Codex 开发分支)
+            ├── feature/xxx (功能分支)
+            └── docs/xxx    (文档分支)
 ```
 
-- `main`：只从 `develop` 合并，保持可运行
-- `develop`：日常集成
-- `feature/<模块名>`：按功能模块分，完成后合并回 `develop`
+- `main`：稳定集成基线，通过 Pull Request 合入
+- `codex/<任务名>`：Codex 创建的功能或重构分支
+- `feature/<模块名>`：人工创建的功能分支
+- `docs/<主题>`：仅修改文档的分支
 
 ## 日常流程
 
-1. 从 `develop` 拉出 feature 分支
-2. 开发 → 自测 → 提交 PR 到 `develop`
+1. 更新远端信息，从 `main` 拉出任务分支
+2. 开发 → 自测 → 提交 PR 到 `main`
 3. 另一人交叉测试通过后合并
-4. 阶段性从 `develop` 合并到 `main`
+4. 合并后删除远端任务分支
 
 ## Commit 规范
 
-简洁即可：
+使用 Conventional Commits：
 
 ```
 <类型>: <描述>
 
 类型：feat / fix / docs / refactor / chore
 示例：
-  feat: 实现知识库语义检索
-  fix: 修复渲染帧时间戳偏移
-  docs: 更新需求文档用户故事
+  feat(frontend): 实现推演参数编辑
+  fix(frontend): 修复渲染帧状态不同步
+  docs(frontend): 更新前端运行指南
 ```
 
 ## 代码风格
 
 - **Python**：ruff 格式化，mypy 类型检查
-- **前端**：ESLint + Prettier
+- **前端**：Oxlint、TypeScript、Vitest、Vite 生产构建
 - 风格配置随代码放在各自模块目录下，不在此赘述
+
+前端提交前运行：
+
+```bash
+npm --prefix web run verify
+npm --prefix web run lint
+```
 
 ## 文档约定
 
 - 需求文档、设计文档统一放在 `docs/` 目录
 - 架构或接口变更时，同步更新设计文档
 - 文档格式：Markdown
+- 英文文档必须在同目录提供 `.zh-CN.md` 中文版并互相链接
+- 前端运行和架构变更同步更新 `web/README.md`、`web/README.zh-CN.md` 与 `docs/前端架构与开发指南.md`

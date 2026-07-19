@@ -1,102 +1,68 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import { WorkbenchPage } from "./WorkbenchPage";
 
-it("composes Base UI triggers without React ref warnings", () => {
+it("renders the focused simulation workspace without React ref warnings", () => {
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
   try {
     renderWithProviders(<WorkbenchPage />);
-    const messages = consoleError.mock.calls.flat().join(" ");
-    expect(messages).not.toContain("Function components cannot be given refs");
+    expect(screen.getByRole("heading", { name: "互动推演" })).toBeVisible();
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Function components cannot be given refs");
   } finally {
     consoleError.mockRestore();
   }
 });
 
-it("turns a teaching brief into an observable mock plan", async () => {
+it("shows observable generation status when regeneration starts", () => {
   renderWithProviders(<WorkbenchPage />);
-  const brief = screen.getByRole("textbox", { name: "教学简报" });
-  await userEvent.clear(brief);
-  await userEvent.type(brief, "用 Dijkstra 演示校园最短路径");
-  await userEvent.click(screen.getByRole("button", { name: "生成推演计划" }));
-  expect(screen.getByRole("status")).toHaveTextContent("正在生成推演计划");
-  expect(screen.getByText("识别知识结构")).toBeVisible();
+  act(() => window.dispatchEvent(new Event("eduflow:regenerate")));
+  expect(screen.getByRole("status")).toHaveTextContent("正在生成第 3 帧");
+  expect(screen.getByText("松弛邻接边")).toBeVisible();
 });
 
-it("keeps workbench effects decorative while planning", async () => {
+it("keeps the generation effect decorative while planning", () => {
   renderWithProviders(<WorkbenchPage />);
-
-  await userEvent.click(screen.getByRole("button", { name: "生成推演计划" }));
-
-  expect(document.querySelector("main > [aria-hidden='true']")).toBeTruthy();
-  expect(screen.getByRole("status").querySelector("[aria-hidden='true']")).toBeTruthy();
+  act(() => window.dispatchEvent(new Event("eduflow:regenerate")));
+  expect(screen.getByTestId("workbench-regions").querySelector("[aria-hidden='true']")).toBeTruthy();
 });
 
 it("shows a mathematically consistent Dijkstra relaxation state", () => {
   renderWithProviders(<WorkbenchPage />);
-
-  expect(screen.getByRole("row", { name: "C 3 B 当前节点" })).toBeVisible();
-  expect(screen.getByRole("row", { name: "D 6 C 未访问" })).toBeVisible();
-  expect(screen.getByRole("row", { name: "E 6 C 未访问" })).toBeVisible();
-  expect(screen.getByRole("row", { name: "F 4 B 未访问" })).toBeVisible();
-  expect(screen.getByText(/本步将 D 与 E 的距离更新为 6/)).toBeVisible();
+  expect(screen.getByRole("row", { name: "C 3 A 当前节点" })).toBeVisible();
+  expect(screen.getByRole("row", { name: "D 9 B 未访问" })).toBeVisible();
+  expect(screen.getByRole("row", { name: "E 5 A 未访问" })).toBeVisible();
+  expect(screen.getByRole("row", { name: "F 7 C 未访问" })).toBeVisible();
+  expect(screen.getAllByText(/F 更新为 7/).length).toBeGreaterThan(0);
 });
 
-it("names every graph node state and edge endpoint for assistive technology", () => {
+it("names graph nodes and edge endpoints for assistive technology", () => {
   renderWithProviders(<WorkbenchPage />);
-
-  expect(
-    screen.getByRole("listitem", { name: "节点 C，当前节点，距离 3" }),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("listitem", { name: "节点 B，已确定，距离 2" }),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("listitem", { name: "节点 F，未访问，距离 4" }),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("listitem", { name: "边 A 到 B，权重 2" }),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("listitem", { name: "边 B 到 F，权重 2" }),
-  ).toBeVisible();
+  expect(screen.getByLabelText("节点 C，当前节点，距离 3")).toBeInTheDocument();
+  expect(screen.getByLabelText("节点 B，已确定，距离 2")).toBeInTheDocument();
+  expect(screen.getByLabelText("节点 F，未访问，距离 7")).toBeInTheDocument();
+  expect(screen.getByRole("listitem", { name: "边 A 到 B，权重 2" })).toBeInTheDocument();
 });
 
-it("programmatically labels the operable duration slider", () => {
+it("changes frames through playback controls and timeline", async () => {
   renderWithProviders(<WorkbenchPage />);
-
-  expect(screen.getByRole("slider", { name: "课堂时长" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "下一帧" }));
+  expect(screen.getByText("步骤 9 / 14")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "跳到第 8 帧" }));
+  expect(screen.getByText("步骤 8 / 14")).toBeVisible();
 });
 
-it("keeps collapsed-region controls discoverable at every breakpoint", () => {
+it("keeps all inspector modes keyboard discoverable", () => {
   renderWithProviders(<WorkbenchPage />);
-
-  expect(screen.getByRole("button", { name: "简报与约束" })).not.toHaveClass(
-    "hidden",
-  );
-  expect(screen.getByRole("button", { name: "推演序列 · 4 步" })).not.toHaveClass(
-    "hidden",
-  );
+  expect(screen.getByRole("tab", { name: "讲解" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "状态" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "参数" })).toBeVisible();
 });
 
-it("uses zero-minimum desktop columns to prevent shell overflow", () => {
+it("uses one dominant simulation region and prevents desktop overflow", () => {
   renderWithProviders(<WorkbenchPage />);
-
-  expect(screen.getByTestId("workbench-regions")).toHaveClass(
-    "xl:grid-cols-[minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,1.55fr)]",
-  );
-});
-
-it("keeps the desktop AI status inside the viewport workspace", () => {
-  renderWithProviders(<WorkbenchPage />);
-
-  expect(screen.getByTestId("workbench-page")).toHaveClass(
-    "xl:h-[calc(100svh-6.5rem)]",
-    "xl:overflow-hidden",
-  );
-  expect(screen.getByTestId("workbench-regions")).toHaveClass("xl:overflow-hidden");
-  expect(screen.getByRole("status")).toHaveClass("shrink-0");
+  expect(screen.getByTestId("workbench-page")).toHaveClass("lg:overflow-hidden");
+  expect(screen.getByTestId("workbench-regions")).toHaveClass("min-w-0", "flex-1");
+  expect(screen.getByRole("status")).toBeVisible();
 });

@@ -21,9 +21,9 @@ beforeEach(() => {
     }) as MediaQueryList;
 });
 
-it("defaults a light system to canvas", () => {
+it("defaults to the light theme regardless of system preference", () => {
   const { result } = renderHook(() => useTheme(), { wrapper: ThemeProvider });
-  expect(result.current.theme).toBe("canvas");
+  expect(result.current.theme).toBe("light");
 });
 
 it("persists a selected theme without replacing children", async () => {
@@ -34,7 +34,7 @@ it("persists a selected theme without replacing children", async () => {
     return (
       <>
         <button onClick={() => setEdits((count) => count + 1)}>编辑草稿</button>
-        <button onClick={() => setTheme("dawn")}>切换到晨光</button>
+        <button onClick={() => setTheme("dark")}>切换到深色</button>
         <span>草稿编辑次数：{edits}</span>
       </>
     );
@@ -48,11 +48,11 @@ it("persists a selected theme without replacing children", async () => {
 
   await userEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
   const stateNode = screen.getByText("草稿编辑次数：1");
-  await userEvent.click(screen.getByRole("button", { name: "切换到晨光" }));
+  await userEvent.click(screen.getByRole("button", { name: "切换到深色" }));
 
   expect(screen.getByText("草稿编辑次数：1")).toBe(stateNode);
-  expect(localStorage.getItem("eduflow-theme")).toBe("dawn");
-  expect(document.documentElement.dataset.theme).toBe("dawn");
+  expect(localStorage.getItem("eduflow-theme")).toBe("dark");
+  expect(document.documentElement.dataset.theme).toBe("dark");
 });
 
 it("keeps the pre-hydration script aligned with its exported source", () => {

@@ -1,5 +1,5 @@
 ---
-name: "🐛 Bug Report"
+name: "🐛 缺陷报告"
 about: "报告问题或 Bug"
 title: "fix(<scope>): "
 labels: ["bug"]
@@ -28,13 +28,12 @@ assignees: []
 
 <!-- 尽可能完整 -->
 
-- OS: [e.g. Windows 11 / macOS 14 / Ubuntu 24.04]
-- Python 版本: [e.g. 3.12.3]
-- Java 版本: [e.g. 21.0.1]
-- Node.js 版本: [e.g. 20.10]
-- Docker 版本: [e.g. 26.0]
-- 使用的 LLM: [e.g. DeepSeek-Coder-V3 / GPT-4o]
-- GPU: [e.g. NVIDIA T4 / 无]
+- 操作系统：[例如 Windows 11 / macOS 14 / Ubuntu 24.04]
+- Python 版本：[例如 3.12.3]
+- Node.js 版本：[例如 20.10]
+- Docker 版本：[例如 26.0]
+- 使用的大模型：[例如 DeepSeek / GPT]
+- GPU：[例如 NVIDIA T4 / 无]
 
 ## 日志/截图
 
@@ -46,10 +45,9 @@ assignees: []
 
 ## 影响模块
 
-- [ ] Python Agent Runtime
-- [ ] Java Spring Boot
-- [ ] Next.js 前端
-- [ ] MCP Server
+- [ ] Python Agent 运行时
+- [ ] React 前端
+- [ ] API 服务
 - [ ] Manim 视频渲染
 - [ ] Docker 部署
 - [ ] 数据库

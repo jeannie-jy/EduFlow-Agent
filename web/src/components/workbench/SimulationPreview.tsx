@@ -1,16 +1,18 @@
+import { useEffect, useMemo, useState } from "react";
 import {
-  InfoIcon,
+  BotIcon,
+  CheckCircle2Icon,
   PauseIcon,
   PlayIcon,
   RotateCcwIcon,
   SkipBackIcon,
   SkipForwardIcon,
 } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -20,193 +22,248 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import type { GenerationState } from "./AiStatusStrip";
+import { SimulationGraph } from "./SimulationGraph";
+import {
+  getDistanceLabel,
+  graphNodeIds,
+  simulationFrames,
+} from "./simulation-model";
 
-const nodes = [
-  { id: "A", distance: "0", x: 10, y: 52, state: "fixed" },
-  { id: "B", distance: "2", x: 34, y: 20, state: "fixed" },
-  { id: "C", distance: "3", x: 45, y: 52, state: "current" },
-  { id: "D", distance: "6", x: 23, y: 82, state: "unvisited" },
-  { id: "E", distance: "6", x: 70, y: 76, state: "unvisited" },
-  { id: "F", distance: "4", x: 84, y: 35, state: "unvisited" },
-] as const;
+type SimulationPreviewProps = {
+  frame: number;
+  generation: GenerationState;
+  onFrameChange: (frame: number) => void;
+  onRegenerate: () => void;
+};
 
-const edges = [
-  { key: "ab", from: "A", to: "B", label: "2", left: 12, top: 49, width: 29, rotate: -38 },
-  { key: "ac", from: "A", to: "C", label: "5", left: 13, top: 52, width: 30, rotate: 0 },
-  { key: "ad", from: "A", to: "D", label: "9", left: 13, top: 55, width: 23, rotate: 48 },
-  { key: "bc", from: "B", to: "C", label: "1", left: 36, top: 24, width: 28, rotate: 68 },
-  { key: "bf", from: "B", to: "F", label: "2", left: 38, top: 21, width: 45, rotate: 16 },
-  { key: "cd", from: "C", to: "D", label: "3", left: 28, top: 74, width: 24, rotate: -48 },
-  { key: "ce", from: "C", to: "E", label: "3", left: 48, top: 55, width: 27, rotate: 34 },
-  { key: "cf", from: "C", to: "F", label: "4", left: 49, top: 49, width: 35, rotate: -25 },
-  { key: "de", from: "D", to: "E", label: "5", left: 27, top: 82, width: 43, rotate: -6 },
-  { key: "ef", from: "E", to: "F", label: "1", left: 72, top: 72, width: 39, rotate: -66 },
-];
+export function SimulationPreview({
+  frame,
+  generation,
+  onFrameChange,
+  onRegenerate,
+}: SimulationPreviewProps) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const currentFrame = simulationFrames[Math.min(simulationFrames.length - 1, Math.max(0, frame - 1))];
+  const totalFrames = simulationFrames.length;
 
-const distanceRows = [
-  { node: "A", distance: "0", previous: "—", status: "已确定" },
-  { node: "B", distance: "2", previous: "A", status: "已确定" },
-  { node: "C", distance: "3", previous: "B", status: "当前节点" },
-  { node: "D", distance: "6", previous: "C", status: "未访问" },
-  { node: "E", distance: "6", previous: "C", status: "未访问" },
-  { node: "F", distance: "4", previous: "B", status: "未访问" },
-];
+  useEffect(() => {
+    if (!isPlaying) return;
+    const timer = window.setInterval(() => {
+      onFrameChange(frame >= totalFrames ? 1 : frame + 1);
+    }, 1400);
+    return () => window.clearInterval(timer);
+  }, [frame, isPlaying, onFrameChange, totalFrames]);
 
-const nodeStateLabels = {
-  fixed: "已确定",
-  current: "当前节点",
-  unvisited: "未访问",
-} as const;
-
-function LegendDot({ state }: { state: (typeof nodes)[number]["state"] }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "size-2 rounded-full",
-        state === "fixed" && "bg-primary",
-        state === "current" && "bg-destructive",
-        state === "unvisited" && "bg-muted-foreground",
-      )}
-    />
+  const distanceRows = useMemo(
+    () =>
+      graphNodeIds.map((node) => ({
+        node,
+        distance: getDistanceLabel(currentFrame.distances[node]),
+        previous: currentFrame.predecessors[node] ?? "—",
+        status:
+          currentFrame.currentNode === node
+            ? "当前节点"
+            : currentFrame.settledNodes.includes(node)
+              ? "已确定"
+              : "未访问",
+      })),
+    [currentFrame],
   );
-}
 
-export function SimulationPreview() {
+  const relaxationCount = useMemo(
+    () =>
+      simulationFrames
+        .slice(0, frame)
+        .reduce((count, item) => count + item.changedEdges.length, 0),
+    [frame],
+  );
+
+  const settledLabel = currentFrame.settledNodes.length
+    ? `{ ${currentFrame.settledNodes.join(", ")} }`
+    : "∅";
+
   return (
     <section
-      aria-labelledby="preview-heading"
-      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card md:col-span-2 xl:col-span-1"
+      aria-labelledby="simulation-heading"
+      className="grid min-h-0 min-w-0 overflow-hidden rounded-xl border bg-card shadow-[0_1px_3px_color-mix(in_oklch,var(--foreground)_5%,transparent)] lg:h-full lg:grid-cols-[minmax(0,1fr)_18rem]"
     >
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4">
-        <div className="flex items-start gap-3">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-            3
-          </span>
-          <div>
-            <h2 id="preview-heading" className="font-semibold tracking-tight">
-              互动预览
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              预览可讲、可停、可复盘的算法过程
-            </p>
+      <div className="flex min-h-[38rem] min-w-0 flex-col lg:min-h-0">
+        <header className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5">
+          <div className="flex items-center gap-3">
+            <div>
+              <h2 id="simulation-heading" className="text-[15px] font-semibold tracking-[-0.01em]">互动推演</h2>
+              <p className="text-xs text-muted-foreground">逐帧观察选点、松弛与距离变化</p>
+            </div>
+            <Badge variant="outline" className="font-normal">源点 A</Badge>
           </div>
-        </div>
-        <Badge variant="outline">步骤 3 / 14</Badge>
-      </header>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="size-2 rounded-full bg-success" aria-hidden="true" />
+            状态同步
+          </div>
+        </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold tracking-tight">Dijkstra 最短路径算法</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              当前选择距离最小的节点 C，并更新相邻节点。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2" aria-label="节点状态图例">
-            <Badge variant="outline"><LegendDot state="fixed" />已确定</Badge>
-            <Badge variant="outline"><LegendDot state="current" />当前节点</Badge>
-            <Badge variant="outline"><LegendDot state="unvisited" />未访问</Badge>
-          </div>
-        </div>
-
-        <div className="grid min-h-0 min-w-0 flex-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,0.62fr)]">
-          <figure className="relative min-h-80 min-w-0 overflow-hidden rounded-xl border bg-muted/20">
+        <div className="flex min-h-0 flex-1 flex-col gap-2.5 p-2.5 sm:gap-3 sm:p-3">
+          <figure className="relative min-h-[22rem] flex-1 overflow-hidden rounded-lg border border-primary/35 bg-[var(--stage-bg)] sm:min-h-[26rem] lg:min-h-0">
             <figcaption className="sr-only">
-              六节点 Dijkstra 演示图，节点 C 为当前节点
+              Dijkstra 六节点交互图，当前节点为 {currentFrame.currentNode}
             </figcaption>
-            <ol className="absolute inset-4" aria-label="Dijkstra 六节点图">
-              {edges.map((edge) => (
-                <li
-                  key={edge.key}
-                  aria-label={`边 ${edge.from} 到 ${edge.to}，权重 ${edge.label}`}
-                  className="absolute h-px origin-left bg-border"
-                  style={{
-                    left: `${edge.left}%`,
-                    top: `${edge.top}%`,
-                    width: `${edge.width}%`,
-                    transform: `rotate(${edge.rotate}deg)`,
-                  }}
-                >
-                  <span className="absolute -top-5 left-1/2 rounded bg-card px-1 text-xs tabular-nums text-muted-foreground">
-                    {edge.label}
-                  </span>
-                </li>
-              ))}
-              {nodes.map((node) => (
-                <li
-                  key={node.id}
-                  aria-label={`节点 ${node.id}，${nodeStateLabels[node.state]}，距离 ${node.distance}`}
-                  className={cn(
-                    "absolute flex size-12 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 text-sm font-semibold shadow-sm",
-                    node.state === "fixed" && "border-primary bg-primary text-primary-foreground",
-                    node.state === "current" && "border-destructive bg-destructive text-white",
-                    node.state === "unvisited" && "border-border bg-card text-card-foreground",
-                  )}
-                  style={{ left: `${node.x}%`, top: `${node.y}%` }}
-                >
-                  <span>{node.id}</span>
-                  <span className="text-[0.65rem] font-normal">{node.distance}</span>
-                </li>
-              ))}
-            </ol>
+            <SimulationGraph frame={currentFrame} />
+            <div className="pointer-events-none absolute top-3 left-3 rounded-md border border-success/30 bg-card/88 px-2.5 py-1 text-xs font-medium text-success backdrop-blur">
+              源点 A
+            </div>
+            <div className="pointer-events-none absolute top-3 right-3 hidden items-center gap-3 rounded-md border bg-card/88 px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur sm:flex">
+              <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />当前节点</span>
+              <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-success" />已确定</span>
+              <span className="flex items-center gap-1.5"><span className="h-0 w-4 border-t-2 border-dashed border-primary" />本帧更新</span>
+            </div>
           </figure>
 
-          <div className="min-w-0 overflow-hidden rounded-xl border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>节点</TableHead>
-                  <TableHead>距离</TableHead>
-                  <TableHead>前驱</TableHead>
-                  <TableHead>状态</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {distanceRows.map((row) => (
-                  <TableRow key={row.node} data-state={row.node === "C" ? "selected" : undefined}>
-                    <TableCell className="font-medium">{row.node}</TableCell>
-                    <TableCell className="tabular-nums">{row.distance}</TableCell>
-                    <TableCell>{row.previous}</TableCell>
-                    <TableCell>{row.status}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className="flex shrink-0 items-start gap-3 rounded-lg border bg-muted/35 px-3 py-2 text-sm">
+            <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <BotIcon className="size-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <p className="font-medium text-primary">AI 讲解</p>
+                <Badge variant="secondary" className="font-normal">{currentFrame.title}</Badge>
+              </div>
+              <p className="mt-0.5 leading-5 text-muted-foreground sm:leading-6">
+                {currentFrame.narration}
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <ButtonGroup aria-label="演示播放控制">
-            <Button type="button" variant="outline" size="icon" aria-label="上一步">
-              <SkipBackIcon />
-            </Button>
-            <Button type="button" size="icon" aria-label="播放演示">
-              <PlayIcon />
-            </Button>
-            <Button type="button" variant="outline" size="icon" aria-label="下一步">
-              <SkipForwardIcon />
-            </Button>
-          </ButtonGroup>
-          <Progress value={24} aria-label="演示进度" className="min-w-40 flex-1" />
-          <Button type="button" variant="outline" size="sm">
-            <RotateCcwIcon data-icon="inline-start" />
-            重置
-          </Button>
-          <Button type="button" variant="ghost" size="sm">
-            <PauseIcon data-icon="inline-start" />
-            暂停点
-          </Button>
-        </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 px-1 sm:gap-3">
+            <div className="mr-2 text-sm font-medium">
+              步骤 <span className="text-primary tabular-nums">{frame}</span>{" "}
+              <span className="text-muted-foreground">/ {totalFrames}</span>
+            </div>
+            <ButtonGroup aria-label="演示播放控制">
+              <Button variant="outline" onClick={() => onFrameChange(Math.max(1, frame - 1))} disabled={frame === 1}>
+                <SkipBackIcon data-icon="inline-start" />上一帧
+              </Button>
+              <Button onClick={() => setIsPlaying((value) => !value)} aria-label={isPlaying ? "暂停演示" : "播放演示"}>
+                {isPlaying ? <PauseIcon data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
+                {isPlaying ? "暂停" : "播放"}
+              </Button>
+              <Button variant="outline" onClick={() => onFrameChange(Math.min(totalFrames, frame + 1))} disabled={frame === totalFrames}>
+                下一帧<SkipForwardIcon data-icon="inline-end" />
+              </Button>
+            </ButtonGroup>
+            <div className="ml-auto flex items-center gap-2 max-sm:w-full max-sm:justify-end">
+              <Button variant="ghost" size="sm" onClick={() => { onFrameChange(1); setIsPlaying(false); }}>
+                <RotateCcwIcon data-icon="inline-start" />重置
+              </Button>
+              <Button variant="outline" size="sm">速度 1×</Button>
+            </div>
+          </div>
 
-        <Alert>
-          <InfoIcon />
-          <AlertTitle>本步更新规则</AlertTitle>
-          <AlertDescription>
-            若 dist[C] + w(C, v) &lt; dist[v]，则更新 dist[v] 与前驱。本步将 D 与 E 的距离更新为 6；F 通过 B 保持为 4。
-          </AlertDescription>
-        </Alert>
+          <ol className="grid shrink-0 grid-cols-7 items-center gap-1 px-1 sm:[grid-template-columns:repeat(14,minmax(0,1fr))]" aria-label="推演时间轴">
+            {simulationFrames.map((item) => (
+              <li key={item.id} className="flex min-w-0 flex-col items-center gap-1">
+                <button
+                  type="button"
+                  title={item.title}
+                  aria-label={`跳到第 ${item.id} 帧`}
+                  aria-current={item.id === frame ? "step" : undefined}
+                  onClick={() => onFrameChange(item.id)}
+                  className={cn(
+                    "size-3 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    item.id < frame && "border-primary bg-primary",
+                    item.id === frame && "size-5 border-primary bg-primary text-[9px] text-primary-foreground",
+                    item.id > frame && "border-border bg-muted",
+                  )}
+                >
+                  {item.id === frame ? item.id : <span className="sr-only">第 {item.id} 帧</span>}
+                </button>
+                <span className={cn("text-[10px] tabular-nums text-muted-foreground", item.id === frame && "font-medium text-primary")}>{item.id}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
       </div>
+
+      <aside aria-label="推演检查器" className="min-h-[26rem] min-w-0 overflow-hidden border-t bg-card lg:min-h-0 lg:border-t-0 lg:border-l">
+        <Tabs defaultValue="state" className="h-full min-h-0 flex-col gap-0">
+          <TabsList variant="line" className="h-12 w-full! justify-stretch border-b px-3">
+            <TabsTrigger value="lecture">讲解</TabsTrigger>
+            <TabsTrigger value="state">状态</TabsTrigger>
+            <TabsTrigger value="params">参数</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="lecture" className="min-h-0 w-full flex-1 overflow-y-auto p-4">
+            <h3 className="font-semibold">{currentFrame.title}</h3>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">{currentFrame.narration}</p>
+            <Button className="mt-4 w-full" variant="outline" onClick={onRegenerate}>优化本帧讲解</Button>
+          </TabsContent>
+
+          <TabsContent value="state" className="min-h-0 w-full flex-1 overflow-y-auto p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-semibold">当前节点 {currentFrame.currentNode}</h3>
+              <Badge variant="secondary">步骤 {frame} / {totalFrames}</Badge>
+            </div>
+            <dl className="mt-4 grid grid-cols-[1fr_auto] gap-x-3 gap-y-3 text-sm">
+              <dt className="text-muted-foreground">当前阶段</dt><dd>{currentFrame.title}</dd>
+              <dt className="text-muted-foreground">确定距离</dt><dd className="tabular-nums">{getDistanceLabel(currentFrame.distances[currentFrame.currentNode])}</dd>
+              <dt className="text-muted-foreground">已确定集合</dt><dd>{settledLabel}</dd>
+            </dl>
+            <div className="my-5 border-t" />
+            <h3 className="mb-3 text-sm font-semibold">距离表</h3>
+            <div className="overflow-hidden rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>节点</TableHead><TableHead>距离</TableHead><TableHead>前驱</TableHead><TableHead><span className="sr-only">状态</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {distanceRows.map((row) => (
+                    <TableRow key={row.node} data-state={row.status === "当前节点" ? "selected" : undefined}>
+                      <TableCell className="font-medium">{row.node}</TableCell>
+                      <TableCell className="tabular-nums">{row.distance}</TableCell>
+                      <TableCell>{row.previous}</TableCell>
+                      <TableCell>
+                        <span className="sr-only">{row.status}</span>
+                        {row.status === "已确定" ? (
+                          <CheckCircle2Icon className="size-3.5 text-success" aria-hidden="true" />
+                        ) : (
+                          <span className={cn("block size-2.5 rounded-full border", row.status === "当前节点" ? "border-primary bg-primary ring-2 ring-primary/20" : "border-muted-foreground/45")} aria-hidden="true" />
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="my-5 border-t" />
+            <h3 className="mb-3 text-sm font-semibold">算法状态</h3>
+            <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-3 text-sm">
+              <dt className="text-muted-foreground">源点</dt><dd>A</dd>
+              <dt className="text-muted-foreground">已确定节点</dt><dd>{currentFrame.settledNodes.length} / {graphNodeIds.length}</dd>
+              <dt className="text-muted-foreground">剩余节点</dt><dd>{graphNodeIds.length - currentFrame.settledNodes.length}</dd>
+              <dt className="text-muted-foreground">有效松弛</dt><dd>{relaxationCount}</dd>
+            </dl>
+          </TabsContent>
+
+          <TabsContent value="params" className="min-h-0 w-full flex-1 overflow-y-auto p-4">
+            <h3 className="font-semibold">推演参数</h3>
+            <label className="mt-4 block text-sm font-medium" htmlFor="source-node">源点</label>
+            <select id="source-node" className="mt-2 h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" defaultValue="A">
+              <option>A</option><option>B</option><option>C</option>
+            </select>
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <label htmlFor="show-weights" className="text-sm font-medium">显示边权重</label>
+              <Switch id="show-weights" defaultChecked />
+            </div>
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <label htmlFor="auto-narration" className="text-sm font-medium">自动讲解</label>
+              <Switch id="auto-narration" defaultChecked />
+            </div>
+            <Button className="mt-6 w-full" disabled={generation === "planning"} onClick={onRegenerate}>应用并重新生成</Button>
+          </TabsContent>
+        </Tabs>
+      </aside>
     </section>
   );
 }

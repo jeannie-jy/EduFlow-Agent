@@ -1,5 +1,5 @@
 ---
-name: "✨ Feature Request"
+name: "✨ 功能建议"
 about: "提出新功能需求"
 title: "feat(<scope>): "
 labels: ["enhancement"]
@@ -47,7 +47,7 @@ assignees: []
 - [ ] P0 - 阻塞开发
 - [ ] P1 - 当前里程碑必须
 - [ ] P2 - 下个里程碑
-- [ ] P3 - Nice to have
+- [ ] P3 - 可选增强
 
 ## 补充信息
 

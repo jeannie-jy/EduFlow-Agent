@@ -1,4 +1,4 @@
-import { PaletteIcon } from "lucide-react";
+import { MoonIcon, SunIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,16 +14,16 @@ import { useTheme } from "@/theme/ThemeProvider";
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
   const currentTheme = THEMES.find(({ id }) => id === theme) ?? THEMES[0];
+  const Icon = theme === "dark" ? MoonIcon : SunIcon;
 
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          className={buttonVariants({ variant: "outline" })}
+          className={buttonVariants({ variant: "outline", size: "icon" })}
           aria-label={`主题：${currentTheme.label}`}
         >
-          <PaletteIcon data-icon="inline-start" />
-          <span>主题：{currentTheme.label}</span>
+          <Icon aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuRadioGroup
@@ -32,9 +32,10 @@ export function ThemeSwitcher() {
               if (isThemeId(value)) setTheme(value);
             }}
           >
-            <DropdownMenuLabel>界面主题</DropdownMenuLabel>
+            <DropdownMenuLabel>外观</DropdownMenuLabel>
             {THEMES.map(({ id, label }) => (
               <DropdownMenuRadioItem key={id} value={id} closeOnClick>
+                {id === "light" ? <SunIcon /> : <MoonIcon />}
                 {label}
               </DropdownMenuRadioItem>
             ))}

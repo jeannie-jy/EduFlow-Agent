@@ -1,14 +1,17 @@
 import {
+  BookOpenIcon,
+  CirclePlayIcon,
   DownloadIcon,
-  LayoutDashboardIcon,
+  FileClockIcon,
+  FolderClockIcon,
+  GraduationCapIcon,
   LayoutTemplateIcon,
   PencilRulerIcon,
-  SparklesIcon,
+  PlusIcon,
 } from "lucide-react";
 import { matchPath, NavLink, useLocation } from "react-router-dom";
 import { EduFlowBrand } from "@/components/brand/EduFlowBrand";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import {
   Sidebar,
   SidebarContent,
@@ -25,12 +28,19 @@ import {
 } from "@/components/ui/sidebar";
 
 const navigationItems = [
-  { label: "工作台", to: "/", icon: LayoutDashboardIcon, end: true },
-  { label: "新建推演", to: "/new", icon: SparklesIcon, end: false },
-  { label: "教师编辑器", to: "/project/demo/edit", icon: PencilRulerIcon, end: false },
+  { label: "教学路径", to: "/project/demo/plan", icon: GraduationCapIcon, end: false },
+  { label: "互动推演", to: "/", icon: CirclePlayIcon, end: true },
   { label: "模板库", to: "/templates", icon: LayoutTemplateIcon, end: false },
+  { label: "教师编辑器", to: "/project/demo/edit", icon: PencilRulerIcon, end: false },
   { label: "导出中心", to: "/project/demo/export", icon: DownloadIcon, end: false },
 ] as const;
+
+const recentItems = [
+  { label: "Dijkstra 最短路径", time: "刚刚" },
+  { label: "Prim 最小生成树", time: "昨天" },
+  { label: "拓扑排序", time: "2 天前" },
+  { label: "BFS 广度优先搜索", time: "3 天前" },
+];
 
 export function AppSidebar() {
   const { state, isMobile, setOpenMobile } = useSidebar();
@@ -38,7 +48,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader>
+      <SidebarHeader className="gap-3 border-b border-sidebar-border/70 p-3">
         <NavLink
           to="/"
           className="flex min-h-11 items-center rounded-md px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
@@ -46,10 +56,21 @@ export function AppSidebar() {
         >
           <EduFlowBrand compact={state === "collapsed"} />
         </NavLink>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<NavLink to="/new" aria-label="新建推演" />}
+              className="min-h-10 bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 hover:text-sidebar-primary-foreground"
+            >
+              <PlusIcon />
+              <span>新建推演</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>教学空间</SidebarGroupLabel>
+          <SidebarGroupLabel>工作区</SidebarGroupLabel>
           <SidebarGroupContent>
             <nav aria-label="主导航">
               <SidebarMenu>
@@ -84,22 +105,43 @@ export function AppSidebar() {
             </nav>
           </SidebarGroupContent>
         </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>最近推演</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {recentItems.map((item, index) => (
+                <SidebarMenuItem key={item.label}>
+                  <SidebarMenuButton
+                    render={<NavLink to={index === 0 ? "/" : "/project/demo/play"} title={state === "collapsed" ? item.label : undefined} />}
+                    isActive={index === 0 && pathname === "/"}
+                    className="min-h-10"
+                  >
+                    {index === 0 ? <FolderClockIcon /> : <FileClockIcon />}
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    <span className="text-[10px] text-sidebar-foreground/55">{item.time}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="lg"
-              tooltip="教师账户"
-              aria-label="教师账户"
+              tooltip="计算机科学与技术"
+              aria-label="当前课程：计算机科学与技术"
             >
               <Avatar size="sm">
-                <AvatarFallback>教</AvatarFallback>
+                <AvatarFallback className="bg-primary/12 text-primary">CS</AvatarFallback>
               </Avatar>
               <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-                <span className="truncate font-medium">教师工作区</span>
-                <Badge variant="secondary">教师</Badge>
+                <span className="truncate font-medium">计算机科学与技术</span>
+                <span className="text-xs text-sidebar-foreground/55">本科 2022 级</span>
               </span>
+              <BookOpenIcon className="text-sidebar-foreground/50" />
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

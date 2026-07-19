@@ -1,37 +1,42 @@
-import { useState } from "react";
-import { WorkspaceGrid } from "@/components/effects/WorkspaceGrid";
-import { AiStatusStrip, type GenerationState } from "./AiStatusStrip";
+import { useCallback, useEffect, useState } from "react";
+import { GenerationBorder } from "@/components/effects/GenerationBorder";
+import type { GenerationState } from "./AiStatusStrip";
 import { PlanSequence } from "./PlanSequence";
 import { SimulationPreview } from "./SimulationPreview";
-import { TeachingBrief } from "./TeachingBrief";
 
 export function WorkbenchPage() {
   const [generation, setGeneration] = useState<GenerationState>("idle");
-  const [brief, setBrief] = useState(
-    "演示 Dijkstra 最短路径算法，并解释每一步如何更新距离表",
-  );
+  const [planStep, setPlanStep] = useState(3);
+  const [frame, setFrame] = useState(8);
+
+  const regenerate = useCallback(() => {
+    setGeneration("planning");
+    setPlanStep(3);
+    setFrame(8);
+    window.setTimeout(() => setGeneration("ready"), 1600);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("eduflow:regenerate", regenerate);
+    return () => window.removeEventListener("eduflow:regenerate", regenerate);
+  }, [regenerate]);
 
   return (
     <main
       data-testid="workbench-page"
-      className="relative flex min-h-[calc(100svh-7.5rem)] min-w-0 flex-col gap-3 xl:h-[calc(100svh-6.5rem)] xl:overflow-hidden"
+      className="flex min-h-[calc(100svh-5rem)] min-w-0 flex-col gap-2.5 lg:h-full lg:min-h-0 lg:overflow-hidden"
     >
-      <WorkspaceGrid />
-      <h1 className="relative sr-only">教学工作台</h1>
-      <div
-        data-testid="workbench-regions"
-        className="relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,1.55fr)] xl:overflow-hidden"
-      >
-        <TeachingBrief
-          brief={brief}
-          isPlanning={generation === "planning"}
-          onBriefChange={setBrief}
-          onGenerate={() => setGeneration("planning")}
+      <h1 className="sr-only">教学工作台</h1>
+      <PlanSequence generation={generation} activeStep={planStep} onStepChange={setPlanStep} />
+      <div data-testid="workbench-regions" className="relative min-h-0 min-w-0 flex-1 lg:overflow-hidden">
+        <SimulationPreview
+          frame={frame}
+          generation={generation}
+          onFrameChange={setFrame}
+          onRegenerate={regenerate}
         />
-        <PlanSequence isPlanning={generation === "planning"} />
-        <SimulationPreview />
+        <GenerationBorder generation={generation} />
       </div>
-      <AiStatusStrip generation={generation} onRecover={() => setGeneration("idle")} />
     </main>
   );
 }

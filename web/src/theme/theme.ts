@@ -1,7 +1,6 @@
 export const THEMES = [
-  { id: "dawn", label: "晨光" },
-  { id: "deep", label: "深海" },
-  { id: "canvas", label: "画布" },
+  { id: "light", label: "浅色" },
+  { id: "dark", label: "深色" },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
@@ -14,7 +13,5 @@ export const isThemeId = (value: string | null): value is ThemeId =>
 export function resolveInitialTheme(): ThemeId {
   const saved = localStorage.getItem(THEME_STORAGE_KEY);
   if (isThemeId(saved)) return saved;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches
-    ? "deep"
-    : "canvas";
+  return "light";
 }

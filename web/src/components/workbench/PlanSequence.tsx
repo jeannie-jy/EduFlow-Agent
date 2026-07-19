@@ -1,132 +1,73 @@
-import {
-  BrainCircuitIcon,
-  ChevronDownIcon,
-  MonitorPlayIcon,
-  RouteIcon,
-  ShieldCheckIcon,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item";
-
-type PlanSequenceProps = {
-  isPlanning: boolean;
-};
+import { CheckIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { AiStatusStrip, type GenerationState } from "./AiStatusStrip";
 
 const planSteps = [
-  {
-    title: "识别知识结构",
-    description: "提取最短路径、松弛与已确定节点",
-    duration: "4 分钟",
-    icon: BrainCircuitIcon,
-  },
-  {
-    title: "设计教学路径",
-    description: "从直觉问题过渡到距离表更新规则",
-    duration: "8 分钟",
-    icon: RouteIcon,
-  },
-  {
-    title: "生成交互演示",
-    description: "逐步展示选点、松弛与前驱变化",
-    duration: "18 分钟",
-    icon: MonitorPlayIcon,
-  },
-  {
-    title: "复核讲解与状态",
-    description: "核对算法结论并设计课堂追问",
-    duration: "5 分钟",
-    icon: ShieldCheckIcon,
-  },
+  { title: "初始化", description: "设置源点与初始距离" },
+  { title: "选择最小距离节点", description: "选择当前最优节点" },
+  { title: "松弛邻接边", description: "更新相邻节点距离" },
+  { title: "重复直至完成", description: "所有节点确定最短距离" },
 ];
 
-export function PlanSequence({ isPlanning }: PlanSequenceProps) {
+type PlanSequenceProps = {
+  generation: GenerationState;
+  activeStep: number;
+  onStepChange: (step: number) => void;
+};
+
+export function PlanSequence({ generation, activeStep, onStepChange }: PlanSequenceProps) {
   return (
-    <section
-      aria-labelledby="plan-heading"
-      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
-    >
-      <header className="flex items-start gap-3 border-b px-4 py-4">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-          2
-        </span>
-        <div>
-          <h2 id="plan-heading" className="font-semibold tracking-tight">
-            教学规划
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            AI 组织可执行的教学流程
-          </p>
-        </div>
-      </header>
-
-      <Collapsible defaultOpen className="flex min-h-0 flex-1 flex-col">
-        <CollapsibleTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mx-3 mt-3 flex justify-between"
-            />
-          }
-        >
-          推演序列 · {planSteps.length} 步
-          <ChevronDownIcon data-icon="inline-end" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="min-h-0 flex-1">
-          <div className="h-full max-h-[34rem] overflow-y-auto xl:max-h-none">
-            <div className="p-4">
-              <ItemGroup className="relative gap-3 before:absolute before:top-7 before:bottom-7 before:left-7 before:w-px before:bg-border">
-                {planSteps.map((step, index) => {
-                  const Icon = step.icon;
-                  const active = isPlanning && index === 2;
-
-                  return (
-                    <Item
-                      key={step.title}
-                      role="listitem"
-                      variant={active ? "muted" : "outline"}
-                      aria-current={active ? "step" : undefined}
-                      className="relative bg-card"
-                    >
-                      <ItemMedia>
-                        <span className="flex size-8 items-center justify-center rounded-full border bg-background text-primary">
-                          <Icon className="size-4" aria-hidden="true" />
-                        </span>
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{step.title}</ItemTitle>
-                        <ItemDescription>{step.description}</ItemDescription>
-                      </ItemContent>
-                      <ItemActions>
-                        {active ? (
-                          <Badge>生成中</Badge>
-                        ) : (
-                          <Badge variant="secondary">{step.duration}</Badge>
-                        )}
-                      </ItemActions>
-                    </Item>
-                  );
-                })}
-              </ItemGroup>
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+    <section aria-labelledby="plan-heading" className="shrink-0 overflow-hidden rounded-xl border bg-card px-3 py-3 shadow-[0_1px_2px_color-mix(in_oklch,var(--foreground)_4%,transparent)] sm:px-4">
+      <div className="mb-2.5 flex items-center justify-between gap-4">
+        <h2 id="plan-heading" className="text-xs font-medium tracking-wide text-muted-foreground">
+          AI 推演计划
+        </h2>
+        <AiStatusStrip generation={generation} />
+      </div>
+      <ol className="no-scrollbar grid min-w-0 auto-cols-[minmax(10rem,1fr)] grid-flow-col grid-cols-none gap-2 overflow-x-auto pb-1 sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-2 sm:overflow-visible sm:pb-0 lg:grid-cols-4" aria-label="教学路径">
+        {planSteps.map((step, index) => {
+          const number = index + 1;
+          const complete = number < activeStep;
+          const active = number === activeStep;
+          return (
+            <li key={step.title} className="relative min-w-0">
+              {index < planSteps.length - 1 ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute top-4 left-[calc(100%-0.35rem)] hidden h-px w-[calc(100%-2.25rem)] -translate-x-full lg:block",
+                    complete ? "plan-flow-line" : "bg-border",
+                  )}
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onStepChange(number)}
+                aria-current={active ? "step" : undefined}
+                className={cn(
+                  "group relative z-10 flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active && "bg-accent/70",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold tabular-nums",
+                    complete && "border-primary bg-primary text-primary-foreground",
+                    active && "border-primary bg-background text-primary ring-4 ring-primary/10",
+                    !complete && !active && "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {complete ? <CheckIcon className="size-3.5" aria-hidden="true" /> : number}
+                </span>
+                <span className="min-w-0 pt-0.5">
+                  <span className={cn("block truncate text-[13px] font-medium", active && "text-primary")}>{step.title}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{step.description}</span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
