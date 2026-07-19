@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session
 from schema.project import FeedbackRequest
-from .deps import parse_project_id
+from .deps import parse_project_id, safe_project_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +78,11 @@ async def submit_feedback(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 持久化反馈
+    # 持久化反馈（safe_project_uuid 避免非法 UUID → 500）
     feedback = Feedback(
         id=uuid.uuid4(),
         project_id=pid,
-        frame_id=uuid.UUID(body.frame_id) if body.frame_id else None,
+        frame_id=safe_project_uuid(body.frame_id) if body.frame_id else None,
         type=body.type,
         content=body.content,
         rating=body.rating,
@@ -94,7 +94,7 @@ async def submit_feedback(
     logger.info("反馈已持久化: id=%s | project=%s | frame=%s | type=%s | rating=%s",
                 feedback.id, project_id, body.frame_id, body.type, body.rating)
 
-    # 触发反思修订
+    # 触发反思修订（后台任务，不阻塞 HTTP 响应）
     should_reflect = False
     if body.type == "correction" and body.frame_id:
         should_reflect = True
@@ -106,8 +106,9 @@ async def submit_feedback(
     if should_reflect and project.dsl_snapshot:
         try:
             import asyncio
+            # 不传 request 级 session —— 后台任务用独立 session
             asyncio.create_task(
-                _trigger_reflection(project_id, pid, project.dsl_snapshot, feedback, session)
+                _trigger_reflection(project_id, pid, project.dsl_snapshot, feedback)
             )
             logger.info("反思修订已触发（后台）: project=%s", project_id)
         except Exception as exc:
@@ -121,11 +122,15 @@ async def _trigger_reflection(
     pid,
     dsl: dict,
     feedback,
-    session: AsyncSession,
 ) -> None:
-    """触发 Reflection Agent 根据反馈内容修正 DSL，并持久化结果。"""
+    """触发 Reflection Agent 根据反馈内容修正 DSL，并持久化结果。
+
+    使用独立的 async_session（不依赖请求级 session，避免 ResourceClosedError）。
+    """
     from agents.state import AgentState
     from agents.nodes import reflection_node
+    from db.database import async_session_factory
+    from db.models import Project as ProjectModel
 
     state: AgentState = {
         "project_id": project_id,
@@ -150,19 +155,17 @@ async def _trigger_reflection(
         logger.info("Reflection 完成: modified=%d",
                     len(result.get("revision_history", [])))
 
-        # 持久化修订结果
-        from db.models import Project as ProjectModel
-        project = await session.get(ProjectModel, pid)
-        if project and revised_dsl != project.dsl_snapshot:
-            project.dsl_snapshot = revised_dsl
-            await session.flush()
-            await session.commit()
-            logger.info("修订 DSL 已保存: project=%s", project_id)
+        # 持久化修订结果（独立 session）
+        async with async_session_factory() as bg_session:
+            project = await bg_session.get(ProjectModel, pid)
+            if project and revised_dsl != project.dsl_snapshot:
+                project.dsl_snapshot = revised_dsl
+                await bg_session.commit()
+                logger.info("修订 DSL 已保存: project=%s", project_id)
+
+            # 仅在成功时标记 resolved
+            feedback.resolved = True
+            bg_session.add(feedback)
+            await bg_session.commit()
     except Exception as exc:
         logger.exception("Reflection 修订失败: %s", exc)
-
-    # 标记反馈已处理
-    feedback.resolved = True
-    session.add(feedback)
-    await session.flush()
-    await session.commit()

@@ -17,6 +17,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session, get_readonly_session
+from schema.project import CreateVersionRequest
 from .deps import parse_project_id, safe_project_uuid
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ async def save_version(
     from db.models import ProjectVersion
 
     # 获取当前最大版本号
+    # NOTE: SELECT MAX + INSERT 在并发下有 TOCTOU 竞态，UniqueConstraint 兜底。
+    # 教学工具场景并发度低，可接受；高并发场景应改用 SELECT ... FOR UPDATE。
     result = await session.execute(
         select(func.max(ProjectVersion.version))
         .where(ProjectVersion.project_id == parse_project_id(project_id))
@@ -60,7 +63,7 @@ async def save_version(
 @router.post("/{project_id}/versions", status_code=201)
 async def create_version(
     project_id: str,
-    body: dict,
+    body: CreateVersionRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """手动保存当前 DSL 为新版本。"""
@@ -75,7 +78,7 @@ async def create_version(
     return await save_version(
         project_id,
         project.dsl_snapshot,
-        body.get("change_summary", ""),
+        body.change_summary,
         session,
     )
 

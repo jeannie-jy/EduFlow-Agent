@@ -178,6 +178,11 @@ class ExportManimRequest(BaseModel):
     include_tts: bool = False
 
 
+class CreateVersionRequest(BaseModel):
+    """保存版本请求。"""
+    change_summary: str = ""
+
+
 class ExportCreateResponse(BaseModel):
     """创建导出任务响应。"""
     job_id: str
