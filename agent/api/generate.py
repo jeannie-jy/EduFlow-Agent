@@ -17,6 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from db.database import get_session
 from services.generate_service import run_generation_stream
+from schema.project import GenerateRequest
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/projects", tags=["generate"])
 @router.post("/{project_id}/generate", status_code=202)
 async def start_generation(
     project_id: str,
-    body: dict,
+    body: GenerateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """启动生成流程。返回 SSE 流地址。"""
