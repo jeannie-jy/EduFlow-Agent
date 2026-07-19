@@ -522,8 +522,14 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         det_overall = schema_score * 0.3 + consistency_score * 0.7
         final_overall = round(det_overall * 0.4 + llm_overall * 0.6, 2)
         scores = llm_scores.get("scores", {})
-        scores["renderability"] = max(scores.get("renderability", 0.7), schema_score)
-        scores["coherence"] = max(scores.get("coherence", 0.7), consistency_score)
+        if schema_score > scores.get("renderability", 0.7):
+            logger.debug("renderability: LLM=%.2f 被确定性 schema_score=%.2f 覆盖",
+                         scores.get("renderability", 0.7), schema_score)
+            scores["renderability"] = schema_score
+        if consistency_score > scores.get("coherence", 0.7):
+            logger.debug("coherence: LLM=%.2f 被确定性 consistency_score=%.2f 覆盖",
+                         scores.get("coherence", 0.7), consistency_score)
+            scores["coherence"] = consistency_score
         suggestions = llm_scores.get("suggestions", [])
         # LLM 认为 blocking 时也触发
         if llm_scores.get("is_blocking"):

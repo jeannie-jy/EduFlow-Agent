@@ -228,11 +228,8 @@ class ManimScriptGenerator:
             lines.append(f"        # ── {fid}: {frame.get('title', 'Untitled')} ──")
             lines.append(f"        self.next_section(name='{fid}')")
 
-            # 生成 visual objects（创建代码注入到临时列表）
-            obj_vars = self._generate_objects_for_frame(frame, prev_objects, i)
-
-            # 注入对象创建代码
-            obj_code = frame.get("_object_creation_code", [])
+            # 生成 visual objects 创建代码
+            obj_vars, obj_code = self._generate_objects_for_frame(frame, prev_objects, i)
             for code_line in obj_code:
                 lines.append(code_line)
 
@@ -361,9 +358,7 @@ class ManimScriptGenerator:
 
             obj_vars[vo_id] = var_name
 
-        # 将创建代码注入到 _generate_scene_class 的结果（通过追加到调用方传入的 lines）
-        frame["_object_creation_code"] = code_lines
-        return obj_vars
+        return obj_vars, code_lines
 
     def _generate_animations_for_frame(
         self,
@@ -380,7 +375,6 @@ class ManimScriptGenerator:
             var_name = obj_vars.get(target_id, target_id)
 
             if anim_type == "appear":
-                lines.append(f"        {var_name} = Circle(radius=0.5, color=BLUE)")
                 lines.append(f"        self.play(FadeIn({var_name}), run_time={duration:.1f})")
             elif anim_type == "disappear":
                 lines.append(f"        self.play(FadeOut({var_name}), run_time={duration:.1f})")

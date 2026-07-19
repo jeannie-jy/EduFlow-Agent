@@ -73,12 +73,6 @@ async def upload_material(
     file_path = upload_dir / safe_filename
     file_path.write_bytes(contents)
 
-    # 持久化到 DB
-    from db.models import Project as ProjectModel
-
-    # TODO: 创建 SourceMaterial ORM 模型后替换为 SourceMaterial 表写入
-    # 当前阶段存储文件即可，parse 时读取
-
     logger.info("文件上传: id=%s | name=%s | size=%d | type=%s",
                 material_id, original_name, len(contents), suffix)
 

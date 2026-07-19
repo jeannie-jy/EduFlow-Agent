@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from db.database import get_session
+from schema.project import ExportManimRequest
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ def _get_redis():
 @router.post("/projects/{project_id}/export/manim", status_code=201)
 async def create_export_job(
     project_id: str,
-    body: dict,
+    body: ExportManimRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """创建 Manim 视频导出任务。"""
@@ -73,10 +74,10 @@ async def create_export_job(
         target="manim_video",
         status="queued",
         config={
-            "quality": body.get("quality", "h"),
-            "format": body.get("format", "mp4"),
-            "fps": body.get("fps", 30),
-            "include_subtitles": body.get("include_subtitles", True),
+            "quality": body.quality,
+            "format": body.format,
+            "fps": body.fps,
+            "include_subtitles": body.include_subtitles,
         },
     )
     session.add(export_job)
