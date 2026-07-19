@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # ── 项目 ──────────────────────────────────────────────
     project_root: Path = Path(__file__).resolve().parent.parent
     log_level: str = "INFO"
+    log_format: str = "text"  # text | json
 
     # ── 数据库 ────────────────────────────────────────────
     db_user: str = "agent"

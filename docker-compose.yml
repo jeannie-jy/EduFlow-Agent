@@ -24,7 +24,6 @@ services:
       redis:
         condition: service_started
     restart: unless-stopped
-    profiles: [agent]
 
   # ── Database (PostgreSQL + pgvector) ────────────────────
   postgres:
