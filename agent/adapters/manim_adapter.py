@@ -316,17 +316,17 @@ class ManimScriptGenerator:
                 )
 
             elif obj_type == "formula":
-                latex = vo.get("latex", "x")
+                latex = repr(vo.get("latex", "x"))  # repr 自动转义内部引号
                 code_lines.append(
-                    f"        {var_name} = MathTex(r'{latex}')"
+                    f"        {var_name} = MathTex({latex})"
                     f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
 
             elif obj_type == "code_block":
-                code = vo.get("code", "# code")
+                code = repr(vo.get("code", "# code"))  # repr 转义内部三引号
                 language = vo.get("language", "python")
                 code_lines.append(
-                    f"        {var_name} = Code(code='''{code}''', "
+                    f"        {var_name} = Code(code={code}, "
                     f"language='{language}', font_size=18)"
                     f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )

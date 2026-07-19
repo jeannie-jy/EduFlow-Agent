@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -171,7 +171,7 @@ class RegenerateRequest(BaseModel):
 
 class ExportManimRequest(BaseModel):
     """Manim 导出请求。"""
-    quality: str = "h"              # l(480p) / m(720p) / h(1080p) / k(4K)
+    quality: Literal["l", "m", "h", "k"] = "h"
     format: str = "mp4"
     fps: int = 30
     include_subtitles: bool = True

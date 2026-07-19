@@ -128,8 +128,8 @@ def _after_reflection(state: AgentState) -> Literal["coder", "__end__"]:
 def build_graph() -> "CompiledStateGraph":
     """构建 LangGraph StateGraph。
 
-    Phase 1 流程:
-        START → Planner → Coder → Quality → [Reflection → Coder] → END
+    流程:
+        START → Planner → Knowledge → Coder → Quality → [Reflection → Coder] → END
 
     Human-in-the-Loop:
         Planner 输出后可通过 pending_approval 中断。

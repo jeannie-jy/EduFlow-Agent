@@ -7,6 +7,7 @@ GET    /api/export/{job_id}/download/{filename} 下载产物
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -25,14 +26,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["export"])
 
-# Redis 客户端（延迟初始化）
+# Redis 客户端（延迟初始化，asyncio.Lock 保护）
 _redis_client = None
+_redis_lock = asyncio.Lock()
 
 
-def _get_redis():
-    """获取 Redis 客户端。"""
+async def _get_redis():
+    """获取 Redis 客户端（线程安全）。"""
     global _redis_client
-    if _redis_client is None:
+    if _redis_client is not None:
+        return _redis_client
+    async with _redis_lock:
+        if _redis_client is not None:
+            return _redis_client
         try:
             import redis as redis_lib
             settings = get_settings()
@@ -85,7 +91,7 @@ async def create_export_job(
     await session.commit()
 
     # 推送任务到 Redis 队列
-    r = _get_redis()
+    r = await _get_redis()
     if r is not None:
         task = {
             "job_id": str(job_id),
@@ -122,7 +128,7 @@ async def get_export_status(
     jid = uuid.UUID(job_id) if _is_uuid(job_id) else None
 
     # 1. 尝试从 Redis 获取实时进度
-    r = _get_redis()
+    r = await _get_redis()
     if r is not None:
         redis_data = r.get(f"manim:job:{job_id}")
         if redis_data:
