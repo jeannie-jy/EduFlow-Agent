@@ -24,14 +24,6 @@ export interface VersionListResponse {
   versions: VersionItem[];
 }
 
-export interface VersionDetailResponse {
-  id: string;
-  version: number;
-  change_summary: string;
-  dsl: Record<string, unknown>;
-  created_at: string;
-}
-
 export interface CreateVersionRequest {
   change_summary: string;
 }
@@ -58,10 +50,6 @@ export function saveVersion(projectId: string, changeSummary: string) {
 
 export function listVersions(projectId: string) {
   return api.get<VersionListResponse>(`/projects/${projectId}/versions`);
-}
-
-export function getVersion(projectId: string, versionId: string) {
-  return api.get<VersionDetailResponse>(`/projects/${projectId}/versions/${versionId}`);
 }
 
 export function restoreVersion(projectId: string, versionId: string) {

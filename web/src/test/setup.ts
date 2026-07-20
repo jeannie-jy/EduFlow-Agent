@@ -1,4 +1,17 @@
 import "@testing-library/jest-dom/vitest";
+import { server } from "./mocks/handlers";
+
+// ============================================================================
+// MSW 服务器
+// ============================================================================
+
+beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+// ============================================================================
+// Browser API mocks
+// ============================================================================
 
 class ResizeObserverMock implements ResizeObserver {
   constructor(_callback: ResizeObserverCallback) {}

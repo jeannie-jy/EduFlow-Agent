@@ -58,8 +58,3 @@ export function createExportJob(projectId: string, config: ExportManimRequest = 
 export function getExportStatus(jobId: string) {
   return api.get<ExportJobResponse>(`/export/${jobId}`);
 }
-
-export function getDownloadUrl(jobId: string, filename: string): string {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
-  return `${baseUrl}/export/${jobId}/download/${filename}`;
-}

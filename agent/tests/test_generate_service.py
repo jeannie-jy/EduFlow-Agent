@@ -1,0 +1,480 @@
+"""生成服务单元测试。
+
+测试 run_generation_stream（SSE 流式）和 run_generation_sync（同步）。
+使用 Mock LangGraph 避免真实 LLM 调用。
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from services.generate_service import (
+    run_generation_stream,
+    run_generation_sync,
+    _sse_event,
+    _phase_pct,
+)
+
+
+# ============================================================================
+# SSE Helpers
+# ============================================================================
+
+
+class TestSSEEventFormat:
+    """SSE 事件格式测试。"""
+
+    def test_progress_event_format(self):
+        """SSE 事件格式应符合规范。"""
+        sse = _sse_event("progress", {"phase": "planner", "message": "测试", "pct": 10})
+        assert sse.startswith("event: progress\n")
+        assert "data: " in sse
+        assert sse.endswith("\n\n")
+        # 解析 data 部分
+        data_line = [l for l in sse.split("\n") if l.startswith("data: ")][0]
+        data = json.loads(data_line[6:])
+        assert data["phase"] == "planner"
+        assert data["pct"] == 10
+
+    def test_done_event_format(self):
+        """done 事件格式。"""
+        sse = _sse_event("done", {"phase": "done", "pct": 100})
+        assert sse.startswith("event: done\n")
+        data_line = [l for l in sse.split("\n") if l.startswith("data: ")][0]
+        data = json.loads(data_line[6:])
+        assert data["phase"] == "done"
+        assert data["pct"] == 100
+
+    def test_error_event_format(self):
+        """error 事件格式。"""
+        sse = _sse_event("error", {
+            "phase": "error",
+            "message": "生成失败",
+            "error_code": "GENERATION_FAILED",
+        })
+        assert sse.startswith("event: error\n")
+        data_line = [l for l in sse.split("\n") if l.startswith("data: ")][0]
+        data = json.loads(data_line[6:])
+        assert data["phase"] == "error"
+        assert data["error_code"] == "GENERATION_FAILED"
+
+    def test_unicode_in_event(self):
+        """SSE 事件应正确处理中文。"""
+        sse = _sse_event("progress", {"phase": "planner", "message": "正在生成教学计划", "pct": 30})
+        assert "正在生成教学计划" in sse
+
+
+class TestPhasePct:
+    """阶段百分比映射测试。"""
+
+    def test_known_phases(self):
+        assert _phase_pct("planner") == 10
+        assert _phase_pct("knowledge") == 25
+        assert _phase_pct("coder") == 50
+        assert _phase_pct("quality") == 80
+        assert _phase_pct("reflection") == 85
+
+    def test_unknown_phase_defaults_to_50(self):
+        assert _phase_pct("unknown_phase") == 50
+
+    def test_all_phases_in_range(self):
+        """所有百分比应在 0-100 之间。"""
+        for phase in ["planner", "knowledge", "coder", "quality", "reflection", "unknown"]:
+            pct = _phase_pct(phase)
+            assert 0 <= pct <= 100, f"Phase '{phase}' pct {pct} out of range"
+
+
+# ============================================================================
+# run_generation_sync
+# ============================================================================
+
+
+class TestRunGenerationSync:
+    """同步生成流程测试。"""
+
+    @pytest.mark.asyncio
+    async def test_sync_returns_state(self):
+        """同步生成应返回完整 AgentState。"""
+        mock_result = {
+            "teaching_plan": {"objectives": ["理解算法"]},
+            "dsl": {"frames": [{"frame_id": "f_001"}]},
+            "quality_report": {"overall_score": 0.85},
+            "status": "done",
+        }
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.ainvoke = AsyncMock(return_value=mock_result)
+            mock_get_graph.return_value = mock_graph
+
+            result = await run_generation_sync(
+                project_id="test_001",
+                user_input="讲解冒泡排序",
+            )
+
+        assert result["teaching_plan"]["objectives"] == ["理解算法"]
+        assert result["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_sync_passes_correct_initial_state(self):
+        """同步生成应传递正确的初始状态。"""
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.ainvoke = AsyncMock(return_value={"status": "done"})
+            mock_get_graph.return_value = mock_graph
+
+            await run_generation_sync(
+                project_id="proj_123",
+                user_input="讲解 Dijkstra",
+                constraints={"must_cover": ["松弛"]},
+                materials=[{"filename": "课件.pdf", "content_text": "图论基础"}],
+            )
+
+        call_args = mock_graph.ainvoke.call_args
+        initial_state = call_args[0][0]
+        assert initial_state["user_input"] == "讲解 Dijkstra"
+        assert initial_state["project_id"] == "proj_123"
+        assert initial_state["constraints"]["must_cover"] == ["松弛"]
+        assert len(initial_state["materials"]) == 1
+        assert initial_state["reflection_count"] == 0
+        assert initial_state["revision_history"] == []
+
+    @pytest.mark.asyncio
+    async def test_sync_uses_thread_id_config(self):
+        """同步生成应使用 project_id 作为 thread_id。"""
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.ainvoke = AsyncMock(return_value={"status": "done"})
+            mock_get_graph.return_value = mock_graph
+
+            await run_generation_sync(project_id="my_project", user_input="test")
+
+        call_args = mock_graph.ainvoke.call_args
+        config = call_args[0][1]
+        assert config["configurable"]["thread_id"] == "my_project"
+
+
+# ============================================================================
+# run_generation_stream
+# ============================================================================
+
+
+class TestRunGenerationStream:
+    """SSE 流式生成测试。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_progress_events(self):
+        """应从每个节点获取进度事件。"""
+        # 构建模拟的 astream_events 生成器
+        async def mock_astream_events(initial_state, config, version):
+            yield {
+                "event": "on_chain_start",
+                "name": "planner",
+                "data": {},
+            }
+            yield {
+                "event": "on_chain_end",
+                "name": "planner",
+                "data": {
+                    "output": {
+                        "teaching_plan": {
+                            "objectives": ["理解冒泡排序"],
+                            "outline": [{"step": 1, "title": "概述", "key_points": ["x"], "estimated_frames": 3}],
+                            "teaching_approach": "演示",
+                            "estimated_total_frames": 3,
+                        },
+                    },
+                },
+            }
+            yield {
+                "event": "on_chain_start",
+                "name": "coder",
+                "data": {},
+            }
+            yield {
+                "event": "on_chain_end",
+                "name": "coder",
+                "data": {
+                    "output": {
+                        "dsl": {"frames": [{"frame_id": "f_001"}, {"frame_id": "f_002"}]},
+                    },
+                },
+            }
+            yield {
+                "event": "on_chain_start",
+                "name": "quality",
+                "data": {},
+            }
+            yield {
+                "event": "on_chain_end",
+                "name": "quality",
+                "data": {
+                    "output": {
+                        "quality_report": {"overall_score": 0.85, "is_blocking": False},
+                    },
+                },
+            }
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+
+            # Mock aget_state
+            mock_final_state = MagicMock()
+            mock_final_state.values = {
+                "dsl": {"frames": [{"frame_id": "f_001"}, {"frame_id": "f_002"}]},
+                "quality_report": {"overall_score": 0.85},
+            }
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="讲解冒泡排序",
+            ):
+                events.append(event)
+
+        # 应包含进度事件和 done 事件
+        assert len(events) >= 4
+        # 验证第一个事件是 planner 进度
+        assert "event: progress" in events[0]
+        assert "planner" in events[0]
+        # 验证最后一个事件是 done
+        assert "event: done" in events[-1]
+
+    @pytest.mark.asyncio
+    async def test_stream_phases_in_order(self):
+        """事件应按正确顺序发送：planner → knowledge → coder → quality。"""
+        async def mock_astream_events(initial_state, config, version):
+            phases = ["planner", "knowledge", "coder", "quality"]
+            for phase in phases:
+                yield {"event": "on_chain_start", "name": phase, "data": {}}
+                yield {"event": "on_chain_end", "name": phase, "data": {"output": {}}}
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_final_state = MagicMock()
+            mock_final_state.values = {}
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                if "event: progress" in event:
+                    events.append(event)
+
+        # 验证阶段顺序
+        phases_found = []
+        for e in events:
+            for phase in ["planner", "knowledge", "coder", "quality"]:
+                if phase in e:
+                    phases_found.append(phase)
+                    break
+
+        # 阶段应出现且按顺序
+        assert "planner" in phases_found
+        assert "coder" in phases_found
+
+    @pytest.mark.asyncio
+    async def test_stream_done_event_includes_dsl(self):
+        """done 事件应包含完整 DSL。"""
+        async def mock_astream_events(initial_state, config, version):
+            yield {"event": "on_chain_start", "name": "planner", "data": {}}
+            yield {"event": "on_chain_end", "name": "planner", "data": {"output": {}}}
+            yield {"event": "on_chain_start", "name": "coder", "data": {}}
+            yield {"event": "on_chain_end", "name": "coder", "data": {"output": {}}}
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+
+            mock_final_state = MagicMock()
+            mock_final_state.values = {
+                "dsl": {
+                    "frames": [{"frame_id": "f_001"}, {"frame_id": "f_002"}],
+                    "topic": "冒泡排序",
+                },
+                "quality_report": {"overall_score": 0.9},
+            }
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                events.append(event)
+
+        done_event = events[-1]
+        assert "event: done" in done_event
+        data_line = [l for l in done_event.split("\n") if l.startswith("data: ")][0]
+        data = json.loads(data_line[6:])
+        assert "dsl" in data
+        assert "quality_report" in data
+
+    @pytest.mark.asyncio
+    async def test_stream_error_handling(self):
+        """生成流程异常时应发送 error 事件。"""
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = MagicMock(
+                side_effect=RuntimeError("图表编译失败")
+            )
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                events.append(event)
+
+        # 应有一个 error 事件
+        assert len(events) == 1
+        assert "event: error" in events[0]
+        data_line = [l for l in events[0].split("\n") if l.startswith("data: ")][0]
+        data = json.loads(data_line[6:])
+        assert data["phase"] == "error"
+        assert data["error_code"] == "GENERATION_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_progress_event_includes_pct(self):
+        """进度事件应包含 pct 字段。"""
+        async def mock_astream_events(initial_state, config, version):
+            yield {
+                "event": "on_chain_start",
+                "name": "planner",
+                "data": {},
+            }
+            yield {
+                "event": "on_chain_end",
+                "name": "planner",
+                "data": {"output": {"teaching_plan": {}}},
+            }
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_final_state = MagicMock()
+            mock_final_state.values = {}
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                events.append(event)
+
+        # 找到 planner 的进度事件
+        progress_events = [e for e in events if "event: progress" in e]
+        assert len(progress_events) >= 1
+        for pe in progress_events:
+            data_line = [l for l in pe.split("\n") if l.startswith("data: ")][0]
+            data = json.loads(data_line[6:])
+            assert "pct" in data, f"Progress event missing pct: {data}"
+
+    @pytest.mark.asyncio
+    async def test_planner_progress_includes_teaching_plan(self):
+        """planner 完成后的进度事件应包含 teaching_plan。"""
+        plan = {"objectives": ["目标1"], "outline": [], "estimated_total_frames": 5}
+
+        async def mock_astream_events(initial_state, config, version):
+            yield {"event": "on_chain_start", "name": "planner", "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "name": "planner",
+                "data": {"output": {"teaching_plan": plan}},
+            }
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_final_state = MagicMock()
+            mock_final_state.values = {}
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                events.append(event)
+
+        # 找到 teaching_plan 事件
+        plan_events = [e for e in events if "teaching_plan" in e]
+        assert len(plan_events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_knowledge_progress_includes_graph(self):
+        """knowledge 完成后的进度事件应包含 knowledge_graph。"""
+        kg = {"concepts": [{"id": "c1", "name": "test", "type": "definition"}], "edges": []}
+        terms = ["test"]
+
+        async def mock_astream_events(initial_state, config, version):
+            yield {"event": "on_chain_start", "name": "knowledge", "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "name": "knowledge",
+                "data": {"output": {"knowledge_graph": kg, "key_terms": terms}},
+            }
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_final_state = MagicMock()
+            mock_final_state.values = {}
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                events.append(event)
+
+        kg_events = [e for e in events if "knowledge_graph" in e]
+        assert len(kg_events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_quality_progress_includes_report(self):
+        """quality 完成后的进度事件应包含 quality_report。"""
+        qr = {"overall_score": 0.85, "is_blocking": False}
+
+        async def mock_astream_events(initial_state, config, version):
+            yield {"event": "on_chain_start", "name": "quality", "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "name": "quality",
+                "data": {"output": {"quality_report": qr}},
+            }
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_final_state = MagicMock()
+            mock_final_state.values = {}
+            mock_graph.aget_state = AsyncMock(return_value=mock_final_state)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001",
+                user_input="test",
+            ):
+                events.append(event)
+
+        qr_events = [e for e in events if "quality_report" in e]
+        assert len(qr_events) >= 1

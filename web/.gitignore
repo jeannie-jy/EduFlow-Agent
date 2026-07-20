@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .vite
+public/mockServiceWorker.js
 
 # Editor directories and files
 .vscode/*
