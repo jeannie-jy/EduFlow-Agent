@@ -81,6 +81,10 @@ def create_app() -> FastAPI:
     from api.middleware import RequestLoggingMiddleware
     app.add_middleware(RequestLoggingMiddleware)
 
+    # 全局异常处理程序（统一错误响应格式）
+    from api.error_handlers import register_error_handlers
+    register_error_handlers(app)
+
     # 注册路由
     from api.router import api_router
     app.include_router(api_router, prefix="/api")

@@ -42,6 +42,14 @@ export interface RestoreVersionResponse {
 // 方法
 // ============================================================================
 
+export interface VersionDetailResponse {
+  id: string;
+  version: number;
+  change_summary: string;
+  dsl: Record<string, unknown>;
+  created_at: string;
+}
+
 export function saveVersion(projectId: string, changeSummary: string) {
   return api.post<CreateVersionResponse>(`/projects/${projectId}/versions`, {
     change_summary: changeSummary,
@@ -50,6 +58,10 @@ export function saveVersion(projectId: string, changeSummary: string) {
 
 export function listVersions(projectId: string) {
   return api.get<VersionListResponse>(`/projects/${projectId}/versions`);
+}
+
+export function getVersion(projectId: string, versionId: string) {
+  return api.get<VersionDetailResponse>(`/projects/${projectId}/versions/${versionId}`);
 }
 
 export function restoreVersion(projectId: string, versionId: string) {

@@ -1,7 +1,11 @@
 """LangGraph Agent 编排图。
 
-Phase 1 (原型): Planner + Coder 2 Agent。
-Quality 层使用 Schema 校验代替 LLM。
+5 Agent 协作:
+    Planner → Knowledge → Coder → Quality → [Reflection → Coder] → END
+
+支持:
+- Postgres checkpointer 持久化（生产环境）
+- 内存 checkpointer 降级（开发/测试环境）
 
 对齐设计文档 3.2 节流程图。
 """
@@ -18,6 +22,10 @@ from .state import AgentState
 from config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# checkpointer 单例（连接复用）
+_checkpointer = None
+_checkpointer_initialized = False
 
 # ── 延迟导入（避免在没有 langgraph 时崩溃）──────────────────
 
@@ -125,7 +133,7 @@ def _after_reflection(state: AgentState) -> Literal["coder", "__end__"]:
 # ── Graph 构建 ──────────────────────────────────────────────
 
 
-def build_graph() -> "CompiledStateGraph":
+def build_graph(checkpointer=None) -> "CompiledStateGraph":
     """构建 LangGraph StateGraph。
 
     流程:
@@ -133,6 +141,9 @@ def build_graph() -> "CompiledStateGraph":
 
     Human-in-the-Loop:
         Planner 输出后可通过 pending_approval 中断。
+
+    Args:
+        checkpointer: LangGraph checkpointer 实例。None 时使用内存模式。
     """
     StateGraph = _get_state_graph()
     END = _get_end()
@@ -176,7 +187,12 @@ def build_graph() -> "CompiledStateGraph":
         {"coder": "coder", "__end__": END},
     )
 
-    return workflow.compile()
+    compile_kwargs: dict[str, Any] = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+        logger.info("Graph 使用 checkpointer: %s", type(checkpointer).__name__)
+
+    return workflow.compile(**compile_kwargs)
 
 
 # 全局编译好的 graph 实例
@@ -184,8 +200,54 @@ _graph: "CompiledStateGraph | None" = None
 
 
 def get_graph() -> "CompiledStateGraph":
-    """获取全局 Agent 编排图实例。"""
-    global _graph
-    if _graph is None:
-        _graph = build_graph()
+    """获取全局 Agent 编排图实例。
+
+    首次调用时尝试创建 Postgres checkpointer，失败则使用内存模式。
+    """
+    global _graph, _checkpointer, _checkpointer_initialized
+
+    if _graph is not None:
+        return _graph
+
+    # 尝试创建 Postgres checkpointer
+    checkpointer = None
+    if not _checkpointer_initialized:
+        _checkpointer_initialized = True
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from config import get_settings
+
+            settings = get_settings()
+            # 使用 DATABASE_URL 连接（与 db/database.py 一致）
+            db_url = settings.database_url
+            # 兼容 postgresql+asyncpg:// → postgresql:// 格式差异
+            if db_url.startswith("postgresql+asyncpg://"):
+                db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+
+            import asyncio
+            async def _init_checkpointer():
+                global _checkpointer
+                try:
+                    cp = AsyncPostgresSaver.from_conn_string(db_url)
+                    await cp.setup()
+                    _checkpointer = cp
+                    logger.info("Postgres checkpointer 已初始化")
+                except Exception as exc:
+                    logger.warning("Postgres checkpointer 初始化失败，使用内存模式: %s", exc)
+
+            try:
+                loop = asyncio.get_running_loop()
+                # 已有事件循环，创建 task（不阻塞）
+                import asyncio
+                asyncio.ensure_future(_init_checkpointer())
+            except RuntimeError:
+                # 无事件循环，同步初始化
+                asyncio.run(_init_checkpointer())
+
+        except ImportError:
+            logger.info("langgraph-checkpoint-postgres 未安装，使用内存 checkpointer")
+        except Exception as exc:
+            logger.warning("Checkpointer 初始化异常，使用内存模式: %s", exc)
+
+    _graph = build_graph(checkpointer=_checkpointer)
     return _graph

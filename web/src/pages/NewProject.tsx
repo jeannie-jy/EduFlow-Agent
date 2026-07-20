@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -17,16 +18,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Sparkles, AlertCircle } from "lucide-react";
+import { ArrowLeft, Sparkles, AlertCircle, FileText, Pencil } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createProject, ApiError, NetworkError } from "@/services";
+import { FileUploader, type UploadedFile } from "@/components/FileUploader";
 
 export function NewProject() {
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [inputContent, setInputContent] = useState("");
+  const [inputType, setInputType] = useState<"natural_language" | "file_upload">("natural_language");
   const [audience, setAudience] = useState("undergraduate_cs");
   const [difficulty, setDifficulty] = useState("intermediate");
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,17 +99,47 @@ export function NewProject() {
           />
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="content">知识点描述</Label>
-          <Textarea
-            id="content"
-            rows={5}
-            placeholder="描述你想讲解的知识点内容、重点和注意事项..."
-            value={inputContent}
-            onChange={(e) => setInputContent(e.target.value)}
-            disabled={submitting}
-          />
-        </div>
+        {/* 输入方式选择 */}
+        <Tabs
+          value={inputType}
+          onValueChange={(v) => setInputType(v as typeof inputType)}
+        >
+          <TabsList variant="line" className="w-full justify-stretch">
+            <TabsTrigger value="natural_language" className="gap-1.5">
+              <Pencil size={14} /> 自然语言
+            </TabsTrigger>
+            <TabsTrigger value="file_upload" className="gap-1.5">
+              <FileText size={14} /> 上传材料
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="natural_language" className="mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="content">知识点描述</Label>
+              <Textarea
+                id="content"
+                rows={5}
+                placeholder="描述你想讲解的知识点内容、重点和注意事项..."
+                value={inputContent}
+                onChange={(e) => setInputContent(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="file_upload" className="mt-4">
+            <FileUploader
+              files={uploadedFiles}
+              onFilesChange={setUploadedFiles}
+              onTopicSelect={(topic) => {
+                // 将选中的主题填入标题
+                if (!title) setTitle(topic);
+                setInputContent(`讲解 ${topic}，包括核心概念、原理和示例。`);
+              }}
+              disabled={submitting}
+            />
+          </TabsContent>
+        </Tabs>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">

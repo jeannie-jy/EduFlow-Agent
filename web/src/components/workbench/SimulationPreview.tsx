@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BotIcon,
   CheckCircle2Icon,
@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -28,6 +29,8 @@ import {
   getDistanceLabel,
   graphNodeIds,
   simulationFrames,
+  PlayState,
+  canTransition,
 } from "./simulation-model";
 
 type SimulationPreviewProps = {
@@ -37,23 +40,129 @@ type SimulationPreviewProps = {
   onRegenerate: () => void;
 };
 
+/** 播放速度选项（毫秒/帧） */
+const SPEED_OPTIONS: { label: string; value: number }[] = [
+  { label: "0.5×", value: 2800 },
+  { label: "1×", value: 1400 },
+  { label: "1.5×", value: 930 },
+  { label: "2×", value: 700 },
+];
+
 export function SimulationPreview({
   frame,
   generation,
   onFrameChange,
   onRegenerate,
 }: SimulationPreviewProps) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const currentFrame = simulationFrames[Math.min(simulationFrames.length - 1, Math.max(0, frame - 1))];
+  // ── 播放状态机 ─────────────────────────────────────────
+  const [playState, setPlayState] = useState<PlayState>(PlayState.IDLE);
+  const [playSpeed, setPlaySpeed] = useState(1); // speedOptions 索引
+  const speedMs = SPEED_OPTIONS[playSpeed]?.value ?? 1400;
   const totalFrames = simulationFrames.length;
 
+  // 是否需要等待交互（当前帧有 interactionHooks）
+  const needsInteraction = useMemo(() => {
+    const current = simulationFrames[Math.min(totalFrames - 1, Math.max(0, frame - 1))];
+    return (current?.interactionHooks?.length ?? 0) > 0;
+  }, [frame, totalFrames]);
+
+  // ── 状态转换 ──────────────────────────────────────────
+  const transitionTo = useCallback(
+    (next: PlayState) => {
+      if (canTransition(playState, next)) {
+        setPlayState(next);
+      }
+    },
+    [playState],
+  );
+
+  const handlePlay = useCallback(() => {
+    if (playState === PlayState.IDLE || playState === PlayState.PAUSE) {
+      transitionTo(PlayState.PLAYING);
+    }
+  }, [playState, transitionTo]);
+
+  const handlePause = useCallback(() => {
+    if (playState === PlayState.PLAYING) {
+      transitionTo(PlayState.PAUSE);
+    }
+  }, [playState, transitionTo]);
+
+  const handleReset = useCallback(() => {
+    onFrameChange(1);
+    setPlayState(PlayState.IDLE);
+  }, [onFrameChange]);
+
+  const handleTogglePlay = useCallback(() => {
+    if (playState === PlayState.PLAYING) {
+      handlePause();
+    } else {
+      handlePlay();
+    }
+  }, [playState, handlePlay, handlePause]);
+
+  // ── 自动播放循环 ──────────────────────────────────────
+  const timerRef = useRef<number | null>(null);
+
   useEffect(() => {
-    if (!isPlaying) return;
-    const timer = window.setInterval(() => {
-      onFrameChange(frame >= totalFrames ? 1 : frame + 1);
-    }, 1400);
-    return () => window.clearInterval(timer);
-  }, [frame, isPlaying, onFrameChange, totalFrames]);
+    if (playState !== PlayState.PLAYING) {
+      if (timerRef.current !== null) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+
+    timerRef.current = window.setInterval(() => {
+      if (frame >= totalFrames) {
+        // 播放完毕 → 回到 IDLE
+        setPlayState(PlayState.IDLE);
+        return;
+      }
+
+      // 检查下一帧是否需要交互
+      const nextFrame = simulationFrames[frame]; // frame 是 1-indexed
+      if (nextFrame?.interactionHooks?.length) {
+        onFrameChange(frame + 1);
+        setPlayState(PlayState.WAITING);
+        return;
+      }
+
+      onFrameChange(frame + 1);
+    }, speedMs);
+
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [playState, frame, totalFrames, speedMs, onFrameChange]);
+
+  // ── 键盘快捷键 ────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          handleTogglePlay();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          if (frame > 1) onFrameChange(frame - 1);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          if (frame < totalFrames) onFrameChange(frame + 1);
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [frame, totalFrames, handleTogglePlay, onFrameChange]);
+
+  const currentFrame = simulationFrames[Math.min(simulationFrames.length - 1, Math.max(0, frame - 1))];
 
   const distanceRows = useMemo(
     () =>
@@ -98,8 +207,22 @@ export function SimulationPreview({
             <Badge variant="outline" className="font-normal">源点 A</Badge>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="size-2 rounded-full bg-success" aria-hidden="true" />
-            状态同步
+            <span
+              className={cn(
+                "size-2 rounded-full",
+                playState === PlayState.PLAYING && "bg-success animate-pulse",
+                playState === PlayState.PAUSE && "bg-warning",
+                playState === PlayState.WAITING && "bg-info animate-pulse",
+                playState === PlayState.IDLE && "bg-muted-foreground",
+                playState === PlayState.RECOMPUTE && "bg-info animate-spin",
+              )}
+              aria-hidden="true"
+            />
+            {playState === PlayState.PLAYING && "播放中"}
+            {playState === PlayState.PAUSE && "已暂停"}
+            {playState === PlayState.WAITING && "等待交互"}
+            {playState === PlayState.IDLE && "就绪"}
+            {playState === PlayState.RECOMPUTE && "重算中"}
           </div>
         </header>
 
@@ -143,19 +266,46 @@ export function SimulationPreview({
               <Button variant="outline" onClick={() => onFrameChange(Math.max(1, frame - 1))} disabled={frame === 1}>
                 <SkipBackIcon data-icon="inline-start" />上一帧
               </Button>
-              <Button onClick={() => setIsPlaying((value) => !value)} aria-label={isPlaying ? "暂停演示" : "播放演示"}>
-                {isPlaying ? <PauseIcon data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
-                {isPlaying ? "暂停" : "播放"}
+              <Button
+                onClick={handleTogglePlay}
+                aria-label={
+                  playState === PlayState.PLAYING ? "暂停演示" :
+                  playState === PlayState.WAITING ? "等待交互中" :
+                  "播放演示"
+                }
+                disabled={playState === PlayState.WAITING || playState === PlayState.RECOMPUTE}
+              >
+                {playState === PlayState.PLAYING ? (
+                  <><PauseIcon data-icon="inline-start" />暂停</>
+                ) : playState === PlayState.WAITING ? (
+                  <><BotIcon data-icon="inline-start" className="animate-pulse" />交互中</>
+                ) : playState === PlayState.RECOMPUTE ? (
+                  <><BotIcon data-icon="inline-start" className="animate-spin" />重算中</>
+                ) : (
+                  <><PlayIcon data-icon="inline-start" />播放</>
+                )}
               </Button>
               <Button variant="outline" onClick={() => onFrameChange(Math.min(totalFrames, frame + 1))} disabled={frame === totalFrames}>
                 下一帧<SkipForwardIcon data-icon="inline-end" />
               </Button>
             </ButtonGroup>
             <div className="ml-auto flex items-center gap-2 max-sm:w-full max-sm:justify-end">
-              <Button variant="ghost" size="sm" onClick={() => { onFrameChange(1); setIsPlaying(false); }}>
+              <Button variant="ghost" size="sm" onClick={handleReset}>
                 <RotateCcwIcon data-icon="inline-start" />重置
               </Button>
-              <Button variant="outline" size="sm">速度 1×</Button>
+              <div className="flex items-center gap-1.5">
+                {SPEED_OPTIONS.map((opt, idx) => (
+                  <Button
+                    key={opt.label}
+                    variant={playSpeed === idx ? "default" : "outline"}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setPlaySpeed(idx)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -252,6 +402,22 @@ export function SimulationPreview({
             <select id="source-node" className="mt-2 h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" defaultValue="A">
               <option>A</option><option>B</option><option>C</option>
             </select>
+
+            <div className="mt-5">
+              <label className="block text-sm font-medium mb-2">播放速度</label>
+              <Slider
+                value={[playSpeed]}
+                min={0}
+                max={SPEED_OPTIONS.length - 1}
+                step={1}
+                onValueChange={([v]) => v != null && setPlaySpeed(v)}
+                aria-label="播放速度调节"
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                当前: {SPEED_OPTIONS[playSpeed]?.label ?? "1×"}
+              </p>
+            </div>
+
             <div className="mt-5 flex items-center justify-between gap-3">
               <label htmlFor="show-weights" className="text-sm font-medium">显示边权重</label>
               <Switch id="show-weights" defaultChecked />

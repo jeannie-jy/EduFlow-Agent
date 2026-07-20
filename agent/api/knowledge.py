@@ -1,6 +1,6 @@
 """知识库 API 路由。
 
-POST   /api/knowledge/search              语义检索
+POST   /api/knowledge/search              语义检索 (pgvector + 关键词降级)
 GET    /api/knowledge/templates            知识点模板列表
 """
 
@@ -10,13 +10,16 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.database import get_readonly_session
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
-# 加载种子数据
+# 加载种子数据（降级备用）
 _seed_path = Path(__file__).resolve().parent.parent / "data" / "seed_knowledge.json"
 _seed_data: list[dict] = []
 
@@ -29,49 +32,72 @@ except Exception:
 
 
 @router.post("/search")
-async def search_knowledge(body: dict) -> dict:
+async def search_knowledge(
+    body: dict,
+    session: AsyncSession = Depends(get_readonly_session),
+) -> dict:
     """语义检索知识库。
 
-    MVP: 在种子数据中进行关键词匹配（无向量检索）。
-    后续替换为 pgvector embedding 检索。
+    优先使用 pgvector 向量检索，不可用时降级为关键词匹配。
     """
     query = body.get("query", "")
     top_k = min(body.get("top_k", 5), 50)
+    subject = body.get("subject")
+    difficulty = body.get("difficulty")
 
+    # 尝试 pgvector 检索
+    try:
+        from services.knowledge_service import search_knowledge_pgvector
+
+        results = await search_knowledge_pgvector(
+            query=query,
+            top_k=top_k,
+            subject=subject,
+            difficulty=difficulty,
+            session=session,
+        )
+        if results:
+            return {"results": results}
+    except Exception as exc:
+        logger.warning("pgvector 检索失败，使用种子数据关键词匹配: %s", exc)
+
+    # 降级：种子数据关键词匹配
     if not _seed_data:
         return {"results": []}
 
-    # MVP: 简单关键词匹配 + 评分
     query_lower = query.lower()
     scored = []
     for item in _seed_data:
         concept = item.get("concept", "")
         content = item.get("content", "")
-        subject = item.get("subject", "")
+        item_subject = item.get("subject", "")
 
-        # 计算匹配分数
+        if subject and item_subject != subject:
+            continue
+        if difficulty is not None and item.get("difficulty") != difficulty:
+            continue
+
         score = 0.0
         if query_lower in concept.lower():
             score = 0.95
         elif any(word in content.lower() for word in query_lower.split()):
             score = 0.7
-        elif query_lower in subject.lower():
+        elif query_lower in item_subject.lower():
             score = 0.5
         else:
-            score = 0.1  # 兜底低分
+            score = 0.1
 
         scored.append({
             "id": concept,
             "concept": concept,
             "content": content[:500],
-            "subject": subject,
+            "subject": item_subject,
             "difficulty": item.get("difficulty", 3),
             "similarity": score,
             "object_types": item.get("object_types", []),
             "animation_types": item.get("animation_types", []),
         })
 
-    # 排序并取 top_k
     scored.sort(key=lambda x: x["similarity"], reverse=True)
     return {"results": scored[:top_k]}
 

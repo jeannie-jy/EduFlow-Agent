@@ -4,6 +4,138 @@ export type GraphNodeId = (typeof graphNodeIds)[number];
 
 export type SimulationPhase = "configure" | "initialize" | "select" | "relax" | "complete";
 
+// ============================================================================
+// 播放状态机（对齐设计文档 7.1.2 节）
+// ============================================================================
+
+export enum PlayState {
+  /** 空闲 — 初始状态，等待用户操作 */
+  IDLE = "idle",
+  /** 播放中 — 自动逐帧推进 */
+  PLAYING = "playing",
+  /** 暂停 — 用户手动暂停 */
+  PAUSE = "pause",
+  /** 交互等待 — 到达有 interaction_hooks 的帧，等待用户操作 */
+  WAITING = "waiting",
+  /** 重算中 — 参数变更后正在重新计算状态 */
+  RECOMPUTE = "recompute",
+}
+
+/** 状态转换规则 */
+export const PLAY_STATE_TRANSITIONS: Record<PlayState, PlayState[]> = {
+  [PlayState.IDLE]: [PlayState.PLAYING],
+  [PlayState.PLAYING]: [PlayState.PAUSE, PlayState.WAITING, PlayState.IDLE],
+  [PlayState.PAUSE]: [PlayState.PLAYING, PlayState.IDLE],
+  [PlayState.WAITING]: [PlayState.PLAYING, PlayState.IDLE],
+  [PlayState.RECOMPUTE]: [PlayState.PLAYING, PlayState.IDLE],
+};
+
+export function canTransition(from: PlayState, to: PlayState): boolean {
+  return PLAY_STATE_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+// ============================================================================
+// 动画系统（对齐设计文档 7.1.4 节 + DSL Schema 16 种动画类型）
+// ============================================================================
+
+export enum AnimationType {
+  APPEAR = "appear",
+  DISAPPEAR = "disappear",
+  HIGHLIGHT = "highlight",
+  TRANSFORM = "transform",
+  MOVE = "move",
+  UPDATE_VALUE = "update_value",
+  COMPARE = "compare",
+  SWAP = "swap",
+  RELAX_EDGE = "relax_edge",
+  ENQUEUE = "enqueue",
+  DEQUEUE = "dequeue",
+  SPLIT = "split",
+  MERGE = "merge",
+  SCHEDULE = "schedule",
+  LOCK = "lock",
+  UNLOCK = "unlock",
+}
+
+/** DSL 动画定义（与后端 schema/dsl.py Animation 对齐） */
+export interface DSLAnimation {
+  type: AnimationType | string;
+  target: string;
+  duration_ms: number;
+  params?: Record<string, unknown>;
+  /** 动画执行状态 */
+  _status?: "pending" | "running" | "completed";
+}
+
+/** 动画执行状态 */
+export type AnimationStatus = "pending" | "running" | "completed";
+
+/** 单个动画的执行上下文 */
+export interface AnimationContext {
+  animation: DSLAnimation;
+  status: AnimationStatus;
+  startTime: number;
+  elapsed: number;
+}
+
+// ============================================================================
+// 视觉对象类型（对齐设计文档 DSL 14 种 VisualObject）
+// ============================================================================
+
+export enum VisualObjectType {
+  NODE = "node",
+  EDGE = "edge",
+  ARRAY = "array",
+  LINKED_LIST = "linked_list",
+  TREE = "tree",
+  GRAPH = "graph",
+  TABLE = "table",
+  CODE_BLOCK = "code_block",
+  MEMORY_BLOCK = "memory_block",
+  PROCESS = "process",
+  TIMELINE = "timeline",
+  FORMULA = "formula",
+  CARD = "card",
+  MINDMAP = "mindmap",
+}
+
+/** DSL 视觉对象定义（与后端 schema/dsl.py VisualObject 对齐） */
+export interface DSLVisualObject {
+  id: string;
+  type: VisualObjectType | string;
+  label?: string;
+  position?: { x: number; y: number };
+  style?: Record<string, unknown>;
+  // 类型特定字段
+  cells?: Record<string, unknown>[];
+  headers?: string[];
+  rows?: unknown[][];
+  language?: string;
+  code?: string;
+  highlight_lines?: number[];
+  latex?: string;
+  source?: string;
+  target?: string;
+  directed?: boolean;
+  weight?: number;
+  [key: string]: unknown;
+}
+
+/** Animation CSS 类名映射 */
+export const ANIMATION_CSS_CLASSES: Partial<Record<AnimationType, string>> = {
+  [AnimationType.APPEAR]: "animate-appear",
+  [AnimationType.DISAPPEAR]: "animate-disappear",
+  [AnimationType.HIGHLIGHT]: "animate-highlight",
+  [AnimationType.UPDATE_VALUE]: "animate-update-value",
+  [AnimationType.MOVE]: "animate-move",
+  [AnimationType.SWAP]: "animate-swap",
+  [AnimationType.RELAX_EDGE]: "animate-relax-edge",
+};
+
+// ============================================================================
+// 图数据模型
+// ============================================================================
+
 export type GraphNodeSpec = {
   id: GraphNodeId;
   position: { x: number; y: number };
@@ -29,6 +161,10 @@ export type SimulationFrame = {
   inspectedEdges: string[];
   changedEdges: string[];
   narration: string;
+  /** 帧关联的动画列表（DSL 驱动） */
+  animations?: DSLAnimation[];
+  /** 帧关联的交互钩子 */
+  interactionHooks?: { type: string; param: string; [key: string]: unknown }[];
 };
 
 export const graphNodes: GraphNodeSpec[] = [
