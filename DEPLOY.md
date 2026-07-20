@@ -9,6 +9,25 @@
 
 ## 快速启动
 
+### 方式一：一键脚本
+
+**Windows PowerShell：**
+```powershell
+copy .env.example .env
+# 编辑 .env，填入 LLM_API_KEY 和 EMBEDDING_API_KEY
+.\start.ps1
+```
+
+**Linux / macOS / Git Bash：**
+```bash
+cp .env.example .env
+# 编辑 .env，填入 API Key
+chmod +x start.sh
+./start.sh
+```
+
+### 方式二：Docker Compose
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/your-org/EduFlow-Agent.git
@@ -18,11 +37,12 @@ cd EduFlow-Agent
 cp .env.example .env
 # 编辑 .env，填入 LLM_API_KEY 和 EMBEDDING_API_KEY
 
-# 3. 一键启动
+# 3. 一键启动全部服务
 docker compose up -d
 
 # 4. 验证
 curl http://localhost:8000/api/health
+# → {"status":"ok","version":"0.1.0"}
 ```
 
 ## 服务架构
@@ -48,11 +68,13 @@ docker compose restart agent-api  # 重启后端
 ## 环境变量
 
 | 变量 | 必填 | 说明 |
-|------|------|------|
+|------|:---:|------|
 | `LLM_API_KEY` | ✅ | DeepSeek API Key |
 | `EMBEDDING_API_KEY` | ✅ | OpenAI API Key（text-embedding-3-small） |
-| `DB_PASSWORD` | — | 数据库密码（默认 `changeme`） |
+| `LLM_ENDPOINT` | — | LLM API 地址（默认 `https://api.deepseek.com/v1`） |
 | `LLM_MODEL` | — | 模型名称（默认 `deepseek-chat`） |
+| `DB_PASSWORD` | — | 数据库密码（默认 `changeme`） |
+| `REDIS_URL` | — | Redis 连接（默认 `redis://localhost:6379`） |
 | `MINIO_USER` / `MINIO_PASSWORD` | — | MinIO 凭证（默认 `minioadmin`） |
 
 ## 本地开发
@@ -61,13 +83,27 @@ docker compose restart agent-api  # 重启后端
 # 仅启动基础设施（数据库 + Redis + MinIO）
 docker compose up -d postgres redis minio
 
-# 本地启动后端（hot reload）
+# 或使用启动脚本
+./start.sh infra        # Linux/macOS
+.\start.ps1 -Infra      # Windows
+
+# 手动启动后端（hot reload）
 cd agent
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# 手动启动 Manim Worker（需要先 pip install manim）
+# 手动启动前端（hot reload）
+cd web
+npm install
+npm run dev
+
+# 手动启动 Manim Worker（需要先 pip install manim redis）
+cd agent
 python workers/render_worker.py
+
+# 知识库初始化
+cd agent
+python -m scripts.seed_embeddings
 ```
 
 ## 健康检查
@@ -77,6 +113,19 @@ python workers/render_worker.py
 | `GET /api/health` | 后端健康状态 |
 | `GET /api/ping` | 轻量 ping |
 | `GET /api/knowledge/templates` | 知识库就绪确认 |
+| `GET /api/docs` | Swagger API 文档 |
+
+## 端口一览
+
+| 服务 | 端口 | URL |
+|------|------|-----|
+| 前端 (Vite) | 5173 | http://localhost:5173 |
+| 后端 (FastAPI) | 8000 | http://localhost:8000 |
+| API 文档 | 8000 | http://localhost:8000/docs |
+| PostgreSQL | 5432 | postgresql://agent:changeme@localhost:5432/eduflow |
+| Redis | 6379 | redis://localhost:6379 |
+| MinIO API | 9000 | http://localhost:9000 |
+| MinIO Console | 9001 | http://localhost:9001 |
 
 ## 故障排查
 
@@ -86,6 +135,9 @@ docker compose logs postgres
 
 # Manim 渲染失败
 docker compose logs manim-worker
+
+# 后端 Agent 错误
+docker compose logs agent-api
 
 # 清理重建
 docker compose down -v
