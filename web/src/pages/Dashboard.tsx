@@ -181,7 +181,7 @@ export function Dashboard() {
 function ProjectCard({ project }: { project: ProjectListItem }) {
   return (
     <Link
-      to={`/app/project/${project.id}/play`}
+      to={`/app/project/${project.id}`}
       className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-indigo-200"
     >
       <div className="flex items-start justify-between mb-3">

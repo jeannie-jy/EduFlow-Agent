@@ -1,15 +1,10 @@
 import {
   BookOpenIcon,
   CirclePlayIcon,
-  DownloadIcon,
-  FileClockIcon,
-  FolderClockIcon,
-  GraduationCapIcon,
   LayoutTemplateIcon,
-  PencilRulerIcon,
   PlusIcon,
 } from "lucide-react";
-import { matchPath, NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { EduFlowBrand } from "@/components/brand/EduFlowBrand";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -28,19 +23,9 @@ import {
 } from "@/components/ui/sidebar";
 
 const navigationItems = [
-  { label: "教学路径", to: "/app/project/demo/plan", icon: GraduationCapIcon, end: false },
-  { label: "互动推演", to: "/app", icon: CirclePlayIcon, end: true },
+  { label: "我的推演", to: "/app", icon: CirclePlayIcon, end: true },
   { label: "模板库", to: "/app/templates", icon: LayoutTemplateIcon, end: false },
-  { label: "教师编辑器", to: "/app/project/demo/edit", icon: PencilRulerIcon, end: false },
-  { label: "导出中心", to: "/app/project/demo/export", icon: DownloadIcon, end: false },
 ] as const;
-
-const recentItems = [
-  { label: "Dijkstra 最短路径", time: "刚刚" },
-  { label: "Prim 最小生成树", time: "昨天" },
-  { label: "拓扑排序", time: "2 天前" },
-  { label: "BFS 广度优先搜索", time: "3 天前" },
-];
 
 export function AppSidebar() {
   const { state, isMobile, setOpenMobile } = useSidebar();
@@ -75,9 +60,10 @@ export function AppSidebar() {
             <nav aria-label="主导航">
               <SidebarMenu>
                 {navigationItems.map(({ label, to, icon: Icon, ...item }) => {
-                  const isActive = Boolean(
-                    matchPath({ path: to, end: item.end }, pathname),
-                  );
+                  const isActive =
+                    label === "我的推演"
+                      ? pathname === "/app"
+                      : pathname.startsWith(to);
 
                   return (
                   <SidebarMenuItem key={label}>
@@ -105,26 +91,6 @@ export function AppSidebar() {
             </nav>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>最近推演</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {recentItems.map((item, index) => (
-                <SidebarMenuItem key={item.label}>
-                  <SidebarMenuButton
-                    render={<NavLink to={index === 0 ? "/app" : "/app/project/demo/play"} title={state === "collapsed" ? item.label : undefined} />}
-                    isActive={index === 0 && pathname === "/app"}
-                    className="min-h-10"
-                  >
-                    {index === 0 ? <FolderClockIcon /> : <FileClockIcon />}
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    <span className="text-[10px] text-sidebar-foreground/55">{item.time}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -139,7 +105,7 @@ export function AppSidebar() {
               </Avatar>
               <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
                 <span className="truncate font-medium">计算机科学与技术</span>
-                <span className="text-xs text-sidebar-foreground/55">本科 2022 级</span>
+                <span className="text-xs text-sidebar-foreground/55">EduFlow-Agent</span>
               </span>
               <BookOpenIcon className="text-sidebar-foreground/50" />
             </SidebarMenuButton>

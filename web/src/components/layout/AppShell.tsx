@@ -1,6 +1,6 @@
-import { useState, type CSSProperties, type PropsWithChildren } from "react";
+import { type CSSProperties, type PropsWithChildren } from "react";
 import { useLocation } from "react-router-dom";
-import { EllipsisIcon, PencilIcon, RefreshCwIcon, Share2Icon } from "lucide-react";
+import { EllipsisIcon } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,9 +25,7 @@ const routeLabels: Record<string, string> = {
 
 export function AppShell({ children }: PropsWithChildren) {
   const { pathname } = useLocation();
-  const routeLabel = routeLabels[pathname] ?? "页面未找到";
-  const [shareState, setShareState] = useState("分享");
-  const isWorkbench = pathname === "/app";
+  const routeLabel = routeLabels[pathname] ?? "";
 
   return (
     <SidebarProvider
@@ -50,41 +48,20 @@ export function AppShell({ children }: PropsWithChildren) {
               <BreadcrumbList>
                 <BreadcrumbItem>
                   <BreadcrumbPage className="truncate text-[15px] font-semibold tracking-[-0.01em]">
-                    {isWorkbench ? "Dijkstra 最短路径" : routeLabel}
+                    {routeLabel || "EduFlow"}
                   </BreadcrumbPage>
                 </BreadcrumbItem>
+                {!routeLabel && (
+                  <BreadcrumbItem>
+                    <BreadcrumbPage className="truncate text-[15px] text-muted-foreground">
+                      项目详情
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                )}
               </BreadcrumbList>
             </Breadcrumb>
-            {isWorkbench ? (
-              <Button variant="ghost" size="icon-sm" aria-label="重命名推演">
-                <PencilIcon />
-              </Button>
-            ) : null}
           </div>
           <div className="flex items-center gap-2">
-            {isWorkbench ? (
-              <>
-                <Button
-                  variant="outline"
-                  className="hidden sm:inline-flex"
-                  onClick={() => window.dispatchEvent(new Event("eduflow:regenerate"))}
-                >
-                  <RefreshCwIcon data-icon="inline-start" />
-                  重新生成
-                </Button>
-                <Button
-                  variant="outline"
-                  className="hidden md:inline-flex"
-                  onClick={() => {
-                    setShareState("已复制");
-                    window.setTimeout(() => setShareState("分享"), 1600);
-                  }}
-                >
-                  <Share2Icon data-icon="inline-start" />
-                  {shareState}
-                </Button>
-              </>
-            ) : null}
             <ThemeSwitcher />
             <Button variant="outline" size="icon" aria-label="更多操作">
               <EllipsisIcon />
@@ -94,7 +71,7 @@ export function AppShell({ children }: PropsWithChildren) {
         <div
           id="workspace"
           tabIndex={-1}
-          className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2.5 md:p-3 lg:overflow-hidden"
+          className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2.5 md:p-3"
         >
           {children}
         </div>

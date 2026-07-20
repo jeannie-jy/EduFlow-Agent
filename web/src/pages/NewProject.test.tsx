@@ -21,7 +21,7 @@ describe("NewProject page", () => {
 
     expect(screen.getByText("新建推演")).toBeInTheDocument();
     expect(screen.getByLabelText("推演标题 *")).toBeInTheDocument();
-    expect(screen.getByLabelText("知识点描述")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("描述你想讲解的知识点内容、重点和注意事项...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /开始生成教学计划/ })).toBeInTheDocument();
   });
 
@@ -159,7 +159,9 @@ describe("NewProject page", () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText("推演标题 *")).toBeDisabled();
-      expect(screen.getByLabelText("知识点描述")).toBeDisabled();
+      expect(
+        screen.getByPlaceholderText("描述你想讲解的知识点内容、重点和注意事项..."),
+      ).toBeDisabled();
     });
   });
 });

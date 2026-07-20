@@ -173,10 +173,15 @@ export function TemplateBrowser() {
             const similarity = isSearch && "similarity" in (item as SearchResultItem)
               ? (item as SearchResultItem).similarity : null;
 
+            const templateParams = new URLSearchParams();
+            templateParams.set("template", concept);
+            if (subject) templateParams.set("subject", subject);
+            if (difficulty) templateParams.set("difficulty", String(difficulty));
+
             return (
               <Link
                 key={id}
-                to={`/app/new?template=${encodeURIComponent(concept)}`}
+                to={`/app/new?${templateParams.toString()}`}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all hover:shadow-md hover:border-indigo-200"
               >
                 <div className="flex items-start justify-between mb-2">

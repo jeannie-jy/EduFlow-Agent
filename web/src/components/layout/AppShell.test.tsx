@@ -59,7 +59,7 @@ it("keeps mobile navigation targets at least 44 pixels tall", () => {
   renderWithProviders(<RouterProvider router={router} />);
   const navigation = within(screen.getByRole("navigation", { name: "主导航" }));
 
-  for (const label of ["教学路径", "互动推演", "教师编辑器", "模板库", "导出中心"]) {
+  for (const label of ["我的推演", "模板库"]) {
     expect(navigation.getByRole("link", { name: label })).toHaveClass("min-h-11");
   }
   expect(screen.getByRole("link", { name: "EduFlow 工作台" })).toHaveClass(

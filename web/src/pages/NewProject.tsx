@@ -4,13 +4,13 @@
  * 对接: POST /api/projects
  */
 
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -18,13 +18,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Sparkles, AlertCircle, FileText, Pencil } from "lucide-react";
+import { ArrowLeft, Sparkles, AlertCircle, FileText, Pencil, BookOpen } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createProject, ApiError, NetworkError } from "@/services";
 import { FileUploader, type UploadedFile } from "@/components/FileUploader";
 
+const difficultyMap: Record<string, string> = {
+  "1": "beginner",
+  "2": "beginner",
+  "3": "intermediate",
+  "4": "advanced",
+  "5": "advanced",
+};
+
 export function NewProject() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const templateName = searchParams.get("template") ?? "";
+  const templateSubject = searchParams.get("subject") ?? "";
+  const templateDifficulty = searchParams.get("difficulty") ?? "";
+
   const [title, setTitle] = useState("");
   const [inputContent, setInputContent] = useState("");
   const [inputType, setInputType] = useState<"natural_language" | "file_upload">("natural_language");
@@ -33,6 +47,18 @@ export function NewProject() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 从模板库跳转过来时预填充表单
+  useEffect(() => {
+    if (!templateName) return;
+    setTitle(templateName);
+    setInputContent(
+      `讲解 ${templateName}，包括核心概念、工作原理和典型示例。`,
+    );
+    if (templateDifficulty && difficultyMap[templateDifficulty]) {
+      setDifficulty(difficultyMap[templateDifficulty]);
+    }
+  }, [templateName, templateDifficulty]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +75,7 @@ export function NewProject() {
         audience,
         difficulty,
       });
-      navigate(`/app/project/${res.id}/plan`);
+      navigate(`/app/project/${res.id}?tab=plan`);
     } catch (err) {
       if (err instanceof NetworkError) {
         setError("无法连接到服务器，请检查后端是否已启动");
@@ -74,7 +100,18 @@ export function NewProject() {
       </Link>
 
       <h1 className="text-2xl font-bold text-slate-900 mb-2">新建推演</h1>
-      <p className="text-sm text-slate-500 mb-8">描述你想讲解的知识点，AI 将为你生成教学计划</p>
+      {templateName ? (
+        <p className="text-sm text-slate-500 mb-8 flex items-center gap-2">
+          <BookOpen size={14} className="text-indigo-400" />
+          从模板创建：
+          <Badge variant="secondary" className="font-normal">{templateName}</Badge>
+          {templateSubject && (
+            <Badge variant="outline" className="text-[10px]">{templateSubject}</Badge>
+          )}
+        </p>
+      ) : (
+        <p className="text-sm text-slate-500 mb-8">描述你想讲解的知识点，AI 将为你生成教学计划</p>
+      )}
 
       {error && (
         <div className="mb-6 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -100,46 +137,58 @@ export function NewProject() {
         </div>
 
         {/* 输入方式选择 */}
-        <Tabs
-          value={inputType}
-          onValueChange={(v) => setInputType(v as typeof inputType)}
-        >
-          <TabsList variant="line" className="w-full justify-stretch">
-            <TabsTrigger value="natural_language" className="gap-1.5">
-              <Pencil size={14} /> 自然语言
-            </TabsTrigger>
-            <TabsTrigger value="file_upload" className="gap-1.5">
-              <FileText size={14} /> 上传材料
-            </TabsTrigger>
-          </TabsList>
+        <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5 w-fit">
+          <button
+            type="button"
+            onClick={() => setInputType("natural_language")}
+            className={`inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-medium transition-colors ${
+              inputType === "natural_language"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Pencil size={12} /> 自然语言
+          </button>
+          <button
+            type="button"
+            onClick={() => setInputType("file_upload")}
+            className={`inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-medium transition-colors ${
+              inputType === "file_upload"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <FileText size={12} /> 上传材料
+          </button>
+        </div>
 
-          <TabsContent value="natural_language" className="mt-4">
-            <div className="space-y-2">
-              <Label htmlFor="content">知识点描述</Label>
-              <Textarea
-                id="content"
-                rows={5}
-                placeholder="描述你想讲解的知识点内容、重点和注意事项..."
-                value={inputContent}
-                onChange={(e) => setInputContent(e.target.value)}
-                disabled={submitting}
-              />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="file_upload" className="mt-4">
-            <FileUploader
-              files={uploadedFiles}
-              onFilesChange={setUploadedFiles}
-              onTopicSelect={(topic) => {
-                // 将选中的主题填入标题
-                if (!title) setTitle(topic);
-                setInputContent(`讲解 ${topic}，包括核心概念、原理和示例。`);
-              }}
+        {/* 输入内容区域 */}
+        {inputType === "natural_language" ? (
+          <div className="space-y-1.5">
+            <Textarea
+              id="content"
+              maxLength={500}
+              placeholder="描述你想讲解的知识点内容、重点和注意事项..."
+              className="h-32 resize-none overflow-y-auto"
+              value={inputContent}
+              onChange={(e) => setInputContent(e.target.value)}
               disabled={submitting}
             />
-          </TabsContent>
-        </Tabs>
+            <p className="text-right text-xs text-muted-foreground">
+              {inputContent.length} / 500
+            </p>
+          </div>
+        ) : (
+          <FileUploader
+            files={uploadedFiles}
+            onFilesChange={setUploadedFiles}
+            onTopicSelect={(topic) => {
+              if (!title) setTitle(topic);
+              setInputContent(`讲解 ${topic}，包括核心概念、原理和示例。`);
+            }}
+            disabled={submitting}
+          />
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">

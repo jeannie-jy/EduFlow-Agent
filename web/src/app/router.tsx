@@ -1,6 +1,5 @@
-import { createBrowserRouter, Outlet, type RouteObject } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, useParams, type RouteObject } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { WorkbenchPage } from "@/components/workbench/WorkbenchPage";
 
 // 公开页面
 import { LandingPage } from "@/features/landing/LandingPage";
@@ -10,13 +9,16 @@ import { RegisterPage } from "@/features/auth/RegisterPage";
 // 应用页面
 import { Dashboard } from "@/pages/Dashboard";
 import { NewProject } from "@/pages/NewProject";
-import { PlanConfirm } from "@/pages/PlanConfirm";
-import { Editor } from "@/pages/Editor";
-import { Player } from "@/pages/Player";
-import { ExportCenter } from "@/pages/ExportCenter";
+import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
 import { TemplateBrowser } from "@/pages/TemplateBrowser";
-import { VersionHistory } from "@/pages/VersionHistory";
 import { NotFound } from "@/pages/NotFound";
+
+// ── 旧路由重定向 ────────────────────────────────────────────
+
+function RedirectToTab({ tab }: { tab: string }) {
+  const { projectId } = useParams();
+  return <Navigate to={`/app/project/${projectId}?tab=${tab}`} replace />;
+}
 
 // ── 布局 ────────────────────────────────────────────────────
 
@@ -52,27 +54,32 @@ export const appRoutes: RouteObject[] = [
     children: [
       { index: true, element: <Dashboard /> },
       { path: "new", element: <NewProject /> },
+      { path: "templates", element: <TemplateBrowser /> },
+
+      // 统一项目工作区
+      { path: "project/:projectId", element: <ProjectWorkspace /> },
+
+      // 旧路由 → 重定向到工作区
       {
-        path: "project/:projectId/plan",
-        element: <PlanConfirm />,
+        path: "project/:projectId/play",
+        element: <RedirectToTab tab="play" />,
       },
       {
         path: "project/:projectId/edit",
-        element: <Editor />,
+        element: <RedirectToTab tab="edit" />,
       },
       {
-        path: "project/:projectId/play",
-        element: <Player />,
+        path: "project/:projectId/plan",
+        element: <RedirectToTab tab="plan" />,
       },
       {
         path: "project/:projectId/export",
-        element: <ExportCenter />,
+        element: <RedirectToTab tab="export" />,
       },
       {
         path: "project/:projectId/versions",
-        element: <VersionHistory />,
+        element: <RedirectToTab tab="edit" />,
       },
-      { path: "templates", element: <TemplateBrowser /> },
     ],
   },
 
@@ -84,6 +91,3 @@ export const appRoutes: RouteObject[] = [
 ];
 
 export const appRouter = createBrowserRouter(appRoutes);
-
-// 保留旧工作台作为默认路由（/app 首页）
-export { WorkbenchPage };

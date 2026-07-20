@@ -124,7 +124,6 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
       }
 
       state = "error";
-      console.error("SSE 连接错误:", err);
 
       // 自动重连
       if (reconnectMs > 0 && reconnectCount < maxReconnects) {
@@ -134,8 +133,14 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
         if ((state as SSEConnectionState) !== "closed") {
           state = "connecting";
           connect();
+          return;
         }
       }
+
+      // 重连次数耗尽或禁用重连 → 通知上层
+      const errMsg = err instanceof Error ? err.message : "SSE 连接失败";
+      console.error("SSE 连接失败（已放弃）:", errMsg);
+      onError?.({ phase: "error", message: errMsg });
     }
   }
 
