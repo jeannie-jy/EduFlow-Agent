@@ -1,0 +1,1 @@
+export const themeScript = `(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),ok=["light","dark"];document.documentElement.dataset.theme=ok.includes(v||"")?v:"light"}catch{document.documentElement.dataset.theme="light"}})();`;
