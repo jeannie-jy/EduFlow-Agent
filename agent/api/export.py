@@ -194,27 +194,46 @@ async def download_artifact(
     job_id: str,
     filename: str,
 ) -> FileResponse:
-    """下载导出的产物文件。"""
+    """下载导出的产物文件。
+
+    搜索顺序：
+    1. settings.export_dir / job_id（本地开发）
+    2. /app/data/exports / job_id（Docker 共享卷）
+    3. 递归搜索 mp4 文件（Manim 会创建视频子目录）
+    """
     settings = get_settings()
     export_dir = Path(settings.export_dir) / job_id
 
-    file_path = export_dir / filename
+    # 候选搜索目录
+    search_dirs = [
+        export_dir,
+        Path("/app/data/exports") / job_id,   # Docker 共享卷
+        Path("data/exports") / job_id,         # 相对路径回退
+    ]
 
-    if not file_path.exists():
-        # 尝试在 scripts 目录查找
-        alt_path = Path("data/exports") / job_id / filename
-        if alt_path.exists():
-            file_path = alt_path
-        else:
-            raise HTTPException(status_code=404, detail="Artifact not found")
+    file_path = None
+    for base_dir in search_dirs:
+        candidate = base_dir / filename
+        if candidate.exists():
+            file_path = candidate
+            break
+        # mp4 文件可能在 Manim 创建的子目录中
+        if not candidate.exists() and filename.endswith(".mp4"):
+            mp4_candidates = list(base_dir.rglob(filename)) if base_dir.exists() else []
+            if mp4_candidates:
+                file_path = mp4_candidates[0]
+                break
+
+    if file_path is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
 
     # 安全检查：防止路径遍历
     try:
-        allowed_bases = [export_dir.resolve(), Path("data/exports").resolve()]
         resolved = file_path.resolve()
+        allowed_bases = [d.resolve() for d in search_dirs if d.exists()]
         if not any(resolved.is_relative_to(base) for base in allowed_bases):
             raise HTTPException(status_code=403, detail="Access denied")
-    except ValueError:
+    except (ValueError, OSError):
         raise HTTPException(status_code=403, detail="Access denied")
 
     media_type_map = {

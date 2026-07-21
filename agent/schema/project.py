@@ -164,6 +164,16 @@ class RegenerateRequest(BaseModel):
     scope: dict[str, Any] = Field(...)
 
 
+class RejectPlanRequest(BaseModel):
+    """拒绝教学计划请求（含修改意见）。"""
+    feedback: str = Field(default="", description="用户修改意见")
+
+
+class ApprovePlanResponse(BaseModel):
+    """批准教学计划响应。"""
+    stream_url: str
+
+
 # ============================================================================
 # 导出
 # ============================================================================

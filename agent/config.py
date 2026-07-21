@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     """应用配置。"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # 使用绝对路径：无论从哪个目录启动，都能找到项目根目录的 .env
+        env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -42,9 +43,16 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """数据库连接 URL。环境变量 DATABASE_URL 优先，否则从拆分字段拼接。"""
-        if self.database_url_override:
-            return self.database_url_override
+        """数据库连接 URL。环境变量 DATABASE_URL 优先，否则从拆分字段拼接。
+
+        自动将 postgresql:// 转换为 postgresql+asyncpg://（SQLAlchemy async 引擎要求）。
+        """
+        url = self.database_url_override
+        if url:
+            # 自动修正 scheme：确保 async 引擎可用
+            if url.startswith("postgresql://") and "+" not in url.split("://")[0]:
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return url
         return (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"

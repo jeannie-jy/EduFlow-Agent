@@ -124,13 +124,14 @@ async def generate_asset(
             }
         }
 
-    logger.warning("未知资源类型: %s", asset_type)
+    # 不支持的资源类型 — 保持原始数据透传
+    logger.debug("透传资源类型: %s", asset_type)
     return {
         "asset": {
-            "id": f"unknown_{concept.lower().replace(' ', '_')}",
-            "type": "card",
-            "title": concept,
-            "content": {},
+            "id": ctx.get("id", f"{asset_type}_{concept.lower().replace(' ', '_')}"),
+            "type": asset_type,
+            "title": ctx.get("title", concept),
+            "content": ctx,
             "related_frame_ids": related_frame_ids,
         }
     }

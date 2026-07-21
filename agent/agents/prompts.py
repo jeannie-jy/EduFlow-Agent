@@ -96,12 +96,14 @@ appear, disappear, highlight, transform, move, update_value, compare, swap, rela
 
 ## 核心约束
 
-1. 每帧的状态必须连贯：帧 N+1 的 state_snapshot 是帧 N 执行动画后的结果
-2. 同一知识点在帧间应保持一致的命名（visual_objects id）
-3. 每帧 narration 应简洁清晰，适合学生阅读
-4. 关键步骤（如算法中的比较、交换、松弛）应有 highlight 或 update_value 动画
-5. 算法类主题应包含 code_block 对象展示伪代码
-6. total_frames 应与 frames 数组长度一致
+1. **帧数限制**：生成的帧数必须 ≤ teaching_plan 中的 estimated_total_frames，且最多不超过 20 帧。宁可少而精。
+2. 每帧的状态必须连贯：帧 N+1 的 state_snapshot 是帧 N 执行动画后的结果
+3. 同一知识点在帧间应保持一致的命名（visual_objects id）
+4. **每帧 narration 控制在 50-100 字**，简洁清晰，适合学生阅读。禁止超过 150 字。
+5. 关键步骤（如算法中的比较、交换、松弛）应有 highlight 或 update_value 动画
+6. 算法类主题应包含 code_block 对象展示伪代码
+7. **visual_objects 只允许以下类型**：node, edge, array, linked_list, tree, graph, table, code_block, memory_block, process, timeline, formula, card, mindmap。禁止使用 image、chart、video 等。
+8. **assets 只允许以下类型**：card, mindmap, table, code_snippet。最多生成 3 个 assets。
 """
 
 # ============================================================================
@@ -265,4 +267,6 @@ KNOWLEDGE_SYSTEM_PROMPT = """你是一位计算机科学知识工程专家，擅
 - 关系边必须引用已定义的 concept id
 - key_terms 是全部重要术语汇总
 - suggested_visual_objects 从：node, edge, array, linked_list, tree, graph, table, code_block, memory_block, process, timeline, formula, card, mindmap 中选择
+- **概念数量控制在 5-8 个，每个 description 控制在 50 字以内**
+- **key_terms 最多 10 个**
 """

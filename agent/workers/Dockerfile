@@ -14,15 +14,14 @@ RUN apt-get update \
 
 # Manim 社区版
 RUN pip install --no-cache-dir \
-    manim \
-    redis \
-    boto3 \
-    requests
+    manim==0.18.1 \
+    "redis>=5.2.0"
 
 WORKDIR /app
 
-# Worker 脚本
-COPY render_worker.py .
+# Worker 脚本 + Adapter
+COPY workers/render_worker.py .
+COPY adapters /app/adapters
 
 # 渲染输出目录
 RUN mkdir -p /app/output /app/scripts

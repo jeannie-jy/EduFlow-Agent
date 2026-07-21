@@ -319,3 +319,62 @@ export function getEdgeIdBetween(left: GraphNodeId, right: GraphNodeId) {
 export function getDistanceLabel(distance: number) {
   return formatDistance(distance);
 }
+
+// ============================================================================
+// DSL 适配器：将后端 FrameData[] 转换为播放器可用的 SimulationFrame[]
+// ============================================================================
+
+/** 后端 API 返回的帧数据（对齐 services/frames.ts FrameData） */
+export interface ApiFrameData {
+  frame_id: string;
+  title: string;
+  narration: string;
+  visual_objects: DSLVisualObject[];
+  state_snapshot: Record<string, unknown>;
+  animations: DSLAnimation[];
+  interaction_hooks: { type: string; param: string; [key: string]: unknown }[];
+}
+
+/**
+ * 将后端 DSL 帧转换为播放器 SimulationFrame。
+ * 通用转换——不限于 Dijkstra，支持任意 algorithm/data_structure。
+ */
+export function dslToSimulationFrames(
+  apiFrames: ApiFrameData[],
+): SimulationFrame[] {
+  return apiFrames.map((f, idx) => {
+    const ss = f.state_snapshot ?? {};
+
+    return {
+      id: idx + 1,
+      phase: "select" as SimulationPhase,
+      title: f.title ?? `帧 ${idx + 1}`,
+      currentNode: (ss.current_node as GraphNodeId) ?? "A",
+      distances: (ss.distances as Record<GraphNodeId, number>) ?? {
+        A: 0, B: Infinity, C: Infinity, D: Infinity, E: Infinity, F: Infinity,
+      },
+      predecessors: (ss.predecessors as Record<GraphNodeId, GraphNodeId | null>) ?? {
+        A: null, B: null, C: null, D: null, E: null, F: null,
+      },
+      settledNodes: (ss.settled_nodes as GraphNodeId[]) ?? [],
+      inspectedEdges: (ss.inspected_edges as string[]) ?? [],
+      changedEdges: (ss.changed_edges as string[]) ?? [],
+      narration: f.narration ?? "",
+      animations: f.animations ?? [],
+      interactionHooks: f.interaction_hooks ?? [],
+    };
+  });
+}
+
+/**
+ * 从 DSL 帧中提取所有唯一的 visual object 类型。
+ */
+export function extractVisualObjectTypes(frames: ApiFrameData[]): string[] {
+  const types = new Set<string>();
+  for (const f of frames) {
+    for (const vo of f.visual_objects ?? []) {
+      if (vo.type) types.add(vo.type);
+    }
+  }
+  return [...types];
+}

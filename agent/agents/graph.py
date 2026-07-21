@@ -218,10 +218,12 @@ def get_graph() -> "CompiledStateGraph":
             from config import get_settings
 
             settings = get_settings()
-            # 使用 DATABASE_URL 连接（与 db/database.py 一致）
+            # config.database_url 已确保返回 postgresql+asyncpg:// 格式
+            # LangGraph AsyncPostgresSaver 需要纯 postgresql://（无 +asyncpg 后缀）
             db_url = settings.database_url
-            # 兼容 postgresql+asyncpg:// → postgresql:// 格式差异
-            if db_url.startswith("postgresql+asyncpg://"):
+            if "postgresql+asyncpg://" in db_url:
+                db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+            elif not db_url.startswith("postgresql://"):
                 db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
 
             import asyncio
@@ -248,6 +250,16 @@ def get_graph() -> "CompiledStateGraph":
             logger.info("langgraph-checkpoint-postgres 未安装，使用内存 checkpointer")
         except Exception as exc:
             logger.warning("Checkpointer 初始化异常，使用内存模式: %s", exc)
+
+    # 内存 checkpointer 兜底：Postgres 不可用时使用 MemorySaver
+    # 确保 aget_state() / ainvoke(None) 在任何环境下都可用
+    if _checkpointer is None:
+        try:
+            from langgraph.checkpoint.memory import MemorySaver
+            _checkpointer = MemorySaver()
+            logger.info("使用内存 checkpointer (MemorySaver)")
+        except ImportError:
+            logger.warning("MemorySaver 不可用，aget_state 将不可用")
 
     _graph = build_graph(checkpointer=_checkpointer)
     return _graph

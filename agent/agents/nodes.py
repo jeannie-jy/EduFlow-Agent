@@ -45,6 +45,27 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _infer_knowledge_type(user_input: str) -> str:
+    """根据用户输入关键词推断知识点类型。"""
+    input_lower = user_input.lower()
+    if any(kw in input_lower for kw in ["排序", "查找", "搜索", "遍历", "最短路径", "动态规划", "贪心", "递归", "分治", "sort", "search", "path", "dp", "dynamic"]):
+        return "algorithm"
+    if any(kw in input_lower for kw in ["树", "表", "栈", "队列", "图", "堆", "链表", "tree", "table", "stack", "queue", "graph", "heap", "list"]):
+        return "data_structure"
+    if any(kw in input_lower for kw in ["进程", "线程", "调度", "死锁", "内存", "文件系统", "process", "thread", "schedule", "deadlock", "memory"]):
+        return "operating_system"
+    if any(kw in input_lower for kw in ["tcp", "http", "ip", "网络", "协议", "路由", "network", "protocol"]):
+        return "computer_network"
+    if any(kw in input_lower for kw in ["数据库", "sql", "索引", "事务", "database", "index", "transaction"]):
+        return "database"
+    return "algorithm"  # 默认
+
+
+# ============================================================================
 # Planner Node
 # ============================================================================
 
@@ -137,6 +158,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
             user_message=user_message,
             output_schema=output_schema,
             temperature=0.3,
+            max_tokens=16384,  # Planner 输出大量教学计划 JSON，需要更大 token 限制
         )
     except Exception as exc:
         logger.error("Planner 生成失败: %s", exc)
@@ -157,13 +179,30 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
             "suggested_parameters": [],
         }
 
-    logger.info("Planner: 完成 | objectives=%d | outline_steps=%d | estimated_frames=%d",
+    # 补充：用 design_parameters 为知识点类型生成建议参数（兼容无 LLM 参数场景）
+    suggested_params = teaching_plan.get("suggested_parameters", [])
+    if not suggested_params:
+        try:
+            from tools.design_parameters import design_parameters
+            knowledge_type = _infer_knowledge_type(user_input)
+            param_result = await design_parameters(knowledge_type, {})
+            suggested_params = param_result.get("parameters", [])
+            teaching_plan["suggested_parameters"] = suggested_params
+        except Exception:
+            pass
+
+    logger.info("Planner: 完成 | objectives=%d | outline_steps=%d | estimated_frames=%d | params=%d",
                 len(teaching_plan.get("objectives", [])),
                 len(teaching_plan.get("outline", [])),
-                teaching_plan.get("estimated_total_frames", 0))
+                teaching_plan.get("estimated_total_frames", 0),
+                len(suggested_params))
+
+    # HITL 审批仅在 plan_only 模式下触发，避免阻塞 full 流程
+    should_approve = state.get("approval_mode", False)
 
     return {
         "teaching_plan": teaching_plan,
+        "pending_approval": "teaching_plan" if should_approve else None,
         "status": "planning",
     }
 
@@ -240,7 +279,7 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             user_message=user_message,
             output_schema=output_schema,
             temperature=0.2,
-            max_tokens=4096,
+            max_tokens=8192,  # 知识图谱 JSON 包含多个概念 + 关系边
         )
     except Exception as exc:
         logger.error("Knowledge Agent 生成失败: %s", exc)
@@ -341,7 +380,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             user_message=user_message,
             output_schema=output_schema,
             temperature=0.3,
-            max_tokens=8192,
+            max_tokens=32768,  # Coder 输出完整 DSL（多帧 + narration + visual_objects）
         )
     except Exception as exc:
         logger.error("Coder 生成失败: %s", exc)
@@ -363,6 +402,43 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             "assets": [],
         }
 
+    # 后处理：用 generate_asset 规范化 LLM 生成的 assets
+    raw_assets = result.get("assets", [])
+    validated_assets = []
+    for asset in raw_assets:
+        if not isinstance(asset, dict):
+            validated_assets.append(asset)
+            continue
+        asset_type = asset.get("type", "card")
+        # content 可能是 string（LLM 简写）或 dict（标准格式）
+        content = asset.get("content", {})
+        if isinstance(content, str):
+            content = {"definition": content}
+
+        context = {
+            "concept": asset.get("title", user_input),
+            "description": content.get("definition", str(content)[:200]),
+            "definition": content.get("definition", ""),
+            "intuition": content.get("intuition", ""),
+            "pitfalls": content.get("pitfalls", []),
+            "formula": content.get("formula"),
+            "pseudocode": content.get("pseudocode"),
+            "category": content.get("category", "core_concept"),
+            "headers": content.get("headers", []),
+            "rows": content.get("rows", []),
+            "language": content.get("language", "python"),
+            "code": content.get("code", ""),
+            "highlight_lines": content.get("highlight_lines", []),
+            "children": content.get("children", []),
+            "related_frame_ids": asset.get("related_frame_ids", []),
+        }
+        try:
+            from tools.generate_asset import generate_asset
+            validated = await generate_asset(asset_type, context)
+            validated_assets.append(validated["asset"])
+        except Exception:
+            validated_assets.append(asset)
+
     # 构建完整 RenderScript
     dsl: dict[str, Any] = {
         "project_id": project_id,
@@ -377,7 +453,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
         "knowledge_graph": knowledge_graph or {},
         "parameters": result.get("parameters", []),
         "frames": result.get("frames", []),
-        "assets": result.get("assets", []),
+        "assets": validated_assets,
         "export_targets": ["web", "manim_video"],
     }
 

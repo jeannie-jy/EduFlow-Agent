@@ -10,7 +10,7 @@ services:
     build: ./agent
     ports: ["8000:8000"]
     environment:
-      - DATABASE_URL=postgresql://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
+      - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
       - REDIS_URL=redis://redis:6379
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
       - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
@@ -23,6 +23,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    volumes:
+      - manim_output:/app/data/exports    # 共享 worker 渲染产物
+      - manim_scripts:/app/data/scripts   # 共享 worker 生成的脚本
     restart: unless-stopped
 
   # ── Database (PostgreSQL + pgvector) ────────────────────
@@ -52,7 +55,9 @@ services:
 
   # ── Manim Render Worker ──────────────────────────────────
   manim-worker:
-    build: ./agent/workers
+    build:
+      context: ./agent
+      dockerfile: workers/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379
       - OUTPUT_DIR=/app/output
@@ -61,7 +66,6 @@ services:
     volumes:
       - manim_output:/app/output
       - manim_scripts:/app/scripts
-      - ./agent/adapters:/app/adapters  # 共享 Manim Adapter
     depends_on:
       redis:
         condition: service_started

@@ -70,6 +70,10 @@ def process_task(r: redis.Redis, task: dict) -> None:
     _update_status(r, job_id, "rendering", progress=0)
 
     try:
+        # 0. 为每个 job 创建独立输出目录（API 下载路径依赖此目录结构）
+        job_output_dir = OUTPUT_DIR / job_id
+        job_output_dir.mkdir(parents=True, exist_ok=True)
+
         # 1. DSL → Manim 脚本
         from adapters.manim_adapter import convert_dsl_to_manim
         files = convert_dsl_to_manim(dsl)
@@ -84,7 +88,7 @@ def process_task(r: redis.Redis, task: dict) -> None:
 
         _update_status(r, job_id, "rendering", progress=30)
 
-        # 2. 执行 Manim 渲染
+        # 2. 执行 Manim 渲染（输出到 job 专属目录）
         quality = config.get("quality", "h")
         fps = config.get("fps", 30)
 
@@ -101,7 +105,7 @@ def process_task(r: redis.Redis, task: dict) -> None:
             quality_flags.get(quality, "-qh"),
             f"--fps={fps}",
             "--format=mp4",
-            f"--media_dir={OUTPUT_DIR}",
+            f"--media_dir={job_output_dir}",
         ]
 
         logger.info("Manim CLI: %s", " ".join(cmd))
@@ -126,8 +130,8 @@ def process_task(r: redis.Redis, task: dict) -> None:
         # 3. 收集产物
         _update_status(r, job_id, "rendering", progress=95)
 
-        # 查找输出的 mp4 文件
-        mp4_files = list(OUTPUT_DIR.rglob("*.mp4"))
+        # 查找输出的 mp4 文件（在 job 专属目录下搜索）
+        mp4_files = list(job_output_dir.rglob("*.mp4"))
         artifacts = []
         for mp4 in mp4_files:
             size = mp4.stat().st_size

@@ -45,6 +45,8 @@ import {
   getProject,
   startGeneration,
   streamGeneration,
+  approvePlan,
+  rejectPlan,
   listFrames,
   updateFrame,
   lockFrame,
@@ -58,12 +60,14 @@ import {
   type ProjectDetailResponse,
   type FrameData,
   type SSEProgressEvent,
+  type SSEWaitingApprovalEvent,
   type ExportJobResponse,
   type VersionItem,
   ApiError,
   NetworkError,
 } from "@/services";
 import { FeedbackPanel } from "@/components/FeedbackPanel";
+import { VisualObjectRenderer } from "@/components/workbench/visual-objects/VisualObjectRenderer";
 
 // ============================================================================
 // Tab 类型
@@ -208,7 +212,7 @@ export function ProjectWorkspace() {
 // Tab: 计划（原 PlanConfirm）
 // ============================================================================
 
-type SSEPhase = "idle" | "connecting" | "planning" | "generating" | "validating" | "done" | "error";
+type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "done" | "error";
 
 function PlanTabContent({ projectId, project, onDone }: {
   projectId: string;
@@ -225,18 +229,18 @@ function PlanTabContent({ projectId, project, onDone }: {
   const startedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // 连接超时检测：15 秒内无进展 → 报错
+  // 连接超时检测：LLM 调用可能较慢，60 秒内无进展 → 报错
   const resetTimeout = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       setPhase((prev) => {
-        if (prev === "connecting") {
+        if (prev === "connecting" || prev === "planning" || prev === "generating") {
           setErrorMsg("连接超时，请确认后端服务已启动（http://localhost:8000）");
           return "error";
         }
         return prev;
       });
-    }, 15000);
+    }, 60000);
   }, []);
 
   useEffect(() => {
@@ -269,6 +273,13 @@ function PlanTabContent({ projectId, project, onDone }: {
             setPhase("validating");
           }
         },
+        onWaitingApproval: (event: SSEWaitingApprovalEvent) => {
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          setPhase("waiting_approval");
+          setProgress(event.pct);
+          setMessage(event.message);
+          if (event.teaching_plan) setTeachingPlan(event.teaching_plan as Record<string, unknown>);
+        },
         onDone: (event) => {
           setPhase("done");
           setProgress(100);
@@ -291,6 +302,60 @@ function PlanTabContent({ projectId, project, onDone }: {
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
   }, []);
+
+  // ── 审批操作 ──────────────────────────────────────────
+  const handleApprove = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      await approvePlan(projectId);
+      // 重新启动 SSE 流继续接收后续进度
+      setPhase("connecting");
+      setErrorMsg(null);
+      resetTimeout();
+      abortRef.current = new AbortController();
+      streamGeneration(projectId, {
+        signal: abortRef.current.signal,
+        onProgress: (event: SSEProgressEvent) => {
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          setProgress(event.pct);
+          setMessage(event.message);
+          if (event.phase === "generating" || event.phase === "knowledge" || event.phase === "coder") {
+            setPhase("generating");
+          } else if (event.phase === "validating" || event.phase === "quality") {
+            setPhase("validating");
+          }
+        },
+        onDone: (event) => {
+          setPhase("done");
+          setProgress(100);
+          setMessage("生成完成");
+          if (event.quality_report) setQualityReport(event.quality_report as Record<string, unknown>);
+          onDone();
+        },
+        onError: (event) => {
+          setPhase("error");
+          setErrorMsg(event.message || "生成过程中发生错误");
+        },
+      });
+    } catch (err) {
+      setPhase("error");
+      if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
+      else setErrorMsg(err instanceof Error ? err.message : "批准失败");
+    }
+  }, [projectId, onDone, resetTimeout]);
+
+  const handleReject = useCallback(async (feedback: string) => {
+    if (!projectId) return;
+    try {
+      await rejectPlan(projectId, feedback);
+      setPhase("idle");
+      startedRef.current = false;
+      setMessage("已返回修改，请调整主题描述后重新生成");
+    } catch (err) {
+      if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
+      else setErrorMsg(err instanceof Error ? err.message : "提交失败");
+    }
+  }, [projectId]);
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -348,6 +413,46 @@ function PlanTabContent({ projectId, project, onDone }: {
         </div>
       )}
 
+      {phase === "waiting_approval" && teachingPlan && (
+        <div className="space-y-6">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-6">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={20} className="text-amber-500 mt-0.5 shrink-0" />
+              <div>
+                <h3 className="font-semibold text-amber-800 mb-1">确认教学计划</h3>
+                <p className="text-sm text-amber-600">AI 已生成教学计划，请审核后决定是否继续</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border p-6">
+            <h3 className="font-semibold mb-4">教学计划预览</h3>
+            <pre className="max-h-96 overflow-auto rounded-lg bg-muted p-4 text-xs">
+              {JSON.stringify(teachingPlan, null, 2)}
+            </pre>
+          </div>
+
+          <div className="flex gap-3 justify-center">
+            <Button
+              onClick={handleApprove}
+              className="gap-2"
+            >
+              <CheckCircle2 size={16} /> 批准，继续生成
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const feedback = prompt("请输入修改意见（可选）：") || "";
+                handleReject(feedback);
+              }}
+              className="gap-2"
+            >
+              <RefreshCw size={16} /> 需要修改
+            </Button>
+          </div>
+        </div>
+      )}
+
       {phase === "done" && (
         <div className="space-y-6">
           <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
@@ -390,6 +495,7 @@ function PlayTabContent({ projectId, project }: {
 }) {
   const [frames, setFrames] = useState<FrameData[]>([]);
   const [paramCount, setParamCount] = useState(0);
+  const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
 
   useEffect(() => {
     if (!projectId) return;
@@ -409,6 +515,8 @@ function PlayTabContent({ projectId, project }: {
   const qualityReport = project?.quality_report as Record<string, unknown> | undefined;
   const overallScore = qualityReport?.overall_score as number | undefined;
   const displayFrames = dslFrames.length > 0 ? dslFrames : frames;
+  const currentFrame = displayFrames[selectedFrameIdx] as Record<string, unknown> | undefined;
+  const visualObjects = (currentFrame?.visual_objects as Record<string, unknown>[]) ?? [];
 
   if (displayFrames.length === 0) {
     return (
@@ -421,54 +529,110 @@ function PlayTabContent({ projectId, project }: {
   }
 
   return (
-    <div className="p-6">
-      {/* 概览卡片 */}
-      <div className="grid gap-4 md:grid-cols-4 mb-6">
-        <StatCard icon={Layers} label="推演帧" value={String(displayFrames.length)} sub={`${dslParams.length} 个参数`} />
-        <StatCard icon={FileText} label="教学目标" value={`${(teachingStrategy?.objectives as string[])?.length ?? 0} 个`} />
-        <StatCard icon={Settings2} label="难度" value={project?.difficulty === "intermediate" ? "中级" : project?.difficulty ?? "—"} />
-        <StatCard icon={CheckCircle2} label="质量评分" value={overallScore != null ? `${(overallScore * 100).toFixed(0)}%` : "—"} />
-      </div>
-
-      {/* 帧列表 */}
-      <h3 className="text-sm font-semibold mb-3">帧序列</h3>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {displayFrames.slice(0, 16).map((frame: any, idx: number) => (
-          <div key={frame.frame_id ?? idx} className="rounded-lg border p-3">
-            <div className="flex items-center justify-between mb-1">
-              <Badge variant="outline" className="text-[10px] font-mono">{frame.frame_id ?? `f_${idx + 1}`}</Badge>
-              <span className="text-[10px] text-muted-foreground">
-                {(frame.visual_objects as any[])?.length ?? 0} 对象
-              </span>
-            </div>
-            <p className="text-sm font-medium truncate">{frame.title ?? "未命名"}</p>
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{frame.narration ?? ""}</p>
-          </div>
+    <div className="flex flex-1 min-h-0">
+      {/* 左侧帧列表 */}
+      <aside className="w-56 shrink-0 border-r overflow-y-auto bg-muted/30">
+        <div className="p-3 border-b">
+          <span className="text-xs font-semibold text-muted-foreground uppercase">{displayFrames.length} 帧</span>
+        </div>
+        {displayFrames.map((frame: any, idx: number) => (
+          <button
+            key={frame.frame_id ?? idx}
+            onClick={() => setSelectedFrameIdx(idx)}
+            className={`w-full text-left px-3 py-2 text-sm transition-colors border-b border-border/50 ${
+              selectedFrameIdx === idx
+                ? "bg-primary/10 text-primary font-medium"
+                : "hover:bg-muted"
+            }`}
+          >
+            <span className="text-xs font-mono text-muted-foreground">{frame.frame_id ?? `f_${idx + 1}`}</span>
+            <p className="text-sm font-medium truncate mt-0.5">{frame.title ?? "未命名"}</p>
+          </button>
         ))}
-      </div>
+      </aside>
 
-      {/* 参数列表 */}
-      {dslParams.length > 0 && (
-        <>
-          <h3 className="text-sm font-semibold mt-6 mb-3">可调参数</h3>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {dslParams.map((p: any) => (
-              <div key={p.key} className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium">{p.label ?? p.key}</p>
-                  <p className="text-[10px] text-muted-foreground">{p.param_type}</p>
-                </div>
-                <Badge variant="secondary" className="text-[10px]">{String(p.default_value ?? "—").slice(0, 12)}</Badge>
+      {/* 右侧帧内容 */}
+      <main className="flex-1 overflow-y-auto p-6">
+        {currentFrame && (
+          <div className="mx-auto max-w-3xl space-y-6">
+            {/* 帧标题 + 导航 */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-mono text-muted-foreground">
+                  {currentFrame.frame_id as string ?? `f_${selectedFrameIdx + 1}`} / {displayFrames.length}
+                </span>
+                <h3 className="text-lg font-bold mt-1">{currentFrame.title as string ?? "未命名帧"}</h3>
               </div>
-            ))}
-          </div>
-        </>
-      )}
+              <div className="flex gap-1">
+                <Button
+                  variant="outline" size="sm"
+                  disabled={selectedFrameIdx <= 0}
+                  onClick={() => setSelectedFrameIdx((i) => i - 1)}
+                >
+                  上一帧
+                </Button>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={selectedFrameIdx >= displayFrames.length - 1}
+                  onClick={() => setSelectedFrameIdx((i) => i + 1)}
+                >
+                  下一帧
+                </Button>
+              </div>
+            </div>
 
-      {/* 反馈 */}
-      <div className="mt-6 max-w-md">
-        <FeedbackPanel projectId={projectId} />
-      </div>
+            {/* 讲解文本 */}
+            {currentFrame.narration && (
+              <div className="rounded-xl border bg-muted/20 p-4">
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {currentFrame.narration as string}
+                </p>
+              </div>
+            )}
+
+            {/* 视觉对象渲染 */}
+            {visualObjects.length > 0 && (
+              <div className="rounded-xl border p-6">
+                <h4 className="text-sm font-semibold mb-4">可视化元素</h4>
+                <div className="flex flex-wrap gap-4">
+                  {visualObjects.map((vo, idx) => (
+                    <VisualObjectRenderer
+                      key={(vo.id as string) ?? idx}
+                      object={vo as unknown as import("@/components/workbench/simulation-model").DSLVisualObject}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 状态快照 */}
+            {currentFrame.state_snapshot && Object.keys(currentFrame.state_snapshot as object).length > 0 && (
+              <div className="rounded-xl border p-6">
+                <h4 className="text-sm font-semibold mb-3">状态快照</h4>
+                <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs font-mono">
+                  {JSON.stringify(currentFrame.state_snapshot, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {/* 动画列表 */}
+            {((currentFrame.animations as unknown[])?.length ?? 0) > 0 && (
+              <div className="rounded-xl border p-6">
+                <h4 className="text-sm font-semibold mb-3">
+                  动画序列 ({(currentFrame.animations as unknown[])?.length})
+                </h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {(currentFrame.animations as Record<string, unknown>[])?.map((anim, idx) => (
+                    <span key={idx} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-mono">
+                      {anim.type as string ?? "?"} → {anim.target as string ?? "?"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
     </div>
   );
 }

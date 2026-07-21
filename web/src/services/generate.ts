@@ -49,3 +49,13 @@ export function regenerate(projectId: string, scope: RegenerateRequest["scope"])
     scope,
   } as RegenerateRequest);
 }
+
+export function approvePlan(projectId: string) {
+  return api.post<GenerateResponse>(`/projects/${projectId}/generate/approve`);
+}
+
+export function rejectPlan(projectId: string, feedback: string) {
+  return api.post<GenerateResponse>(`/projects/${projectId}/generate/reject`, {
+    feedback,
+  });
+}

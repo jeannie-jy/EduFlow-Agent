@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from db.database import get_session
 from services.generate_service import run_generation_stream
-from schema.project import GenerateRequest, RegenerateRequest
+from schema.project import GenerateRequest, RegenerateRequest, RejectPlanRequest, ApprovePlanResponse
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ async def generation_stream(
         async for sse_chunk in run_generation_stream(
             project_id=project_id,
             user_input=input_content,
+            action="full",
             constraints=constraints,
         ):
             # 检查客户端是否断开
@@ -110,3 +111,59 @@ async def regenerate_frames(
     return {
         "stream_url": f"/api/projects/{project_id}/generate/stream",
     }
+
+
+@router.post("/{project_id}/generate/approve", status_code=200)
+async def approve_plan(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> ApprovePlanResponse:
+    """批准教学计划，清除 pending_approval 并继续生成流程。
+
+    前端调用此端点后，应重新连接 SSE stream 继续接收后续进度。
+    """
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 清除审批标记，更新状态
+    if project.dsl_snapshot:
+        project.dsl_snapshot.pop("pending_approval", None)
+    project.status = "generating"
+
+    logger.info("教学计划已批准: project=%s", project_id)
+
+    return ApprovePlanResponse(
+        stream_url=f"/api/projects/{project_id}/generate/stream",
+    )
+
+
+@router.post("/{project_id}/generate/reject", status_code=200)
+async def reject_plan(
+    project_id: str,
+    body: RejectPlanRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ApprovePlanResponse:
+    """拒绝教学计划，携带修改意见重新规划。
+
+    将用户反馈写入 project DSL snapshot，前端可重新触发生成流程。
+    """
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 记录拒绝反馈
+    if project.dsl_snapshot:
+        project.dsl_snapshot["approval_feedback"] = body.feedback
+        project.dsl_snapshot.pop("pending_approval", None)
+    project.status = "draft"
+
+    logger.info("教学计划被拒绝: project=%s | feedback=%s", project_id, body.feedback[:100])
+
+    return ApprovePlanResponse(
+        stream_url=f"/api/projects/{project_id}/generate/stream",
+    )

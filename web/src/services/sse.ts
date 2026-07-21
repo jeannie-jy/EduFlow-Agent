@@ -17,7 +17,16 @@ export interface SSEProgressEvent {
   message: string;
   pct: number;
   teaching_plan?: unknown;
+  /** 等待审批时，后端会推送此事件 */
   [key: string]: unknown;
+}
+
+/** 等待审批事件（Human-in-the-Loop） */
+export interface SSEWaitingApprovalEvent {
+  phase: "waiting_approval";
+  message: string;
+  pct: number;
+  teaching_plan: unknown;
 }
 
 export interface SSEDoneEvent {
@@ -42,6 +51,7 @@ export interface SSEConnection {
 
 export interface SSEOptions {
   onProgress?: (event: SSEProgressEvent) => void;
+  onWaitingApproval?: (event: SSEWaitingApprovalEvent) => void;
   onDone?: (event: SSEDoneEvent) => void;
   onError?: (event: SSEErrorEvent) => void;
   signal?: AbortSignal;
@@ -150,6 +160,8 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
       onDone?.(data as unknown as SSEDoneEvent);
     } else if (phase === "error") {
       onError?.(data as unknown as SSEErrorEvent);
+    } else if (phase === "waiting_approval") {
+      onWaitingApproval?.(data as unknown as SSEWaitingApprovalEvent);
     } else {
       onProgress?.(data as SSEProgressEvent);
     }

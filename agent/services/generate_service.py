@@ -22,6 +22,7 @@ async def run_generation_stream(
     project_id: str,
     user_input: str,
     *,
+    action: str = "full",
     constraints: dict[str, Any] | None = None,
     materials: list[dict[str, Any]] | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -30,17 +31,21 @@ async def run_generation_stream(
     Args:
         project_id: 项目 ID
         user_input: 用户输入主题
+        action: 生成模式 (full / plan_only / frames_only)
         constraints: 教师约束
         materials: 上传材料解析结果
     """
     from agents.graph import get_graph
 
     graph = get_graph()
+    # plan_only 模式：启用 HITL 审批，仅运行 Planner
+    approval_mode = action == "plan_only"
     initial_state: AgentState = {
         "user_input": user_input,
         "project_id": project_id,
         "materials": materials or [],
         "constraints": constraints or {},
+        "approval_mode": approval_mode,
         "status": "draft",
         "reflection_count": 0,
         "revision_history": [],
@@ -53,6 +58,13 @@ async def run_generation_stream(
     }
 
     try:
+        # 立即发送初始事件，避免前端超时
+        yield _sse_event("progress", {
+            "phase": "connecting",
+            "message": "正在连接 Agent 编排引擎...",
+            "pct": 0,
+        })
+
         async for event in graph.astream_events(initial_state, config=config, version="v2"):
             event_type = event.get("event", "")
 
@@ -71,12 +83,22 @@ async def run_generation_stream(
 
                 if chain_name == "planner" and isinstance(output, dict):
                     teaching_plan = output.get("teaching_plan", {})
-                    yield _sse_event("progress", {
-                        "phase": "planning",
-                        "message": "教学计划已生成",
-                        "pct": 30,
-                        "teaching_plan": teaching_plan,
-                    })
+                    pending_approval = output.get("pending_approval")
+                    if pending_approval:
+                        # Human-in-the-Loop: 教学计划等待用户确认
+                        yield _sse_event("waiting_approval", {
+                            "phase": "waiting_approval",
+                            "message": "教学计划已生成，请确认后继续",
+                            "pct": 28,
+                            "teaching_plan": teaching_plan,
+                        })
+                    else:
+                        yield _sse_event("progress", {
+                            "phase": "planning",
+                            "message": "教学计划已生成",
+                            "pct": 30,
+                            "teaching_plan": teaching_plan,
+                        })
 
                 elif chain_name == "knowledge" and isinstance(output, dict):
                     kg = output.get("knowledge_graph", {})
@@ -164,6 +186,7 @@ async def run_generation_sync(
         "project_id": project_id,
         "materials": materials or [],
         "constraints": constraints or {},
+        "approval_mode": False,
         "status": "draft",
         "reflection_count": 0,
         "revision_history": [],

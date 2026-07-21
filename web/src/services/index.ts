@@ -7,6 +7,7 @@ export type {
   SSEConnectionState,
   SSEOptions,
   SSEProgressEvent,
+  SSEWaitingApprovalEvent,
   SSEDoneEvent,
   SSEErrorEvent,
 } from "./sse";
