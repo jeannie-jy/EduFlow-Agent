@@ -498,30 +498,61 @@ class TestHITLInterruptResume:
 
     @pytest.mark.asyncio
     async def test_resume_approve_reaches_done(self):
-        """approve resume 从断点继续到 done。"""
+        """approve resume 显式驱动 knowledge→coder→quality 到 done。"""
+        import uuid
         from services.generate_service import resume_generation_stream
 
-        async def mock_astream_events(graph_input, config, version):
-            yield {"event": "on_chain_start", "name": "coder", "data": {}}
-            yield {"event": "on_chain_end", "name": "coder",
-                   "data": {"output": {"dsl": {"frames": [{"frame_id": "f_001"}]}}}}
+        pid = str(uuid.uuid4())
 
-        final = MagicMock()
-        final.values = {"dsl": {"frames": [{"frame_id": "f_001"}]},
-                        "quality_report": {"overall_score": 0.9}}
-        final.tasks = []
+        # Mock 节点函数
+        async def mock_knowledge(state):
+            return {"knowledge_graph": {"concepts": [{"id": "c1", "name": "test"}]}, "key_terms": ["test"]}
 
-        with patch("agents.graph.get_graph") as mock_get_graph:
-            mock_graph = MagicMock()
-            mock_graph.astream_events = mock_astream_events
-            mock_graph.aget_state = AsyncMock(return_value=final)
-            mock_get_graph.return_value = mock_graph
+        async def mock_coder(state):
+            return {"dsl": {"frames": [{"frame_id": "f_001"}]}}
 
-            events = []
-            async for event in resume_generation_stream(
-                "test_001", {"action": "approve"},
-            ):
-                events.append(event)
+        async def mock_quality(state):
+            return {"quality_report": {"overall_score": 0.9, "is_blocking": False}}
+
+        # Mock DB: project with teaching_plan in dsl_snapshot
+        mock_project = MagicMock()
+        mock_project.dsl_snapshot = {
+            "teaching_plan": {"objectives": ["理解算法"]},
+            "input_content": "test",
+        }
+
+        mock_db_session = AsyncMock()
+        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_db_session.__aexit__ = AsyncMock(return_value=None)
+        mock_db_session.get = AsyncMock(return_value=mock_project)
+        mock_db_session.commit = AsyncMock()
+        mock_db_session.flush = AsyncMock()
+
+        with patch("db.database.async_session_factory") as mock_factory:
+            mock_factory.return_value = mock_db_session
+            with patch("agents.nodes.knowledge_node", side_effect=mock_knowledge):
+                with patch("agents.nodes.coder_node", side_effect=mock_coder):
+                    with patch("agents.nodes.quality_node", side_effect=mock_quality):
+                        events = []
+                        async for event in resume_generation_stream(
+                            pid, {"action": "approve"},
+                        ):
+                            events.append(event)
 
         assert any(e["event"] == "done" for e in events)
         assert not any(e["event"] == "waiting_approval" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_resume_reject_returns_immediately(self):
+        """reject resume 应立即返回 done（不带 DSL）。"""
+        import uuid
+        from services.generate_service import resume_generation_stream
+
+        events = []
+        async for event in resume_generation_stream(
+            str(uuid.uuid4()), {"action": "reject", "feedback": "太难了"},
+        ):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["event"] == "done"

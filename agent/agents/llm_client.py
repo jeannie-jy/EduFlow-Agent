@@ -196,16 +196,20 @@ async def call_llm_structured(
     raw_args = message.tool_calls[0].function.arguments
     result = _extract_and_parse_json(raw_args)
 
-    # 检测截断：如果 finish_reason=length 或解析失败，用更大 max_tokens 重试一次
-    is_truncated = (
-        response.choices[0].finish_reason == "length"
-        or (result is None and _looks_truncated(raw_args))
-    )
+    # 检测截断：逐次加倍 max_tokens 重试，直到成功或达到上限
+    current_max_tokens = max_tokens
+    while current_max_tokens < 65536:
+        is_truncated = (
+            response.choices[0].finish_reason == "length"
+            or (result is None and _looks_truncated(raw_args))
+        )
+        if not is_truncated:
+            break
 
-    if is_truncated and max_tokens < 65536:
+        current_max_tokens = min(current_max_tokens * 2, 65536)
         logger.warning(
             "LLM 输出被截断 (finish_reason=%s)，用 max_tokens=%d 重试",
-            response.choices[0].finish_reason, max_tokens * 2,
+            response.choices[0].finish_reason, current_max_tokens,
         )
         try:
             response = await client.chat.completions.create(
@@ -214,14 +218,16 @@ async def call_llm_structured(
                 tools=tools,
                 tool_choice={"type": "function", "function": {"name": "output_structured_result"}},
                 temperature=temperature,
-                max_tokens=max_tokens * 2,
+                max_tokens=current_max_tokens,
             )
             if response.choices and response.choices[0].message.tool_calls:
                 raw_args = response.choices[0].message.tool_calls[0].function.arguments
                 result = _extract_and_parse_json(raw_args)
-                logger.info("截断重试完成，解析%s", "成功" if result else "仍失败")
+                logger.info("截断重试完成, max_tokens=%d, 解析%s",
+                            current_max_tokens, "成功" if result else "仍失败")
         except Exception as exc:
-            logger.warning("截断重试失败: %s", exc)
+            logger.warning("截断重试失败 (max_tokens=%d): %s", current_max_tokens, exc)
+            break
 
     if result is None:
         logger.error("function calling JSON 解析失败，原始内容: %s", raw_args[:500])

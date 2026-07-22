@@ -69,28 +69,186 @@ async def resume_generation_stream(
 ) -> AsyncGenerator[str, None]:
     """从 HITL 中断点恢复生成流程（批准/拒绝）。
 
-    使用同一 thread_id 通过 Command(resume=...) 注入用户决定，从断点继续，
-    不重跑 Planner。
+    不再依赖 LangGraph Command + astream_events（1.2.9 里 resume 语义不稳定），
+    改为直接显式调用 knowledge_node → coder_node → quality_node → reflection。
+    与 run_regenerate_stream 同模式。
 
     Args:
-        project_id: 项目 ID（= thread_id）
+        project_id: 项目 ID
         resume_value: {"action": "approve"} 或 {"action": "reject", "feedback": ...}
     """
-    from langgraph.types import Command
+    if resume_value.get("action") == "reject":
+        # 拒绝：图内 interrupt 被 reject 后 planner_node 会设 plan_rejected → 图 END
+        # 但 resume 不再走 astream_events，所以这里显式处理：
+        # 标记 project 为 draft，done 事件不带 DSL
+        yield _sse_event("done", {
+            "phase": "done",
+            "pct": 100,
+            "message": "教学计划已返回修改",
+        })
+        return
 
-    graph = await _get_graph()
-    config = _thread_config(project_id)
+    # ── 批准：从 DB 读 teaching_plan，驱动 knowledge→coder→quality ──
+    from agents.nodes import knowledge_node, coder_node, quality_node, reflection_node
+    from agents.state import AgentState
+    from config import get_settings
 
+    settings = get_settings()
+
+    # 1. 从 DB 读取 teaching_plan（中断时已持久化）
     try:
-        async for chunk in _drive_graph(
-            graph, Command(resume=resume_value), config, project_id
-        ):
-            yield chunk
-    except Exception:
-        logger.exception("恢复生成流程失败")
+        from db.database import async_session_factory
+        from db.models import Project as ProjectModel
+        from api.deps import parse_project_id
+
+        async with async_session_factory() as db_session:
+            project = await db_session.get(ProjectModel, parse_project_id(project_id))
+            if project is None or not project.dsl_snapshot:
+                yield _sse_event("error", {
+                    "phase": "error",
+                    "message": "项目数据缺失，请重新生成",
+                    "error_code": "NO_PROJECT",
+                })
+                return
+            snap = project.dsl_snapshot
+    except Exception as exc:
+        logger.exception("读取项目数据失败")
         yield _sse_event("error", {
             "phase": "error",
-            "message": "恢复生成流程内部错误，请稍后重试",
+            "message": f"读取项目数据失败: {exc}",
+            "error_code": "RESUME_CONTEXT_FAILED",
+        })
+        return
+
+    teaching_plan = snap.get("teaching_plan", {})
+    user_input = snap.get("input_content", snap.get("topic", ""))
+
+    state: AgentState = {
+        "user_input": user_input,
+        "project_id": project_id,
+        "teaching_plan": teaching_plan,
+        "constraints": snap.get("constraints", {}),
+        "materials": [],
+        "approval_mode": False,
+        "status": "generating",
+        "reflection_count": 0,
+        "revision_history": [],
+    }
+
+    logger.info("Resume(approve): 从 Knowledge 开始 | project=%s", project_id)
+
+    try:
+        # 2. Knowledge
+        yield _sse_event("progress", {
+            "phase": "knowledge",
+            "message": "正在构建知识图谱...",
+            "pct": 30,
+        })
+        k_result = await knowledge_node(state)
+        state.update(k_result)
+        kg = state.get("knowledge_graph", {})
+        terms = state.get("key_terms", [])
+        yield _sse_event("progress", {
+            "phase": "knowledge",
+            "message": f"知识图谱构建完成 ({len(kg.get('concepts', []))} 概念, {len(terms)} 术语)",
+            "pct": 40,
+            "knowledge_graph": kg,
+        })
+
+        # 3. Coder
+        yield _sse_event("progress", {
+            "phase": "coder",
+            "message": "正在生成推演帧...",
+            "pct": 50,
+        })
+        c_result = await coder_node(state)
+        state.update(c_result)
+        dsl = state.get("dsl", {})
+        yield _sse_event("progress", {
+            "phase": "generating",
+            "message": f"已完成 {len(dsl.get('frames', []))} 帧生成",
+            "pct": 70,
+            "frame_count": len(dsl.get("frames", [])),
+        })
+
+        # 4. Quality → Reflection loop
+        max_cycles = settings.max_reflection_cycles
+        for cycle in range(max_cycles + 1):
+            yield _sse_event("progress", {
+                "phase": "quality",
+                "message": "正在校验质量...",
+                "pct": 75,
+            })
+            q_result = await quality_node(state)
+            state.update(q_result)
+            quality_report = state.get("quality_report", {})
+            overall = quality_report.get("overall_score", 1.0)
+            is_blocking = quality_report.get("is_blocking", False)
+
+            yield _sse_event("progress", {
+                "phase": "validating",
+                "message": f"质量校验完成 (score={overall:.2f})",
+                "pct": 90,
+                "quality_report": quality_report,
+            })
+
+            if (overall < settings.quality_score_threshold or is_blocking) and cycle < max_cycles:
+                logger.info("Resume Reflection 第 %d/%d 次 (score=%.2f)",
+                            cycle + 1, max_cycles, overall)
+                yield _sse_event("progress", {
+                    "phase": "reflection",
+                    "message": f"正在修订 (第 {cycle + 1} 次)...",
+                    "pct": 85,
+                })
+                r_result = await reflection_node(state)
+                state.update(r_result)
+                state["reflection_count"] = cycle + 1
+            else:
+                break
+
+        # 5. 持久化
+        dsl = state.get("dsl", {})
+        quality_report = state.get("quality_report", {})
+        try:
+            from db.database import async_session_factory
+            from db.models import Project as ProjectModel
+            from api.versions import save_version
+            from services.project_persistence import (
+                merge_dsl_snapshot,
+                persist_frames_to_table,
+            )
+            from api.deps import parse_project_id
+
+            async with async_session_factory() as db_session:
+                project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                if project is not None:
+                    project.dsl_snapshot = merge_dsl_snapshot(
+                        project.dsl_snapshot,
+                        dsl,
+                        quality_report=quality_report,
+                        teaching_plan=teaching_plan,
+                    )
+                    project.status = "done"
+                    await persist_frames_to_table(
+                        project_id, dsl.get("frames", []), db_session
+                    )
+                    await save_version(project_id, dsl, "Agent 生成", db_session)
+                    await db_session.commit()
+        except Exception as perr:
+            logger.warning("Resume 持久化失败: %s", perr)
+
+        yield _sse_event("done", {
+            "phase": "done",
+            "pct": 100,
+            "dsl": dsl,
+            "quality_report": quality_report,
+        })
+
+    except Exception as exc:
+        logger.exception("Resume 失败")
+        yield _sse_event("error", {
+            "phase": "error",
+            "message": f"恢复生成失败: {exc}",
             "error_code": "RESUME_FAILED",
         })
 
@@ -274,6 +432,24 @@ async def run_regenerate_stream(
         })
 
 
+async def _save_interim_teaching_plan(project_id: str, teaching_plan: dict) -> None:
+    """HITL 中断时：将 teaching_plan 持久化到 DB，避免切 Tab 后丢失。"""
+    try:
+        from db.database import async_session_factory
+        from db.models import Project as ProjectModel
+        from api.deps import parse_project_id
+
+        async with async_session_factory() as db_session:
+            project = await db_session.get(ProjectModel, parse_project_id(project_id))
+            if project is not None:
+                snap = dict(project.dsl_snapshot or {})
+                snap["teaching_plan"] = teaching_plan
+                project.dsl_snapshot = snap
+                await db_session.commit()
+    except Exception as exc:
+        logger.warning("teaching_plan 暂存失败: %s", exc)
+
+
 async def _drive_graph(
     graph,
     graph_input,
@@ -348,6 +524,10 @@ async def _drive_graph(
     interrupt_payload = _extract_interrupt(final_state)
     if interrupt_payload is not None:
         teaching_plan = interrupt_payload.get("teaching_plan", {})
+
+        # 中断时持久化 teaching_plan 到 DB，避免切 Tab 后"计划也没保留"
+        await _save_interim_teaching_plan(project_id, teaching_plan)
+
         yield _sse_event("waiting_approval", {
             "phase": "waiting_approval",
             "message": "教学计划已生成，请确认后继续",

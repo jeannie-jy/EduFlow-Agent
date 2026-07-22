@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -106,10 +108,145 @@ async def create_export_job(
             export_job.status = "failed"
             export_job.error_log = f"Redis 入队失败: {exc}"
 
+    # 启动后台 fallback：3s 内若 Worker 没消费则自己处理
+    asyncio.create_task(_fallback_export(str(job_id), project.dsl_snapshot, export_job.config))
+
     return {
         "job_id": str(job_id),
         "status": "queued",
     }
+
+
+async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
+    """后台导出 fallback：Worker 不可用时直接调用 manim_adapter 渲染。
+
+    先等 3s 给 Worker 机会消费；若 Worker 已处理则不做任何事。
+    """
+    await asyncio.sleep(3)
+
+    r = await _get_redis()
+    if r is None:
+        await _update_db_export_status(job_id, "failed", error_log="Redis 不可用，无法处理导出")
+        return
+
+    # Worker 已处理？
+    if r.get(f"manim:job:{job_id}"):
+        return
+
+    _update_redis_status(r, job_id, "rendering", progress=5)
+    logger.info("fallback 导出开始: job=%s", job_id)
+
+    try:
+        # 1. DSL → Manim 脚本
+        from adapters.manim_adapter import convert_dsl_to_manim
+        files = convert_dsl_to_manim(dsl)
+
+        # 2. 写入临时目录
+        export_dir = Path(get_settings().export_dir) / job_id
+        scripts_dir = export_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (scripts_dir / "main.py").write_text(files["main.py"], encoding="utf-8")
+        (scripts_dir / "render_config.json").write_text(files["render_config.json"], encoding="utf-8")
+        (scripts_dir / "subtitles.srt").write_text(files["subtitles.srt"], encoding="utf-8")
+
+        # 复制脚本产物到 job 根目录（download 端点从根目录查找）
+        import shutil as _shutil
+        for src_name in ["main.py", "render_config.json", "subtitles.srt"]:
+            src = scripts_dir / src_name
+            if src.exists():
+                _shutil.copy2(src, export_dir / src_name)
+
+        _update_redis_status(r, job_id, "rendering", progress=30)
+
+        # 3. 尝试渲染（manim CLI 不可用时只返回脚本）
+        quality = config.get("quality", "h")
+        fps = config.get("fps", 30)
+        quality_flags = {"l": "-ql", "m": "-qm", "h": "-qh", "k": "-qk"}
+        artifacts: list[dict] = []
+
+        try:
+            manim_path = _shutil.which("manim")
+            if manim_path is None:
+                raise FileNotFoundError("manim not found")
+
+            _update_redis_status(r, job_id, "rendering", progress=50)
+
+            mp4_output_dir = export_dir / "videos"
+            result = subprocess.run(
+                [sys.executable, "-m", "manim", str(scripts_dir / "main.py"),
+                 quality_flags.get(quality, "-qh"), f"--fps={fps}",
+                 "--format=mp4", f"--media_dir={mp4_output_dir}"],
+                capture_output=True, text=True, timeout=300,
+                cwd=str(export_dir),
+            )
+
+            if result.returncode == 0:
+                mp4_dir = mp4_output_dir / "videos" / "main"
+                if mp4_dir.exists():
+                    for mp4 in mp4_dir.rglob("*.mp4"):
+                        artifacts.append({"type": "mp4", "filename": mp4.name,
+                                          "size_bytes": mp4.stat().st_size})
+                        _shutil.copy2(mp4, export_dir / mp4.name)
+            else:
+                logger.warning("Manim 渲染失败 (returncode=%d): %s",
+                               result.returncode, result.stderr[:500])
+        except FileNotFoundError:
+            logger.info("manim 未安装，仅导出脚本")
+        except Exception as exc:
+            logger.warning("Manim 渲染异常: %s", exc)
+
+        _update_redis_status(r, job_id, "rendering", progress=85)
+
+        # 脚本文件始终作为产物
+        artifacts.append({"type": "manim_source", "filename": "main.py",
+                          "size_bytes": (scripts_dir / "main.py").stat().st_size})
+        srt = scripts_dir / "subtitles.srt"
+        if srt.exists():
+            artifacts.append({"type": "subtitle", "filename": "subtitles.srt",
+                              "size_bytes": srt.stat().st_size})
+
+        _update_redis_status(r, job_id, "completed", progress=100, artifacts=artifacts)
+        logger.info("fallback 导出完成: job=%s | artifacts=%d", job_id, len(artifacts))
+
+    except Exception as exc:
+        logger.exception("fallback 导出失败: job=%s", job_id)
+        _update_redis_status(r, job_id, "failed", error=str(exc)[:500])
+
+
+def _update_redis_status(
+    r,
+    job_id: str,
+    status: str,
+    progress: float = 0,
+    artifacts: list[dict] | None = None,
+    error: str | None = None,
+) -> None:
+    """写入任务状态到 Redis（worker 和 fallback 共用）。"""
+    import time
+    data: dict = {"job_id": job_id, "status": status,
+                  "progress_pct": progress, "updated_at": time.time()}
+    if artifacts is not None:
+        data["artifacts"] = artifacts
+    if error is not None:
+        data["error_log"] = error
+    r.setex(f"manim:job:{job_id}", 86400, json.dumps(data))
+
+
+async def _update_db_export_status(job_id: str, status: str, *, error_log: str = "") -> None:
+    """同步导出状态到 DB（供没有 Redis 时回退）。"""
+    try:
+        from db.database import async_session_factory
+        from db.models import ExportJobModel
+        jid = uuid.UUID(job_id)
+        async with async_session_factory() as session:
+            job = await session.get(ExportJobModel, jid)
+            if job:
+                job.status = status
+                if error_log:
+                    job.error_log = error_log
+                await session.commit()
+    except Exception:
+        logger.warning("导出状态 DB 同步失败")
 
 
 # ============================================================================
