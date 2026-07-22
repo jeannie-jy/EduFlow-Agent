@@ -15,6 +15,8 @@ pydantic-settings>=2.7.0
 
 # ── Agent Framework ───────────────────────────────────────
 langgraph>=0.2.0
+langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary,pool]>=3.2.0
 
 # ── LLM & Embedding ───────────────────────────────────────
 openai>=1.58.0

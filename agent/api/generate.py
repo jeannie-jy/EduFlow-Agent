@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from db.database import get_session
-from services.generate_service import run_generation_stream
+from services.generate_service import run_generation_stream, resume_generation_stream
 from schema.project import GenerateRequest, RegenerateRequest, RejectPlanRequest, ApprovePlanResponse
 from .deps import parse_project_id
 
@@ -46,8 +46,11 @@ async def start_generation(
         input_content = project.dsl_snapshot.get("input_content", "")
         constraints = project.dsl_snapshot.get("constraints", {})
 
-    # 更新状态
+    # 更新状态；记录本次生成模式供 GET stream 读取（stream 无 body）
     project.status = "planning"
+    snap = dict(project.dsl_snapshot or {})
+    snap["_pending_action"] = body.action
+    project.dsl_snapshot = snap
 
     logger.info("生成启动: project=%s | action=%s", project_id, body.action)
 
@@ -72,9 +75,11 @@ async def generation_stream(
 
     input_content = ""
     constraints = {}
+    action = "full"
     if project.dsl_snapshot:
         input_content = project.dsl_snapshot.get("input_content", project.title)
         constraints = project.dsl_snapshot.get("constraints", {})
+        action = project.dsl_snapshot.get("_pending_action", "full")
 
     # file_upload 素材接线：载入已上传素材的解析文本供 Planner 使用
     materials: list[dict] = []
@@ -99,11 +104,46 @@ async def generation_stream(
         async for sse_chunk in run_generation_stream(
             project_id=project_id,
             user_input=input_content,
-            action="full",
+            action=action,
             constraints=constraints,
             materials=materials,
         ):
             # 检查客户端是否断开
+            if await request.is_disconnected():
+                break
+            yield sse_chunk
+
+    return EventSourceResponse(event_generator())
+
+
+@router.get("/{project_id}/generate/resume/stream")
+async def generation_resume_stream(
+    project_id: str,
+    request: Request,
+    decision: str = "approve",
+    feedback: str = "",
+    session: AsyncSession = Depends(get_session),
+):
+    """从 HITL 中断点恢复生成流程的 SSE 流。
+
+    Query:
+        decision: approve | reject
+        feedback: 拒绝时的修改意见
+    """
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    resume_value = (
+        {"action": "reject", "feedback": feedback}
+        if decision == "reject"
+        else {"action": "approve"}
+    )
+
+    async def event_generator():
+        async for sse_chunk in resume_generation_stream(project_id, resume_value):
             if await request.is_disconnected():
                 break
             yield sse_chunk
@@ -157,8 +197,9 @@ async def approve_plan(
 
     logger.info("教学计划已批准: project=%s", project_id)
 
+    # 前端应连接 resume 流从中断点继续（不重跑 Planner）
     return ApprovePlanResponse(
-        stream_url=f"/api/projects/{project_id}/generate/stream",
+        stream_url=f"/api/projects/{project_id}/generate/resume/stream?decision=approve",
     )
 
 
@@ -188,6 +229,11 @@ async def reject_plan(
 
     logger.info("教学计划被拒绝: project=%s | feedback=%s", project_id, body.feedback[:100])
 
+    # 连接 resume 流注入拒绝决定，让图正常消费中断点后结束
+    from urllib.parse import quote
     return ApprovePlanResponse(
-        stream_url=f"/api/projects/{project_id}/generate/stream",
+        stream_url=(
+            f"/api/projects/{project_id}/generate/resume/stream"
+            f"?decision=reject&feedback={quote(body.feedback)}"
+        ),
     )

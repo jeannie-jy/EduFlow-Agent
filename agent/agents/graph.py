@@ -98,9 +98,13 @@ def _get_reflection_node():
 
 
 def _should_continue_after_planner(state: AgentState) -> Literal["knowledge", "__end__"]:
-    """Planner 完成后：检查是否有 Human-in-the-Loop 审批。"""
-    if state.get("pending_approval"):
-        return "__end__"  # 使用字符串，由 add_conditional_edges 映射到 END
+    """Planner 完成后：被拒绝则结束（等前端重启），否则进入 Knowledge。
+
+    HITL 审批本身由 planner_node 内的运行期 ``interrupt()`` 处理（见 nodes.py），
+    这里只在「拒绝」时短路到 END。
+    """
+    if state.get("plan_rejected"):
+        return "__end__"
     return "knowledge"
 
 
@@ -160,7 +164,7 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
     # 入口
     workflow.set_entry_point("planner")
 
-    # Planner → Knowledge (或中断等待审批)
+    # Planner → Knowledge（拒绝则 END；HITL 审批由 planner_node 内 interrupt() 处理）
     workflow.add_conditional_edges(
         "planner",
         _should_continue_after_planner,
@@ -198,68 +202,92 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
 # 全局编译好的 graph 实例
 _graph: "CompiledStateGraph | None" = None
 
+# Postgres checkpointer 的 AsyncExitStack（进程生命周期内持有连接，不退出）
+_checkpointer_stack = None
+
+
+def _memory_checkpointer():
+    """创建 MemorySaver 兜底 checkpointer。"""
+    try:
+        from langgraph.checkpoint.memory import MemorySaver
+        return MemorySaver()
+    except ImportError:
+        logger.warning("MemorySaver 不可用，aget_state 将不可用")
+        return None
+
+
+def _postgres_db_url() -> str:
+    """返回 LangGraph AsyncPostgresSaver 需要的纯 postgresql:// URL。"""
+    from config import get_settings
+    db_url = get_settings().database_url
+    # SQLAlchemy 用 postgresql+asyncpg://，langgraph 用纯 postgresql://
+    return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+
+async def get_graph_async() -> "CompiledStateGraph":
+    """异步获取全局 Agent 编排图（在请求上下文中 await）。
+
+    首次调用时初始化 Postgres checkpointer（跨请求/重启持久化 interrupt 状态）；
+    不可用时回落 MemorySaver。之后复用单例。
+
+    注意：实际图构建委托给 get_graph()，以便测试对 get_graph 的 patch 生效。
+    """
+    global _checkpointer, _checkpointer_initialized, _checkpointer_stack
+
+    if _graph is not None:
+        return _graph
+
+    if not _checkpointer_initialized:
+        _checkpointer_initialized = True
+        try:
+            from contextlib import AsyncExitStack
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            stack = AsyncExitStack()
+            # from_conn_string 返回 async 上下文管理器 —— 用 ExitStack 进入拿到真正的 saver
+            saver = await stack.enter_async_context(
+                AsyncPostgresSaver.from_conn_string(_postgres_db_url())
+            )
+            await saver.setup()
+            _checkpointer = saver
+            _checkpointer_stack = stack  # 进程存活期间保持连接
+            logger.info("Postgres checkpointer 已初始化")
+        except ImportError:
+            logger.info("langgraph-checkpoint-postgres 未安装，使用内存 checkpointer")
+        except Exception as exc:
+            logger.warning("Postgres checkpointer 初始化失败，使用内存模式: %s", exc)
+
+    if _checkpointer is None:
+        _checkpointer = _memory_checkpointer()
+
+    # 复用同步入口构建/返回单例（保持 checkpointer 已初始化状态）
+    return get_graph()
+
 
 def get_graph() -> "CompiledStateGraph":
-    """获取全局 Agent 编排图实例。
+    """同步获取全局 Agent 编排图（无事件循环场景 / 测试）。
 
-    首次调用时尝试创建 Postgres checkpointer，失败则使用内存模式。
+    使用已初始化的 checkpointer；未初始化时用 MemorySaver（同步可用）。
     """
     global _graph, _checkpointer, _checkpointer_initialized
 
     if _graph is not None:
         return _graph
 
-    # 尝试创建 Postgres checkpointer
-    checkpointer = None
-    if not _checkpointer_initialized:
-        _checkpointer_initialized = True
-        try:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-            from config import get_settings
-
-            settings = get_settings()
-            # config.database_url 已确保返回 postgresql+asyncpg:// 格式
-            # LangGraph AsyncPostgresSaver 需要纯 postgresql://（无 +asyncpg 后缀）
-            db_url = settings.database_url
-            if "postgresql+asyncpg://" in db_url:
-                db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-            elif not db_url.startswith("postgresql://"):
-                db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-
-            import asyncio
-            async def _init_checkpointer():
-                global _checkpointer
-                try:
-                    cp = AsyncPostgresSaver.from_conn_string(db_url)
-                    await cp.setup()
-                    _checkpointer = cp
-                    logger.info("Postgres checkpointer 已初始化")
-                except Exception as exc:
-                    logger.warning("Postgres checkpointer 初始化失败，使用内存模式: %s", exc)
-
-            try:
-                loop = asyncio.get_running_loop()
-                # 已有事件循环，创建 task（不阻塞）
-                import asyncio
-                asyncio.ensure_future(_init_checkpointer())
-            except RuntimeError:
-                # 无事件循环，同步初始化
-                asyncio.run(_init_checkpointer())
-
-        except ImportError:
-            logger.info("langgraph-checkpoint-postgres 未安装，使用内存 checkpointer")
-        except Exception as exc:
-            logger.warning("Checkpointer 初始化异常，使用内存模式: %s", exc)
-
-    # 内存 checkpointer 兜底：Postgres 不可用时使用 MemorySaver
-    # 确保 aget_state() / ainvoke(None) 在任何环境下都可用
     if _checkpointer is None:
-        try:
-            from langgraph.checkpoint.memory import MemorySaver
-            _checkpointer = MemorySaver()
-            logger.info("使用内存 checkpointer (MemorySaver)")
-        except ImportError:
-            logger.warning("MemorySaver 不可用，aget_state 将不可用")
-
+        _checkpointer = _memory_checkpointer()
+    _checkpointer_initialized = True
     _graph = build_graph(checkpointer=_checkpointer)
     return _graph
+
+
+async def close_checkpointer() -> None:
+    """关闭 Postgres checkpointer 连接（应用关闭时调用）。"""
+    global _checkpointer_stack
+    if _checkpointer_stack is not None:
+        try:
+            await _checkpointer_stack.aclose()
+        except Exception as exc:
+            logger.warning("关闭 checkpointer 失败: %s", exc)
+        finally:
+            _checkpointer_stack = None

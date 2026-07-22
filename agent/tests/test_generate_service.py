@@ -478,3 +478,82 @@ class TestRunGenerationStream:
 
         qr_events = [e for e in events if "quality_report" in e]
         assert len(qr_events) >= 1
+
+
+# ============================================================================
+# HITL interrupt / resume
+# ============================================================================
+
+
+def _make_interrupt_state(teaching_plan):
+    """构造一个带 HITL interrupt 的 mock graph state。"""
+    intr = MagicMock()
+    intr.value = {"type": "teaching_plan_approval", "teaching_plan": teaching_plan}
+    task = MagicMock()
+    task.interrupts = [intr]
+    state = MagicMock()
+    state.values = {"teaching_plan": teaching_plan}
+    state.tasks = [task]
+    return state
+
+
+class TestHITLInterruptResume:
+    """HITL 教学计划审批：interrupt → waiting_approval → resume → done。"""
+
+    @pytest.mark.asyncio
+    async def test_plan_only_emits_waiting_approval(self):
+        """plan_only 模式在 Planner 后中断，应发 waiting_approval 且不发 done。"""
+        plan = {"objectives": ["理解算法"]}
+
+        async def mock_astream_events(initial_state, config, version):
+            yield {"event": "on_chain_start", "name": "planner", "data": {}}
+            yield {"event": "on_chain_end", "name": "planner",
+                   "data": {"output": {"teaching_plan": plan}}}
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_graph.aget_state = AsyncMock(return_value=_make_interrupt_state(plan))
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in run_generation_stream(
+                project_id="test_001", user_input="讲解冒泡排序", action="plan_only",
+            ):
+                events.append(event)
+
+        assert any("event: waiting_approval" in e for e in events)
+        assert not any("event: done" in e for e in events)
+        wa = [e for e in events if "waiting_approval" in e][0]
+        assert "teaching_plan" in wa
+
+    @pytest.mark.asyncio
+    async def test_resume_approve_reaches_done(self):
+        """approve resume 从断点继续到 done。"""
+        from services.generate_service import resume_generation_stream
+
+        async def mock_astream_events(graph_input, config, version):
+            # graph_input 为 Command(resume=...)
+            yield {"event": "on_chain_start", "name": "coder", "data": {}}
+            yield {"event": "on_chain_end", "name": "coder",
+                   "data": {"output": {"dsl": {"frames": [{"frame_id": "f_001"}]}}}}
+
+        final = MagicMock()
+        final.values = {"dsl": {"frames": [{"frame_id": "f_001"}]},
+                        "quality_report": {"overall_score": 0.9}}
+        final.tasks = []  # 无中断 → 收尾 done
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.astream_events = mock_astream_events
+            mock_graph.aget_state = AsyncMock(return_value=final)
+            mock_get_graph.return_value = mock_graph
+
+            events = []
+            async for event in resume_generation_stream(
+                "test_001", {"action": "approve"},
+            ):
+                events.append(event)
+
+        assert any("event: done" in e for e in events)
+        assert not any("event: waiting_approval" in e for e in events)

@@ -44,6 +44,18 @@ export function streamGeneration(projectId: string, options: SSEOptions) {
   return connectSSE(`${baseUrl}/projects/${projectId}/generate/stream`, options);
 }
 
+/**
+ * 从后端返回的 stream_url（形如 "/api/projects/.../generate/resume/stream?..."）连接 SSE。
+ * 用于 HITL 审批的 resume 流。stream_url 已含 /api 前缀，需用 origin 拼接而非 VITE_API_BASE_URL。
+ */
+export function streamFromUrl(streamUrl: string, options: SSEOptions) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+  // baseUrl 形如 http://host/api —— 取其 origin 再拼后端返回的绝对路径
+  const origin = baseUrl.replace(/\/api\/?$/, "");
+  const url = streamUrl.startsWith("http") ? streamUrl : `${origin}${streamUrl}`;
+  return connectSSE(url, options);
+}
+
 export function regenerate(projectId: string, scope: RegenerateRequest["scope"]) {
   return api.post<GenerateResponse>(`/projects/${projectId}/regenerate`, {
     scope,

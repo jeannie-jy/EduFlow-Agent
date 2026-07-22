@@ -429,7 +429,7 @@ class TestCoderNode:
             await coder_node(AgentStateFactory.with_knowledge())
 
         call_args = mock_llm.call_args
-        assert call_args[1]["max_tokens"] == 8192
+        assert call_args[1]["max_tokens"] == 32768  # Coder 输出完整 DSL，需较大 token 限制
 
     @pytest.mark.asyncio
     async def test_coder_dsl_structure_complete(self):

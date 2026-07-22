@@ -197,12 +197,31 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
                 teaching_plan.get("estimated_total_frames", 0),
                 len(suggested_params))
 
-    # HITL 审批仅在 plan_only 模式下触发，避免阻塞 full 流程
-    should_approve = state.get("approval_mode", False)
+    # HITL 审批仅在 plan_only 模式下触发（approval_mode）。
+    # 使用 LangGraph 运行期 interrupt：图在此暂停并落 checkpoint，
+    # 由 API 通过 Command(resume=...) 注入用户决定后从断点继续。
+    if state.get("approval_mode", False):
+        from langgraph.types import interrupt
+
+        decision = interrupt({
+            "type": "teaching_plan_approval",
+            "teaching_plan": teaching_plan,
+        })
+
+        # resume 时 decision 为 {"action": "approve"} 或 {"action": "reject", "feedback": ...}
+        if isinstance(decision, dict) and decision.get("action") == "reject":
+            feedback = decision.get("feedback", "")
+            return {
+                "teaching_plan": teaching_plan,
+                "user_feedback": {"type": "plan_reject", "content": feedback},
+                "plan_rejected": True,
+                "pending_approval": None,
+                "status": "draft",
+            }
 
     return {
         "teaching_plan": teaching_plan,
-        "pending_approval": "teaching_plan" if should_approve else None,
+        "pending_approval": None,
         "status": "planning",
     }
 

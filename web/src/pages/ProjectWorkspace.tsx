@@ -45,6 +45,7 @@ import {
   getProject,
   startGeneration,
   streamGeneration,
+  streamFromUrl,
   approvePlan,
   rejectPlan,
   listFrames,
@@ -255,7 +256,7 @@ function PlanTabContent({ projectId, project, onDone }: {
     resetTimeout();
 
     try {
-      await startGeneration(projectId, "full");
+      await startGeneration(projectId, "plan_only");
       abortRef.current = new AbortController();
 
       streamGeneration(projectId, {
@@ -307,13 +308,13 @@ function PlanTabContent({ projectId, project, onDone }: {
   const handleApprove = useCallback(async () => {
     if (!projectId) return;
     try {
-      await approvePlan(projectId);
-      // 重新启动 SSE 流继续接收后续进度
+      const res = await approvePlan(projectId);
+      // 连接 resume 流从中断点继续接收后续进度（不重跑 Planner）
       setPhase("connecting");
       setErrorMsg(null);
       resetTimeout();
       abortRef.current = new AbortController();
-      streamGeneration(projectId, {
+      streamFromUrl(res.stream_url, {
         signal: abortRef.current.signal,
         onProgress: (event: SSEProgressEvent) => {
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -347,7 +348,12 @@ function PlanTabContent({ projectId, project, onDone }: {
   const handleReject = useCallback(async (feedback: string) => {
     if (!projectId) return;
     try {
-      await rejectPlan(projectId, feedback);
+      // 注入拒绝决定让图消费中断点（结果通过 resume 流结束），随后回到 idle
+      const res = await rejectPlan(projectId, feedback);
+      streamFromUrl(res.stream_url, {
+        onDone: () => {},
+        onError: () => {},
+      });
       setPhase("idle");
       startedRef.current = false;
       setMessage("已返回修改，请调整主题描述后重新生成");

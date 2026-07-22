@@ -40,6 +40,7 @@ class AgentState(TypedDict, total=False):
     # ── Human-in-the-Loop ────────────────────────────────
     pending_approval: str | None       # 等待审批的内容
     approval_mode: bool                # plan_only 模式时启用审批
+    plan_rejected: bool                # 教学计划被拒绝 → 结束流程等前端重启
     user_feedback: dict | None         # 用户反馈
 
     # ── 元信息 ───────────────────────────────────────────
