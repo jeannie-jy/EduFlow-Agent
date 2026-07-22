@@ -95,6 +95,185 @@ async def resume_generation_stream(
         })
 
 
+async def run_regenerate_stream(
+    project_id: str,
+    *,
+    scope: dict[str, Any] | None = None,
+) -> AsyncGenerator[str, None]:
+    """局部重生成：读已有 DSL，显式驱动 Coder→Quality→Reflection 循环。
+
+    不跑完整 LangGraph graph（其入口为 Planner，不可跳过），而是直接
+    调用 coder_node→quality_node→reflection_node 纯函数，手动发 SSE。
+
+    锁定帧（is_locked=True in DB）不会被 Reflection 修改。
+    """
+    from agents.nodes import coder_node, quality_node, reflection_node
+    from agents.state import AgentState
+    from config import get_settings
+
+    settings = get_settings()
+    scope = scope or {"type": "from_frame"}
+
+    # 1. 从 DB 读已有状态
+    try:
+        from db.database import async_session_factory
+        from db.models import Project as ProjectModel, Frame as FrameModel
+        from api.deps import parse_project_id
+        from sqlalchemy import select
+
+        async with async_session_factory() as db_session:
+            project = await db_session.get(ProjectModel, parse_project_id(project_id))
+            if project is None or not project.dsl_snapshot:
+                yield _sse_event("error", {
+                    "phase": "error",
+                    "message": "项目无已有 DSL，请先生成",
+                    "error_code": "NO_DSL",
+                })
+                return
+
+            snap = project.dsl_snapshot
+            # 读取锁定帧
+            locked_query = select(FrameModel.frame_id).where(
+                FrameModel.project_id == parse_project_id(project_id),
+                FrameModel.is_locked == True,
+            )
+            lock_res = await db_session.execute(locked_query)
+            locked_frame_ids = [row[0] for row in lock_res.fetchall()]
+    except Exception as exc:
+        logger.exception("读取 regenerate 上下文失败")
+        yield _sse_event("error", {
+            "phase": "error",
+            "message": f"读取项目数据失败: {exc}",
+            "error_code": "REGENERATE_CONTEXT_FAILED",
+        })
+        return
+
+    teaching_plan = snap.get("teaching_plan", {})
+    knowledge_graph = snap.get("knowledge_graph", {})
+    existing_dsl = {k: v for k, v in snap.items() if k in (
+        "frames", "parameters", "teaching_strategy", "topic", "audience", "difficulty",
+        "project_id", "assets", "export_targets",
+    )}
+
+    # 2. 构建初始 state（跳过 planner + knowledge，已有其产出）
+    state: AgentState = {
+        "user_input": snap.get("topic", snap.get("input_content", "")),
+        "project_id": project_id,
+        "teaching_plan": teaching_plan,
+        "knowledge_graph": knowledge_graph,
+        "dsl": existing_dsl,
+        "constraints": snap.get("constraints", {}),
+        "materials": [],
+        "approval_mode": False,
+        "locked_frame_ids": locked_frame_ids,
+        "status": "generating",
+        "reflection_count": 0,
+        "revision_history": [],
+    }
+
+    logger.info("Regenerate: 开始 | project=%s | locked=%d | existing_frames=%d",
+                project_id, len(locked_frame_ids),
+                len(existing_dsl.get("frames", [])))
+
+    try:
+        # 3. Coder
+        yield _sse_event("progress", {
+            "phase": "coder",
+            "message": "正在重新生成帧...",
+            "pct": 30,
+        })
+        coder_result = await coder_node(state)
+        state.update(coder_result)
+        dsl = state.get("dsl", {})
+        yield _sse_event("progress", {
+            "phase": "generating",
+            "message": f"已完成 {len(dsl.get('frames', []))} 帧生成",
+            "pct": 70,
+            "frame_count": len(dsl.get("frames", [])),
+        })
+
+        # 4. Quality → Reflection loop
+        max_cycles = settings.max_reflection_cycles
+        for cycle in range(max_cycles + 1):
+            yield _sse_event("progress", {
+                "phase": "quality",
+                "message": "正在校验质量...",
+                "pct": 75,
+            })
+            q_result = await quality_node(state)
+            state.update(q_result)
+            quality_report = state.get("quality_report", {})
+            overall = quality_report.get("overall_score", 1.0)
+            is_blocking = quality_report.get("is_blocking", False)
+
+            yield _sse_event("progress", {
+                "phase": "validating",
+                "message": f"质量校验完成 (score={overall:.2f})",
+                "pct": 90,
+                "quality_report": quality_report,
+            })
+
+            if (overall < settings.quality_score_threshold or is_blocking) and cycle < max_cycles:
+                logger.info("Regenerate Reflection 第 %d/%d 次 (score=%.2f)",
+                            cycle + 1, max_cycles, overall)
+                yield _sse_event("progress", {
+                    "phase": "reflection",
+                    "message": f"正在修订 (第 {cycle + 1} 次)...",
+                    "pct": 85,
+                })
+                r_result = await reflection_node(state)
+                state.update(r_result)
+                state["reflection_count"] = cycle + 1
+            else:
+                break
+
+        # 5. 持久化
+        dsl = state.get("dsl", {})
+        quality_report = state.get("quality_report", {})
+        try:
+            from db.database import async_session_factory
+            from db.models import Project as ProjectModel
+            from api.versions import save_version
+            from services.project_persistence import (
+                merge_dsl_snapshot,
+                persist_frames_to_table,
+            )
+            from api.deps import parse_project_id
+
+            async with async_session_factory() as db_session:
+                project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                if project is not None:
+                    project.dsl_snapshot = merge_dsl_snapshot(
+                        project.dsl_snapshot,
+                        dsl,
+                        quality_report=quality_report,
+                        teaching_plan=teaching_plan,
+                    )
+                    project.status = "done"
+                    await persist_frames_to_table(
+                        project_id, dsl.get("frames", []), db_session
+                    )
+                    await save_version(project_id, dsl, f"局部重生成 ({scope.get('type', 'from_frame')})", db_session)
+                    await db_session.commit()
+        except Exception as perr:
+            logger.warning("Regenerate 持久化失败: %s", perr)
+
+        yield _sse_event("done", {
+            "phase": "done",
+            "pct": 100,
+            "dsl": dsl,
+            "quality_report": quality_report,
+        })
+
+    except Exception as exc:
+        logger.exception("Regenerate 失败")
+        yield _sse_event("error", {
+            "phase": "error",
+            "message": f"重生成失败: {exc}",
+            "error_code": "REGENERATE_FAILED",
+        })
+
+
 async def _drive_graph(
     graph,
     graph_input,

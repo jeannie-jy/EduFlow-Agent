@@ -675,8 +675,8 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
     logger.info("Reflection: 开始修订 (第 %d 次) | issues=%d",
                 count + 1, len(quality_report.get("issues", [])))
 
-    # 获取被锁定的帧
-    locked_frame_ids = set()  # TODO: 从 DB 帧表中读取 is_locked 状态
+    # 获取被锁定的帧（从 state 读取，由 regenerate 服务在调用前从 DB 帧表查询）
+    locked_frame_ids = set(state.get("locked_frame_ids", []))
 
     user_message = json.dumps({
         "quality_report": quality_report,

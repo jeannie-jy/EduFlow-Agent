@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from db.database import get_session
-from services.generate_service import run_generation_stream, resume_generation_stream
+from services.generate_service import run_generation_stream, resume_generation_stream, run_regenerate_stream
 from schema.project import GenerateRequest, RegenerateRequest, RejectPlanRequest, ApprovePlanResponse
 from .deps import parse_project_id
 
@@ -157,7 +157,11 @@ async def regenerate_frames(
     body: RegenerateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """局部重生成指定帧范围。"""
+    """局部重生成指定帧范围。
+
+    从 DB frames 表读取锁定帧、从 dsl_snapshot 读取已有规划/知识图谱，
+    跳过 Planner+Knowledge，直接驱动 Coder→Quality→Reflection 循环。
+    """
     from db.models import Project as ProjectModel
 
     project = await session.get(ProjectModel, parse_project_id(project_id))
@@ -169,8 +173,33 @@ async def regenerate_frames(
     logger.info("重生成: project=%s | scope=%s", project_id, scope.get("type", "unknown"))
 
     return {
-        "stream_url": f"/api/projects/{project_id}/generate/stream",
+        "stream_url": f"/api/projects/{project_id}/generate/regenerate/stream",
     }
+
+
+@router.get("/{project_id}/generate/regenerate/stream")
+async def regenerate_stream(
+    project_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """局部重生成的 SSE 进度流（跳过 Planner+Knowledge，直接到 Coder）。"""
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    async def event_generator():
+        async for sse_chunk in run_regenerate_stream(
+            project_id=project_id,
+            scope={"type": "from_frame"},
+        ):
+            if await request.is_disconnected():
+                break
+            yield sse_chunk
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/{project_id}/generate/approve", status_code=200)

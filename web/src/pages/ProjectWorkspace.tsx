@@ -37,9 +37,7 @@ import {
   History,
   Film,
   Download,
-  Layers,
   FileText,
-  Settings2,
 } from "lucide-react";
 import {
   getProject,
@@ -52,7 +50,6 @@ import {
   updateFrame,
   lockFrame,
   regenerate,
-  listParameters,
   saveVersion,
   listVersions,
   restoreVersion,
@@ -64,10 +61,8 @@ import {
   type SSEWaitingApprovalEvent,
   type ExportJobResponse,
   type VersionItem,
-  ApiError,
   NetworkError,
 } from "@/services";
-import { FeedbackPanel } from "@/components/FeedbackPanel";
 import { VisualObjectRenderer } from "@/components/workbench/visual-objects/VisualObjectRenderer";
 
 // ============================================================================
@@ -500,26 +495,17 @@ function PlayTabContent({ projectId, project }: {
   project: ProjectDetailResponse | null;
 }) {
   const [frames, setFrames] = useState<FrameData[]>([]);
-  const [paramCount, setParamCount] = useState(0);
   const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
 
   useEffect(() => {
     if (!projectId) return;
-    Promise.all([
-      listFrames(projectId),
-      listParameters(projectId),
-    ]).then(([fd, pd]) => {
+    listFrames(projectId).then((fd) => {
       setFrames(fd.frames ?? []);
-      setParamCount((pd as { parameters?: unknown[] }).parameters?.length ?? 0);
     }).catch(() => {});
   }, [projectId]);
 
   const dsl = project?.dsl as Record<string, unknown> | undefined;
   const dslFrames = (dsl?.frames as Record<string, unknown>[]) ?? frames;
-  const dslParams = (dsl?.parameters as Record<string, unknown>[]) ?? [];
-  const teachingStrategy = dsl?.teaching_strategy as Record<string, unknown> | undefined;
-  const qualityReport = project?.quality_report as Record<string, unknown> | undefined;
-  const overallScore = qualityReport?.overall_score as number | undefined;
   const displayFrames = dslFrames.length > 0 ? dslFrames : frames;
   const currentFrame = displayFrames[selectedFrameIdx] as Record<string, unknown> | undefined;
   const visualObjects = (currentFrame?.visual_objects as Record<string, unknown>[]) ?? [];
@@ -643,23 +629,6 @@ function PlayTabContent({ projectId, project }: {
   );
 }
 
-function StatCard({ icon: Icon, label, value, sub }: {
-  icon: typeof Layers;
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  return (
-    <div className="rounded-xl border p-4">
-      <div className="flex items-center gap-2 mb-1.5">
-        <Icon size={15} className="text-primary" />
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-      <p className="text-xl font-bold tabular-nums">{value}</p>
-      {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
-    </div>
-  );
-}
 
 // ============================================================================
 // Tab: 编辑（原 Editor）
@@ -726,7 +695,25 @@ function EditTabContent({ projectId }: { projectId: string }) {
 
   const handleRegenerate = async () => {
     if (!projectId) return;
-    try { await regenerate(projectId, { type: "from_frame" }); } catch { /* ignore */ }
+    try {
+      const res = await regenerate(projectId, { type: "from_frame" });
+      // 连接 regenerate SSE 流，done 时刷新帧列表
+      streamFromUrl(res.stream_url, {
+        onDone: async () => {
+          try {
+            const fd = await listFrames(projectId);
+            setFrames(fd.frames);
+            // 保持选中（如果 frame_id 仍存在）
+            setSelected((prev) => {
+              if (!prev) return null;
+              const match = fd.frames.find((f) => f.frame_id === prev.frame_id);
+              return match ?? fd.frames[0] ?? null;
+            });
+          } catch { /* ignore */ }
+        },
+        onError: () => { /* ignore */ },
+      });
+    } catch { /* ignore */ }
   };
 
   const handleSaveVersion = async () => {
