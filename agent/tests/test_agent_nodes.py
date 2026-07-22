@@ -869,7 +869,14 @@ class TestGraphTopology:
 
     def test_graph_is_singleton(self):
         """get_graph 应返回同一实例。"""
-        from agents.graph import get_graph
-        g1 = get_graph()
-        g2 = get_graph()
-        assert g1 is g2
+        import agents.graph as graph_module
+        # 保存并重置全局单例，避免污染其他测试中通过 get_graph_async 的 patch
+        old_graph = graph_module._graph
+        graph_module._graph = None
+        try:
+            from agents.graph import get_graph
+            g1 = get_graph()
+            g2 = get_graph()
+            assert g1 is g2
+        finally:
+            graph_module._graph = old_graph
