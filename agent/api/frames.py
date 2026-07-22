@@ -28,24 +28,16 @@ async def list_frames(
     version: int = 1,
     session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
-    """获取项目的帧列表。"""
+    """获取项目的帧列表。
+
+    帧表为编辑真源：优先返回 ``frames`` 表中的行；仅当表为空时回退到
+    ``dsl_snapshot['frames']``（兼容尚未落表的历史项目）。
+    """
     from db.models import Frame as FrameModel
 
     from sqlalchemy import select
 
-    # 若 DSL snapshot 中有帧数据，优先返回
-    from db.models import Project as ProjectModel
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project and project.dsl_snapshot:
-        frames = project.dsl_snapshot.get("frames", [])
-        if frames:
-            # 补充 id 字段
-            for i, f in enumerate(frames):
-                if "id" not in f:
-                    f["id"] = str(uuid.uuid4())
-            return {"frames": frames, "version": 1}
-
-    # DB 中查询
+    # DB frames 表优先（编辑真源，反映最新编辑/锁定状态）
     query = (
         select(FrameModel)
         .where(
@@ -57,25 +49,39 @@ async def list_frames(
     result = await session.execute(query)
     frames = result.scalars().all()
 
-    return {
-        "frames": [
-            {
-                "id": str(f.id),
-                "frame_id": f.frame_id,
-                "order_index": f.order_index,
-                "title": f.title or "",
-                "narration": f.narration or "",
-                "visual_objects": f.visual_objects or [],
-                "state_snapshot": f.state_snapshot or {},
-                "animations": f.animations or [],
-                "interaction_hooks": f.interaction_hooks or [],
-                "quality_status": f.quality_status,
-                "is_locked": f.is_locked,
-            }
-            for f in frames
-        ],
-        "version": version,
-    }
+    if frames:
+        return {
+            "frames": [
+                {
+                    "id": str(f.id),
+                    "frame_id": f.frame_id,
+                    "order_index": f.order_index,
+                    "title": f.title or "",
+                    "narration": f.narration or "",
+                    "visual_objects": f.visual_objects or [],
+                    "state_snapshot": f.state_snapshot or {},
+                    "animations": f.animations or [],
+                    "interaction_hooks": f.interaction_hooks or [],
+                    "quality_status": f.quality_status,
+                    "is_locked": f.is_locked,
+                }
+                for f in frames
+            ],
+            "version": version,
+        }
+
+    # 回退：DSL snapshot 中的帧数据（尚未落表的历史项目）
+    from db.models import Project as ProjectModel
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project and project.dsl_snapshot:
+        snap_frames = project.dsl_snapshot.get("frames", [])
+        if snap_frames:
+            for f in snap_frames:
+                if "id" not in f:
+                    f["id"] = str(uuid.uuid4())
+            return {"frames": snap_frames, "version": 1}
+
+    return {"frames": [], "version": version}
 
 
 @router.put("/{project_id}/frames/{fid}")
@@ -111,6 +117,9 @@ async def update_frame(
 
     await session.flush()
 
+    # 同步回 dsl_snapshot['frames']，保证「推演/导出」读到的 DSL 与编辑一致
+    await _sync_frame_into_snapshot(session, project_id, fid, updates)
+
     logger.info("帧编辑: project=%s | frame=%s", project_id, fid)
 
     return {
@@ -144,4 +153,35 @@ async def lock_frame(
     frame.is_locked = body.is_locked
     await session.flush()
 
+    # 同步锁定状态到 dsl_snapshot
+    await _sync_frame_into_snapshot(session, project_id, fid, {"is_locked": body.is_locked})
+
     return {"id": str(frame.id), "is_locked": frame.is_locked}
+
+
+async def _sync_frame_into_snapshot(
+    session: AsyncSession,
+    project_id: str,
+    frame_id: str,
+    fields: dict,
+) -> None:
+    """将单帧的字段变更同步回 project.dsl_snapshot['frames']（整体重赋值触发 JSONB 变更）。"""
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None or not project.dsl_snapshot:
+        return
+
+    snap = dict(project.dsl_snapshot)
+    frames = [dict(f) for f in snap.get("frames", [])]
+    changed = False
+    for f in frames:
+        if f.get("frame_id") == frame_id:
+            f.update(fields)
+            changed = True
+            break
+
+    if changed:
+        snap["frames"] = frames
+        project.dsl_snapshot = snap
+        await session.flush()

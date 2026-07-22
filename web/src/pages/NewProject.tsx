@@ -68,12 +68,19 @@ export function NewProject() {
     setError(null);
 
     try {
+      // file_upload 方式：携带已完成解析的素材 id，供后端生成时载入
+      const materialIds =
+        inputType === "file_upload"
+          ? uploadedFiles.filter((f) => f.status === "done").map((f) => f.id)
+          : [];
+
       const res = await createProject({
         title: title.trim(),
-        input_type: "natural_language",
+        input_type: inputType,
         input_content: inputContent.trim(),
         audience,
         difficulty,
+        constraints: materialIds.length > 0 ? { material_ids: materialIds } : {},
       });
       navigate(`/app/project/${res.id}?tab=plan`);
     } catch (err) {

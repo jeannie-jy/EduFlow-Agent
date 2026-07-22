@@ -76,12 +76,32 @@ async def generation_stream(
         input_content = project.dsl_snapshot.get("input_content", project.title)
         constraints = project.dsl_snapshot.get("constraints", {})
 
+    # file_upload 素材接线：载入已上传素材的解析文本供 Planner 使用
+    materials: list[dict] = []
+    material_ids = constraints.get("material_ids", []) if isinstance(constraints, dict) else []
+    if material_ids:
+        from api.materials import parse_material_file
+        for mid in material_ids:
+            try:
+                parsed = parse_material_file(str(mid))
+            except Exception as exc:
+                logger.warning("素材解析失败 material=%s: %s", mid, exc)
+                parsed = None
+            if parsed and parsed.get("raw_text"):
+                materials.append({
+                    "material_id": str(mid),
+                    "content_text": parsed["raw_text"],
+                    "topics": parsed.get("topics", []),
+                })
+        logger.info("生成载入素材: project=%s | count=%d", project_id, len(materials))
+
     async def event_generator():
         async for sse_chunk in run_generation_stream(
             project_id=project_id,
             user_input=input_content,
             action="full",
             constraints=constraints,
+            materials=materials,
         ):
             # 检查客户端是否断开
             if await request.is_disconnected():
@@ -128,9 +148,11 @@ async def approve_plan(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 清除审批标记，更新状态
+    # 清除审批标记，更新状态（整体重赋值以触发 JSONB 变更检测）
     if project.dsl_snapshot:
-        project.dsl_snapshot.pop("pending_approval", None)
+        snap = dict(project.dsl_snapshot)
+        snap.pop("pending_approval", None)
+        project.dsl_snapshot = snap
     project.status = "generating"
 
     logger.info("教学计划已批准: project=%s", project_id)
@@ -156,10 +178,12 @@ async def reject_plan(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 记录拒绝反馈
+    # 记录拒绝反馈（整体重赋值以触发 JSONB 变更检测）
     if project.dsl_snapshot:
-        project.dsl_snapshot["approval_feedback"] = body.feedback
-        project.dsl_snapshot.pop("pending_approval", None)
+        snap = dict(project.dsl_snapshot)
+        snap["approval_feedback"] = body.feedback
+        snap.pop("pending_approval", None)
+        project.dsl_snapshot = snap
     project.status = "draft"
 
     logger.info("教学计划被拒绝: project=%s | feedback=%s", project_id, body.feedback[:100])

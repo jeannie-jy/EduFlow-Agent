@@ -58,13 +58,6 @@ async def run_generation_stream(
     }
 
     try:
-        # 立即发送初始事件，避免前端超时
-        yield _sse_event("progress", {
-            "phase": "connecting",
-            "message": "正在连接 Agent 编排引擎...",
-            "pct": 0,
-        })
-
         async for event in graph.astream_events(initial_state, config=config, version="v2"):
             event_type = event.get("event", "")
 
@@ -135,16 +128,36 @@ async def run_generation_stream(
             if final_state and final_state.values:
                 dsl = final_state.values.get("dsl", {})
                 quality_report = final_state.values.get("quality_report", {})
+                teaching_plan = final_state.values.get("teaching_plan", {})
 
-                # 自动保存版本快照
+                # 持久化生成产物：dsl_snapshot + frames 表 + status + 版本快照（单事务）
                 try:
                     from db.database import async_session_factory
+                    from db.models import Project as ProjectModel
                     from api.versions import save_version
+                    from services.project_persistence import (
+                        merge_dsl_snapshot,
+                        persist_frames_to_table,
+                    )
+                    from api.deps import parse_project_id
+
                     async with async_session_factory() as db_session:
-                        await save_version(project_id, dsl, "Agent 生成", db_session)
-                        await db_session.commit()
-                except Exception as verr:
-                    logger.warning("版本自动保存失败: %s", verr)
+                        project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                        if project is not None:
+                            project.dsl_snapshot = merge_dsl_snapshot(
+                                project.dsl_snapshot,
+                                dsl,
+                                quality_report=quality_report,
+                                teaching_plan=teaching_plan,
+                            )
+                            project.status = "done"
+                            await persist_frames_to_table(
+                                project_id, dsl.get("frames", []), db_session
+                            )
+                            await save_version(project_id, dsl, "Agent 生成", db_session)
+                            await db_session.commit()
+                except Exception as perr:
+                    logger.warning("生成产物持久化失败: %s", perr)
 
                 yield _sse_event("done", {
                     "phase": "done",

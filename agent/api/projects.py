@@ -140,3 +140,19 @@ async def get_project(
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
     }
+
+
+@router.delete("/{project_id}", status_code=204)
+async def delete_project(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """删除项目（级联删除帧/参数/版本等关联记录）。"""
+    from db.models import Project
+
+    project = await session.get(Project, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await session.delete(project)
+    logger.info("项目删除: id=%s", project_id)

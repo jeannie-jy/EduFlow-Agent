@@ -68,6 +68,7 @@ export interface SSEOptions {
 export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection {
   const {
     onProgress,
+    onWaitingApproval,
     onDone,
     onError,
     signal,

@@ -163,6 +163,13 @@ async def restore_version(
 
     # 恢复（与存档在同一个事务中提交）
     project.dsl_snapshot = v.dsl_snapshot
+
+    # 同步重写 frames 表，避免表与 snapshot 漂移
+    from services.project_persistence import persist_frames_to_table
+    await persist_frames_to_table(
+        project_id, (v.dsl_snapshot or {}).get("frames", []), session
+    )
+
     await session.commit()
 
     logger.info("版本已恢复: project=%s version=%d", project_id, v.version)

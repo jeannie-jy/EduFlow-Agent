@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { api, ApiError, NetworkError } from "@/services";
 import {
   Star,
   AlertTriangle,
@@ -79,7 +80,6 @@ export function FeedbackPanel({
     setError("");
 
     try {
-      const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
       const body: Record<string, unknown> = {
         type: feedbackType,
         content: content.trim(),
@@ -87,16 +87,7 @@ export function FeedbackPanel({
       if (frameId) body.frame_id = frameId;
       if (feedbackType === "rating") body.rating = rating;
 
-      const res = await fetch(`${baseUrl}/projects/${projectId}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail ?? `请求失败: HTTP ${res.status}`);
-      }
+      await api.post(`/projects/${projectId}/feedback`, body);
 
       setSubmitted(true);
       setTimeout(() => {
@@ -105,7 +96,9 @@ export function FeedbackPanel({
         setContent("");
       }, 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交失败");
+      if (err instanceof NetworkError) setError("无法连接到服务器");
+      else if (err instanceof ApiError) setError(err.message);
+      else setError(err instanceof Error ? err.message : "提交失败");
     } finally {
       setSubmitting(false);
     }

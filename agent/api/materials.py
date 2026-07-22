@@ -84,51 +84,57 @@ async def upload_material(
     }
 
 
-@router.post("/{material_id}/parse")
-async def parse_material(material_id: str) -> dict:
-    """解析上传的课件文件，提取结构化内容。"""
+def parse_material_file(material_id: str) -> dict | None:
+    """解析已上传素材文件，返回 {topics, raw_text}。找不到文件返回 None。
+
+    供 parse 端点与生成流程复用（file_upload 素材接线）。
+    """
     settings = get_settings()
     upload_dir = settings.upload_dir / material_id
-
     if not upload_dir.exists():
-        raise HTTPException(status_code=404, detail="Material not found")
+        return None
 
-    # 找到上传的文件
     files = list(upload_dir.glob("uploaded_*"))
     if not files:
-        raise HTTPException(status_code=404, detail="File not found")
+        return None
 
     file_path = files[0]
     suffix = file_path.suffix.lower()
 
     raw_text = ""
     topics: list[str] = []
+    if suffix == ".pdf":
+        raw_text, topics = _parse_pdf(file_path)
+    elif suffix == ".pptx":
+        raw_text, topics = _parse_pptx(file_path)
+    elif suffix in (".txt", ".md", ".py", ".c", ".java", ".cpp"):
+        raw_text = file_path.read_text(encoding="utf-8")
+        topics = _extract_topics_from_text(raw_text)
+    else:
+        raw_text = f"Unsupported format: {suffix}"
 
+    return {"topics": topics, "raw_text": raw_text[:100000]}  # 截断到 100K 字符
+
+
+@router.post("/{material_id}/parse")
+async def parse_material(material_id: str) -> dict:
+    """解析上传的课件文件，提取结构化内容。"""
     try:
-        if suffix == ".pdf":
-            raw_text, topics = _parse_pdf(file_path)
-        elif suffix == ".pptx":
-            raw_text, topics = _parse_pptx(file_path)
-        elif suffix in (".txt", ".md", ".py", ".c", ".java", ".cpp"):
-            raw_text = file_path.read_text(encoding="utf-8")
-            topics = _extract_topics_from_text(raw_text)
-        else:
-            raw_text = f"Unsupported format: {suffix}"
-
+        parsed = parse_material_file(material_id)
     except Exception as exc:
-        logger.exception("文件解析失败: %s", file_path)
+        logger.exception("文件解析失败: material=%s", material_id)
         raise HTTPException(status_code=500, detail=f"解析失败: {exc}")
 
+    if parsed is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+
     logger.info("文件解析完成: id=%s | topics=%d | text_len=%d",
-                material_id, len(topics), len(raw_text))
+                material_id, len(parsed["topics"]), len(parsed["raw_text"]))
 
     return {
         "id": material_id,
         "status": "done",
-        "parsed_result": {
-            "topics": topics,
-            "raw_text": raw_text[:100000],  # 截断到 100K 字符
-        },
+        "parsed_result": parsed,
     }
 
 

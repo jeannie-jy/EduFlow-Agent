@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, X } from "lucide-react";
+import { api, ApiError, NetworkError } from "@/services";
 
 /** 允许的文件类型 */
 const ACCEPTED_TYPES = ".pdf,.txt,.md,.py,.c,.java,.cpp,.pptx";
@@ -68,19 +69,8 @@ export function FileUploader({
       onFilesChange([...files, tempFile]);
 
       try {
-        // 上传
-        const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const uploadRes = await fetch(`${baseUrl}/materials/upload`, {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!uploadRes.ok) throw new Error(`上传失败: HTTP ${uploadRes.status}`);
-
-        const uploaded = await uploadRes.json();
+        // 上传（经 api-client，统一错误契约）
+        const uploaded = await api.upload<{ id: string }>("/materials/upload", file);
 
         // 更新为上传完成
         onFilesChange((prev: UploadedFile[]) =>
@@ -92,13 +82,9 @@ export function FileUploader({
         );
 
         // 解析
-        const parseRes = await fetch(`${baseUrl}/materials/${uploaded.id}/parse`, {
-          method: "POST",
-        });
-
-        if (!parseRes.ok) throw new Error(`解析失败: HTTP ${parseRes.status}`);
-
-        const parsed = await parseRes.json();
+        const parsed = await api.post<{ parsed_result?: { topics?: string[] } }>(
+          `/materials/${uploaded.id}/parse`,
+        );
 
         // 更新为完成
         onFilesChange((prev: UploadedFile[]) =>
@@ -113,14 +99,18 @@ export function FileUploader({
           ),
         );
       } catch (err) {
+        const message =
+          err instanceof NetworkError
+            ? "无法连接到服务器"
+            : err instanceof ApiError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : "上传失败";
         onFilesChange((prev: UploadedFile[]) =>
           prev.map((f) =>
             f.id === tempId
-              ? {
-                  ...f,
-                  status: "error" as const,
-                  error: err instanceof Error ? err.message : "上传失败",
-                }
+              ? { ...f, status: "error" as const, error: message }
               : f,
           ),
         );
