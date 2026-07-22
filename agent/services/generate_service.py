@@ -284,6 +284,13 @@ async def _drive_graph(
 
     graph_input 可为初始 state（首次）或 Command(resume=...)（恢复）。
     """
+    # 立即推送连接事件，避免前端在 LLM 调用期间静默超时
+    yield _sse_event("progress", {
+        "phase": "connecting",
+        "message": "正在连接 Agent 编排引擎...",
+        "pct": 0,
+    })
+
     async for event in graph.astream_events(graph_input, config=config, version="v2"):
         event_type = event.get("event", "")
 
@@ -469,9 +476,13 @@ async def run_generation_sync(
 # ── Helpers ─────────────────────────────────────────────────
 
 
-def _sse_event(event: str, data: dict[str, Any]) -> str:
-    """构建 SSE 格式字符串。"""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+def _sse_event(event: str, data: dict[str, Any]) -> dict[str, str]:
+    """构建 SSE 事件（返回 dict，由 sse-starlette EventSourceResponse 编码）。
+
+    sse-starlette 3.x 对 string 会二次包 data: → 前端收不到。
+    返 dict({"event": ..., "data": json.dumps(...)}) 由 sse-starlette 正确格式化。
+    """
+    return {"event": event, "data": json.dumps(data, ensure_ascii=False)}
 
 
 def _phase_pct(phase: str) -> int:

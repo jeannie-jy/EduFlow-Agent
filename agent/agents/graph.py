@@ -240,22 +240,27 @@ async def get_graph_async() -> "CompiledStateGraph":
     if not _checkpointer_initialized:
         _checkpointer_initialized = True
         try:
+            import asyncio as _asyncio
             from contextlib import AsyncExitStack
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
             stack = AsyncExitStack()
             # from_conn_string 返回 async 上下文管理器 —— 用 ExitStack 进入拿到真正的 saver
-            saver = await stack.enter_async_context(
-                AsyncPostgresSaver.from_conn_string(_postgres_db_url())
+            # 加 5s 超时：Postgres 没运行时快速回落 MemorySaver，避免 SSE 流静默卡死
+            saver = await _asyncio.wait_for(
+                stack.enter_async_context(
+                    AsyncPostgresSaver.from_conn_string(_postgres_db_url())
+                ),
+                timeout=5.0,
             )
-            await saver.setup()
+            await _asyncio.wait_for(saver.setup(), timeout=5.0)
             _checkpointer = saver
             _checkpointer_stack = stack  # 进程存活期间保持连接
             logger.info("Postgres checkpointer 已初始化")
         except ImportError:
             logger.info("langgraph-checkpoint-postgres 未安装，使用内存 checkpointer")
         except Exception as exc:
-            logger.warning("Postgres checkpointer 初始化失败，使用内存模式: %s", exc)
+            logger.warning("Postgres checkpointer 初始化失败（%s），使用内存模式", exc)
 
     if _checkpointer is None:
         _checkpointer = _memory_checkpointer()

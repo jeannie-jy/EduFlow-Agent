@@ -20,6 +20,16 @@ from services.generate_service import (
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _parse(event_dict: dict) -> dict:
+    """解析 SSE event dict 中的 data 字段（JSON 字符串 → dict）。"""
+    return json.loads(event_dict["data"])
+
+
+# ============================================================================
 # SSE Helpers
 # ============================================================================
 
@@ -28,43 +38,38 @@ class TestSSEEventFormat:
     """SSE 事件格式测试。"""
 
     def test_progress_event_format(self):
-        """SSE 事件格式应符合规范。"""
-        sse = _sse_event("progress", {"phase": "planner", "message": "测试", "pct": 10})
-        assert sse.startswith("event: progress\n")
-        assert "data: " in sse
-        assert sse.endswith("\n\n")
-        # 解析 data 部分
-        data_line = [l for l in sse.split("\n") if l.startswith("data: ")][0]
-        data = json.loads(data_line[6:])
+        """_sse_event 应返回带 event + data 字段的 dict。"""
+        event = _sse_event("progress", {"phase": "planner", "message": "测试", "pct": 10})
+        assert event["event"] == "progress"
+        data = _parse(event)
         assert data["phase"] == "planner"
         assert data["pct"] == 10
 
     def test_done_event_format(self):
         """done 事件格式。"""
-        sse = _sse_event("done", {"phase": "done", "pct": 100})
-        assert sse.startswith("event: done\n")
-        data_line = [l for l in sse.split("\n") if l.startswith("data: ")][0]
-        data = json.loads(data_line[6:])
+        event = _sse_event("done", {"phase": "done", "pct": 100})
+        assert event["event"] == "done"
+        data = _parse(event)
         assert data["phase"] == "done"
         assert data["pct"] == 100
 
     def test_error_event_format(self):
         """error 事件格式。"""
-        sse = _sse_event("error", {
+        event = _sse_event("error", {
             "phase": "error",
             "message": "生成失败",
             "error_code": "GENERATION_FAILED",
         })
-        assert sse.startswith("event: error\n")
-        data_line = [l for l in sse.split("\n") if l.startswith("data: ")][0]
-        data = json.loads(data_line[6:])
+        assert event["event"] == "error"
+        data = _parse(event)
         assert data["phase"] == "error"
         assert data["error_code"] == "GENERATION_FAILED"
 
     def test_unicode_in_event(self):
         """SSE 事件应正确处理中文。"""
-        sse = _sse_event("progress", {"phase": "planner", "message": "正在生成教学计划", "pct": 30})
-        assert "正在生成教学计划" in sse
+        event = _sse_event("progress", {"phase": "planner", "message": "正在生成教学计划", "pct": 30})
+        data = _parse(event)
+        assert data["message"] == "正在生成教学计划"
 
 
 class TestPhasePct:
@@ -168,13 +173,8 @@ class TestRunGenerationStream:
     @pytest.mark.asyncio
     async def test_stream_yields_progress_events(self):
         """应从每个节点获取进度事件。"""
-        # 构建模拟的 astream_events 生成器
         async def mock_astream_events(initial_state, config, version):
-            yield {
-                "event": "on_chain_start",
-                "name": "planner",
-                "data": {},
-            }
+            yield {"event": "on_chain_start", "name": "planner", "data": {}}
             yield {
                 "event": "on_chain_end",
                 "name": "planner",
@@ -189,11 +189,7 @@ class TestRunGenerationStream:
                     },
                 },
             }
-            yield {
-                "event": "on_chain_start",
-                "name": "coder",
-                "data": {},
-            }
+            yield {"event": "on_chain_start", "name": "coder", "data": {}}
             yield {
                 "event": "on_chain_end",
                 "name": "coder",
@@ -203,11 +199,7 @@ class TestRunGenerationStream:
                     },
                 },
             }
-            yield {
-                "event": "on_chain_start",
-                "name": "quality",
-                "data": {},
-            }
+            yield {"event": "on_chain_start", "name": "quality", "data": {}}
             yield {
                 "event": "on_chain_end",
                 "name": "quality",
@@ -222,7 +214,6 @@ class TestRunGenerationStream:
             mock_graph = MagicMock()
             mock_graph.astream_events = mock_astream_events
 
-            # Mock aget_state
             mock_final_state = MagicMock()
             mock_final_state.values = {
                 "dsl": {"frames": [{"frame_id": "f_001"}, {"frame_id": "f_002"}]},
@@ -238,13 +229,12 @@ class TestRunGenerationStream:
             ):
                 events.append(event)
 
-        # 应包含进度事件和 done 事件
-        assert len(events) >= 4
-        # 验证第一个事件是 planner 进度
-        assert "event: progress" in events[0]
-        assert "planner" in events[0]
+        # 应包含进度事件和 done 事件（含初始 connecting 事件）
+        assert len(events) >= 5
+        # 验证包含 planner 进度事件
+        assert any("planner" in e["data"] for e in events)
         # 验证最后一个事件是 done
-        assert "event: done" in events[-1]
+        assert events[-1]["event"] == "done"
 
     @pytest.mark.asyncio
     async def test_stream_phases_in_order(self):
@@ -268,18 +258,18 @@ class TestRunGenerationStream:
                 project_id="test_001",
                 user_input="test",
             ):
-                if "event: progress" in event:
+                if event["event"] == "progress":
                     events.append(event)
 
         # 验证阶段顺序
         phases_found = []
         for e in events:
+            data = _parse(e)
             for phase in ["planner", "knowledge", "coder", "quality"]:
-                if phase in e:
+                if data["phase"] == phase:
                     phases_found.append(phase)
                     break
 
-        # 阶段应出现且按顺序
         assert "planner" in phases_found
         assert "coder" in phases_found
 
@@ -315,9 +305,8 @@ class TestRunGenerationStream:
                 events.append(event)
 
         done_event = events[-1]
-        assert "event: done" in done_event
-        data_line = [l for l in done_event.split("\n") if l.startswith("data: ")][0]
-        data = json.loads(data_line[6:])
+        assert done_event["event"] == "done"
+        data = _parse(done_event)
         assert "dsl" in data
         assert "quality_report" in data
 
@@ -338,11 +327,10 @@ class TestRunGenerationStream:
             ):
                 events.append(event)
 
-        # 应有一个 error 事件
-        assert len(events) == 1
-        assert "event: error" in events[0]
-        data_line = [l for l in events[0].split("\n") if l.startswith("data: ")][0]
-        data = json.loads(data_line[6:])
+        # connecting 事件 + error 事件
+        assert len(events) == 2
+        assert events[-1]["event"] == "error"
+        data = _parse(events[-1])
         assert data["phase"] == "error"
         assert data["error_code"] == "GENERATION_FAILED"
 
@@ -350,16 +338,9 @@ class TestRunGenerationStream:
     async def test_progress_event_includes_pct(self):
         """进度事件应包含 pct 字段。"""
         async def mock_astream_events(initial_state, config, version):
-            yield {
-                "event": "on_chain_start",
-                "name": "planner",
-                "data": {},
-            }
-            yield {
-                "event": "on_chain_end",
-                "name": "planner",
-                "data": {"output": {"teaching_plan": {}}},
-            }
+            yield {"event": "on_chain_start", "name": "planner", "data": {}}
+            yield {"event": "on_chain_end", "name": "planner",
+                   "data": {"output": {"teaching_plan": {}}}}
 
         with patch("agents.graph.get_graph") as mock_get_graph:
             mock_graph = MagicMock()
@@ -376,12 +357,10 @@ class TestRunGenerationStream:
             ):
                 events.append(event)
 
-        # 找到 planner 的进度事件
-        progress_events = [e for e in events if "event: progress" in e]
+        progress_events = [e for e in events if e["event"] == "progress"]
         assert len(progress_events) >= 1
         for pe in progress_events:
-            data_line = [l for l in pe.split("\n") if l.startswith("data: ")][0]
-            data = json.loads(data_line[6:])
+            data = _parse(pe)
             assert "pct" in data, f"Progress event missing pct: {data}"
 
     @pytest.mark.asyncio
@@ -391,11 +370,8 @@ class TestRunGenerationStream:
 
         async def mock_astream_events(initial_state, config, version):
             yield {"event": "on_chain_start", "name": "planner", "data": {}}
-            yield {
-                "event": "on_chain_end",
-                "name": "planner",
-                "data": {"output": {"teaching_plan": plan}},
-            }
+            yield {"event": "on_chain_end", "name": "planner",
+                   "data": {"output": {"teaching_plan": plan}}}
 
         with patch("agents.graph.get_graph") as mock_get_graph:
             mock_graph = MagicMock()
@@ -412,8 +388,7 @@ class TestRunGenerationStream:
             ):
                 events.append(event)
 
-        # 找到 teaching_plan 事件
-        plan_events = [e for e in events if "teaching_plan" in e]
+        plan_events = [e for e in events if "teaching_plan" in e["data"]]
         assert len(plan_events) >= 1
 
     @pytest.mark.asyncio
@@ -424,11 +399,8 @@ class TestRunGenerationStream:
 
         async def mock_astream_events(initial_state, config, version):
             yield {"event": "on_chain_start", "name": "knowledge", "data": {}}
-            yield {
-                "event": "on_chain_end",
-                "name": "knowledge",
-                "data": {"output": {"knowledge_graph": kg, "key_terms": terms}},
-            }
+            yield {"event": "on_chain_end", "name": "knowledge",
+                   "data": {"output": {"knowledge_graph": kg, "key_terms": terms}}}
 
         with patch("agents.graph.get_graph") as mock_get_graph:
             mock_graph = MagicMock()
@@ -445,7 +417,7 @@ class TestRunGenerationStream:
             ):
                 events.append(event)
 
-        kg_events = [e for e in events if "knowledge_graph" in e]
+        kg_events = [e for e in events if "knowledge_graph" in e["data"]]
         assert len(kg_events) >= 1
 
     @pytest.mark.asyncio
@@ -455,11 +427,8 @@ class TestRunGenerationStream:
 
         async def mock_astream_events(initial_state, config, version):
             yield {"event": "on_chain_start", "name": "quality", "data": {}}
-            yield {
-                "event": "on_chain_end",
-                "name": "quality",
-                "data": {"output": {"quality_report": qr}},
-            }
+            yield {"event": "on_chain_end", "name": "quality",
+                   "data": {"output": {"quality_report": qr}}}
 
         with patch("agents.graph.get_graph") as mock_get_graph:
             mock_graph = MagicMock()
@@ -476,7 +445,7 @@ class TestRunGenerationStream:
             ):
                 events.append(event)
 
-        qr_events = [e for e in events if "quality_report" in e]
+        qr_events = [e for e in events if "quality_report" in e["data"]]
         assert len(qr_events) >= 1
 
 
@@ -522,10 +491,10 @@ class TestHITLInterruptResume:
             ):
                 events.append(event)
 
-        assert any("event: waiting_approval" in e for e in events)
-        assert not any("event: done" in e for e in events)
-        wa = [e for e in events if "waiting_approval" in e][0]
-        assert "teaching_plan" in wa
+        assert any(e["event"] == "waiting_approval" for e in events)
+        assert not any(e["event"] == "done" for e in events)
+        wa = [e for e in events if e["event"] == "waiting_approval"][0]
+        assert "teaching_plan" in wa["data"]
 
     @pytest.mark.asyncio
     async def test_resume_approve_reaches_done(self):
@@ -533,7 +502,6 @@ class TestHITLInterruptResume:
         from services.generate_service import resume_generation_stream
 
         async def mock_astream_events(graph_input, config, version):
-            # graph_input 为 Command(resume=...)
             yield {"event": "on_chain_start", "name": "coder", "data": {}}
             yield {"event": "on_chain_end", "name": "coder",
                    "data": {"output": {"dsl": {"frames": [{"frame_id": "f_001"}]}}}}
@@ -541,7 +509,7 @@ class TestHITLInterruptResume:
         final = MagicMock()
         final.values = {"dsl": {"frames": [{"frame_id": "f_001"}]},
                         "quality_report": {"overall_score": 0.9}}
-        final.tasks = []  # 无中断 → 收尾 done
+        final.tasks = []
 
         with patch("agents.graph.get_graph") as mock_get_graph:
             mock_graph = MagicMock()
@@ -555,5 +523,5 @@ class TestHITLInterruptResume:
             ):
                 events.append(event)
 
-        assert any("event: done" in e for e in events)
-        assert not any("event: waiting_approval" in e for e in events)
+        assert any(e["event"] == "done" for e in events)
+        assert not any(e["event"] == "waiting_approval" for e in events)
