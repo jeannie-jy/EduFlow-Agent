@@ -382,6 +382,10 @@ vllm-model-cache/
 *.dump
 *.dmp
 
+# Uploaded files (runtime data)
+agent/data/uploads/
+agent/data/exports/
+
 # Large model files (keep outside git)
 *.bin
 *.safetensors

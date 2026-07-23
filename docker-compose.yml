@@ -10,7 +10,7 @@ services:
     build: ./agent
     ports: ["8000:8000"]
     environment:
-      - DATABASE_URL=postgresql://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
+      - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
       - REDIS_URL=redis://redis:6379
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
       - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
@@ -23,8 +23,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    volumes:
+      - manim_output:/app/data/exports    # 共享 worker 渲染产物
+      - manim_scripts:/app/data/scripts   # 共享 worker 生成的脚本
     restart: unless-stopped
-    # profiles: [agent]   # 待 agent 目录创建后取消注释
 
   # ── Database (PostgreSQL + pgvector) ────────────────────
   postgres:
@@ -51,5 +53,43 @@ services:
     command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
     restart: unless-stopped
 
+  # ── Manim Render Worker ──────────────────────────────────
+  manim-worker:
+    build:
+      context: ./agent
+      dockerfile: workers/Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - OUTPUT_DIR=/app/output
+      - SCRIPTS_DIR=/app/scripts
+      - MANIM_TIMEOUT=600
+    volumes:
+      - manim_output:/app/output
+      - manim_scripts:/app/scripts
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+
+  # ── Object Storage (MinIO S3-compatible) ──────────────────
+  minio:
+    image: minio/minio:latest
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      - MINIO_ROOT_USER=${MINIO_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  manim_output:
+  manim_scripts:
+  minio_data:
