@@ -198,7 +198,7 @@ describe("LandingPage", () => {
     expect(landingStyles).not.toMatch(/\.landing-hero\s*\{[^}]*\b(?:min-)?height:/);
     expect(landingStyles).not.toContain("height: calc(100svh - 7rem)");
     expect(landingStyles).toContain("margin-inline: clamp(-1.5rem, -1.75vw, -0.25rem);");
-    expect(landingStyles).toContain(".landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 10.5rem; }");
+    expect(landingStyles).toContain(".landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 12rem; }");
     expect(landingStyles).toContain(".landing-hero__demo-plate .demo-status-table { padding: 0.35rem 0.55rem; }");
     expect(landingStyles).toContain(".landing-hero__demo-plate .demo-timeline__track { margin-top: 0.3rem; }");
     expect(landingStyles).toMatch(/#product,\s*#examples,\s*#audiences,\s*#templates \{\s*scroll-margin-top:/);

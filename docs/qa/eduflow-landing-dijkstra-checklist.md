@@ -63,3 +63,9 @@ Every row below is intentionally pending. No visual or browser-interaction resul
 | Status | Route | Viewport / setting | Expected result | Actual result | Follow-up commit |
 | --- | --- | --- | --- | --- | --- |
 | Pending remeasure | `/` | 1440×900, Light | The `#product` chapter label and heading visibly peek into the first viewport; target section top is approximately 840 px or less, while the compact graph, ledger, narration, controls, and timeline remain present. | Before the density revision, `#product` began at 900.67 px and Chapter 02 was not visible. CSS has been revised; browser remeasurement is pending. | Pending current commit |
+
+## Browser QA iteration — compact graph first render
+
+| Status | Route | Viewport / setting | Expected result | Actual result | Follow-up commit |
+| --- | --- | --- | --- | --- | --- |
+| Blocked pending remeasure | `/` | 1440×900, Light, fresh reload | Compact graph nodes and edges fit inside the graph panel without user action, while the Chapter 02 cue remains visible at the bottom of the first viewport. | After `a2d807d`, the graph panel was at y=430..651 while six `.simulation-flow-node` elements were at y=1444..1599; the React Flow viewport transform was `matrix(0.623788, 0, 0, 0.623788, 231.318, 987.674)`. Using the visible Fit View control corrected the transform. Restored the desktop compact graph minimum height to 12rem; browser remeasurement is pending. | Pending current commit |

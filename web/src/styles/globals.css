@@ -495,7 +495,7 @@ button, a, [role="button"] { cursor: pointer; }
   .landing-hero__demo-plate .dijkstra-demo h2 { font-size: 1.1rem; }
   .landing-hero__demo-plate .demo-eyebrow { font-size: 0.64rem; }
   .landing-hero__demo-plate .dijkstra-demo__mode { font-size: 0.7rem; }
-  .landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 10.5rem; }
+  .landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 12rem; }
   .landing-hero__demo-plate .demo-status-table { padding: 0.35rem 0.55rem; }
   .landing-hero__demo-plate .demo-status-table table { font-size: 0.66rem; }
   .landing-hero__demo-plate .demo-status-table th,
