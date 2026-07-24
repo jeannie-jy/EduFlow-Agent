@@ -303,9 +303,13 @@ async def test_concurrent_same_token_refresh_has_one_winner(postgres_sessions, m
     from services import auth_service
 
     original_lock_user = auth_service._lock_user
+    lock_calls = 0
 
     async def gated_lock_user(session, user_id):
-        await gate.wait()
+        nonlocal lock_calls
+        lock_calls += 1
+        if lock_calls <= 2:
+            await gate.wait()
         return await original_lock_user(session, user_id)
 
     monkeypatch.setattr(auth_service, "_lock_user", gated_lock_user)
@@ -326,6 +330,7 @@ async def test_concurrent_same_token_refresh_has_one_winner(postgres_sessions, m
     )
 
     assert gate.arrivals == 2
+    assert lock_calls >= 2
     assert sum(isinstance(item, AuthResult) for item in results) == 1
     assert sum(isinstance(item, InvalidRefreshToken) for item in results) == 1
 

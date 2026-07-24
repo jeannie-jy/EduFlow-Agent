@@ -445,8 +445,19 @@ async def test_refresh_rejects_inactive_user(
 
 @pytest.mark.asyncio
 async def test_refresh_replay_revokes_entire_session_family(
-    db_session: AsyncSession, registered_auth
+    db_session: AsyncSession, registered_auth, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from services import auth_service
+
+    original_lock_user = auth_service._lock_user
+    lock_calls = 0
+
+    async def counting_lock_user(session: AsyncSession, user_id: uuid.UUID):
+        nonlocal lock_calls
+        lock_calls += 1
+        return await original_lock_user(session, user_id)
+
+    monkeypatch.setattr(auth_service, "_lock_user", counting_lock_user)
     await rotate_refresh_token(db_session, registered_auth.refresh_token, "pytest-refresh")
     old_session_id = decode_access_token(registered_auth.access_token.token).session_id
     old_record = await db_session.get(AuthSession, old_session_id)
@@ -462,6 +473,7 @@ async def test_refresh_replay_revokes_entire_session_family(
     ).all()
     assert len(family_sessions) == 2
     assert all(auth_session.revoked_at is not None for auth_session in family_sessions)
+    assert lock_calls == 3
 
 
 @pytest.mark.asyncio
