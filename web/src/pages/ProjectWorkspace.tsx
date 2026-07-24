@@ -64,6 +64,7 @@ import {
   NetworkError,
 } from "@/services";
 import { VisualObjectRenderer } from "@/components/workbench/visual-objects/VisualObjectRenderer";
+import type { DSLVisualObject } from "@/components/workbench/simulation-model";
 
 // ============================================================================
 // Tab 类型
@@ -85,6 +86,22 @@ const STATUS_DEFAULT_TAB: Record<string, ProjectTab> = {
   reviewing: "play",
   done: "play",
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isVisualObject(value: unknown): value is DSLVisualObject {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.type === "string"
+  );
+}
+
+function getString(value: unknown, fallback: string) {
+  return typeof value === "string" ? value : fallback;
+}
 
 // ============================================================================
 // 容器
@@ -504,11 +521,26 @@ function PlayTabContent({ projectId, project }: {
     }).catch(() => {});
   }, [projectId]);
 
-  const dsl = project?.dsl as Record<string, unknown> | undefined;
-  const dslFrames = (dsl?.frames as Record<string, unknown>[]) ?? frames;
+  const dslFrames = Array.isArray(project?.dsl?.frames)
+    ? project.dsl.frames.filter(isRecord)
+    : [];
   const displayFrames = dslFrames.length > 0 ? dslFrames : frames;
-  const currentFrame = displayFrames[selectedFrameIdx] as Record<string, unknown> | undefined;
-  const visualObjects = (currentFrame?.visual_objects as Record<string, unknown>[]) ?? [];
+  const currentFrame = displayFrames[selectedFrameIdx];
+  const currentFrameId = getString(
+    currentFrame?.frame_id,
+    `f_${selectedFrameIdx + 1}`,
+  );
+  const currentFrameTitle = getString(currentFrame?.title, "未命名帧");
+  const currentFrameNarration = getString(currentFrame?.narration, "");
+  const visualObjects = Array.isArray(currentFrame?.visual_objects)
+    ? currentFrame.visual_objects.filter(isVisualObject)
+    : [];
+  const stateSnapshot = isRecord(currentFrame?.state_snapshot)
+    ? currentFrame.state_snapshot
+    : null;
+  const animations = Array.isArray(currentFrame?.animations)
+    ? currentFrame.animations.filter(isRecord)
+    : [];
 
   if (displayFrames.length === 0) {
     return (
@@ -527,20 +559,25 @@ function PlayTabContent({ projectId, project }: {
         <div className="p-3 border-b">
           <span className="text-xs font-semibold text-muted-foreground uppercase">{displayFrames.length} 帧</span>
         </div>
-        {displayFrames.map((frame: any, idx: number) => (
-          <button
-            key={frame.frame_id ?? idx}
-            onClick={() => setSelectedFrameIdx(idx)}
-            className={`w-full text-left px-3 py-2 text-sm transition-colors border-b border-border/50 ${
-              selectedFrameIdx === idx
-                ? "bg-primary/10 text-primary font-medium"
-                : "hover:bg-muted"
-            }`}
-          >
-            <span className="text-xs font-mono text-muted-foreground">{frame.frame_id ?? `f_${idx + 1}`}</span>
-            <p className="text-sm font-medium truncate mt-0.5">{frame.title ?? "未命名"}</p>
-          </button>
-        ))}
+        {displayFrames.map((item, idx) => {
+          const frameId = getString(item.frame_id, `f_${idx + 1}`);
+          const frameTitle = getString(item.title, "未命名");
+
+          return (
+            <button
+              key={frameId}
+              onClick={() => setSelectedFrameIdx(idx)}
+              className={`w-full text-left px-3 py-2 text-sm transition-colors border-b border-border/50 ${
+                selectedFrameIdx === idx
+                  ? "bg-primary/10 text-primary font-medium"
+                  : "hover:bg-muted"
+              }`}
+            >
+              <span className="text-xs font-mono text-muted-foreground">{frameId}</span>
+              <p className="text-sm font-medium truncate mt-0.5">{frameTitle}</p>
+            </button>
+          );
+        })}
       </aside>
 
       {/* 右侧帧内容 */}
@@ -551,9 +588,9 @@ function PlayTabContent({ projectId, project }: {
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-xs font-mono text-muted-foreground">
-                  {currentFrame.frame_id as string ?? `f_${selectedFrameIdx + 1}`} / {displayFrames.length}
+                  {currentFrameId} / {displayFrames.length}
                 </span>
-                <h3 className="text-lg font-bold mt-1">{currentFrame.title as string ?? "未命名帧"}</h3>
+                <h3 className="text-lg font-bold mt-1">{currentFrameTitle}</h3>
               </div>
               <div className="flex gap-1">
                 <Button
@@ -574,10 +611,10 @@ function PlayTabContent({ projectId, project }: {
             </div>
 
             {/* 讲解文本 */}
-            {currentFrame.narration && (
+            {currentFrameNarration && (
               <div className="rounded-xl border bg-muted/20 p-4">
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  {currentFrame.narration as string}
+                  {currentFrameNarration}
                 </p>
               </div>
             )}
@@ -587,10 +624,10 @@ function PlayTabContent({ projectId, project }: {
               <div className="rounded-xl border p-6">
                 <h4 className="text-sm font-semibold mb-4">可视化元素</h4>
                 <div className="flex flex-wrap gap-4">
-                  {visualObjects.map((vo, idx) => (
+                  {visualObjects.map((vo) => (
                     <VisualObjectRenderer
-                      key={(vo.id as string) ?? idx}
-                      object={vo as unknown as import("@/components/workbench/simulation-model").DSLVisualObject}
+                      key={vo.id}
+                      object={vo}
                     />
                   ))}
                 </div>
@@ -598,25 +635,25 @@ function PlayTabContent({ projectId, project }: {
             )}
 
             {/* 状态快照 */}
-            {currentFrame.state_snapshot && Object.keys(currentFrame.state_snapshot as object).length > 0 && (
+            {stateSnapshot && Object.keys(stateSnapshot).length > 0 && (
               <div className="rounded-xl border p-6">
                 <h4 className="text-sm font-semibold mb-3">状态快照</h4>
                 <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs font-mono">
-                  {JSON.stringify(currentFrame.state_snapshot, null, 2)}
+                  {JSON.stringify(stateSnapshot, null, 2)}
                 </pre>
               </div>
             )}
 
             {/* 动画列表 */}
-            {((currentFrame.animations as unknown[])?.length ?? 0) > 0 && (
+            {animations.length > 0 && (
               <div className="rounded-xl border p-6">
                 <h4 className="text-sm font-semibold mb-3">
-                  动画序列 ({(currentFrame.animations as unknown[])?.length})
+                  动画序列 ({animations.length})
                 </h4>
                 <div className="flex flex-wrap gap-1.5">
-                  {(currentFrame.animations as Record<string, unknown>[])?.map((anim, idx) => (
+                  {animations.map((anim, idx) => (
                     <span key={idx} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-mono">
-                      {anim.type as string ?? "?"} → {anim.target as string ?? "?"}
+                      {getString(anim.type, "?")} → {getString(anim.target, "?")}
                     </span>
                   ))}
                 </div>

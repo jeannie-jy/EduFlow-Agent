@@ -60,12 +60,6 @@ export function SimulationPreview({
   const speedMs = SPEED_OPTIONS[playSpeed]?.value ?? 1400;
   const totalFrames = simulationFrames.length;
 
-  // 是否需要等待交互（当前帧有 interactionHooks）
-  const needsInteraction = useMemo(() => {
-    const current = simulationFrames[Math.min(totalFrames - 1, Math.max(0, frame - 1))];
-    return (current?.interactionHooks?.length ?? 0) > 0;
-  }, [frame, totalFrames]);
-
   // ── 状态转换 ──────────────────────────────────────────
   const transitionTo = useCallback(
     (next: PlayState) => {
@@ -410,7 +404,10 @@ export function SimulationPreview({
                 min={0}
                 max={SPEED_OPTIONS.length - 1}
                 step={1}
-                onValueChange={([v]) => v != null && setPlaySpeed(v)}
+                onValueChange={(value) => {
+                  const nextSpeed = typeof value === "number" ? value : value[0];
+                  if (nextSpeed != null) setPlaySpeed(nextSpeed);
+                }}
                 aria-label="播放速度调节"
               />
               <p className="mt-1.5 text-xs text-muted-foreground">

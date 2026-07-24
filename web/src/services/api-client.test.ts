@@ -170,7 +170,10 @@ describe("api.post", () => {
   it("handles 201 created response", async () => {
     vi.stubGlobal("fetch", mockFetchResponse(201, { id: "uuid", created_at: "2024-01-01" }));
 
-    const result = await api.post("/projects", { title: "test" });
+    const result = await api.post<{ id: string; created_at: string }>(
+      "/projects",
+      { title: "test" },
+    );
     expect(result.id).toBe("uuid");
   });
 
@@ -286,7 +289,11 @@ describe("api.upload", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const file = new File(["test content"], "test.pdf", { type: "application/pdf" });
-    const result = await api.upload("/materials/upload", file);
+    const result = await api.upload<{
+      id: string;
+      filename: string;
+      size_bytes: number;
+    }>("/materials/upload", file);
 
     expect(result.filename).toBe("test.pdf");
 
