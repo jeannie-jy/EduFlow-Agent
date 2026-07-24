@@ -53,6 +53,24 @@ describe("DijkstraDemo", () => {
     expect(screen.getByText("自动演示")).toBeVisible();
   });
 
+  it("keeps keyboard focus on the primary playback control as its state changes", async () => {
+    const user = userEvent.setup();
+    renderPage(<DijkstraDemo />);
+
+    const primaryControl = screen.getByRole("button", { name: "观看 60 秒演示" });
+    primaryControl.focus();
+    await user.click(primaryControl);
+
+    const pauseControl = screen.getByRole("button", { name: "暂停演示" });
+    expect(pauseControl).toBe(primaryControl);
+    expect(pauseControl).toHaveFocus();
+
+    await user.click(pauseControl);
+    const continueControl = screen.getByRole("button", { name: "继续演示" });
+    expect(continueControl).toBe(primaryControl);
+    expect(continueControl).toHaveFocus();
+  });
+
   it("keeps the graph, timeline, and narration in compact mode while hiding parameters", () => {
     renderPage(<DijkstraDemo compact />);
 

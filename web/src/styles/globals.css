@@ -368,10 +368,14 @@ button, a, [role="button"] { cursor: pointer; }
 .dijkstra-demo__stage {
   display: grid;
   grid-template-columns: minmax(0, 1.8fr) minmax(13rem, 0.85fr);
+  grid-template-areas:
+    "graph status"
+    "graph parameters";
   gap: 1rem;
 }
 
 .dijkstra-demo__graph {
+  grid-area: graph;
   min-height: 25rem;
   overflow: hidden;
 }
@@ -383,6 +387,7 @@ button, a, [role="button"] { cursor: pointer; }
 
 .demo-status-table {
   align-self: stretch;
+  grid-area: status;
 }
 
 .demo-status-table__heading h3,
@@ -415,7 +420,7 @@ button, a, [role="button"] { cursor: pointer; }
 }
 
 .demo-parameter-panel {
-  grid-column: 2;
+  grid-area: parameters;
 }
 
 .demo-parameter-panel__field + .demo-parameter-panel__field {
@@ -552,6 +557,7 @@ button, a, [role="button"] { cursor: pointer; }
 
 .dijkstra-demo--compact .dijkstra-demo__stage {
   grid-template-columns: minmax(0, 1.45fr) minmax(11.5rem, 0.75fr);
+  grid-template-areas: "graph status";
 }
 
 .dijkstra-demo--compact .dijkstra-demo__graph {
@@ -592,10 +598,16 @@ button, a, [role="button"] { cursor: pointer; }
   .dijkstra-demo__stage,
   .dijkstra-demo--compact .dijkstra-demo__stage {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "graph"
+      "status"
+      "parameters";
   }
 
-  .demo-parameter-panel {
-    grid-column: auto;
+  .dijkstra-demo--compact .dijkstra-demo__stage {
+    grid-template-areas:
+      "graph"
+      "status";
   }
 
   .dijkstra-demo__explanation {

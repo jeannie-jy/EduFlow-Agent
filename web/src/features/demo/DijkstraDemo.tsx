@@ -33,6 +33,14 @@ export function DijkstraDemo({ compact = false, autoFocusControls = false }: Dij
   const frame = scenario.frames[Math.min(state.frameIndex, scenario.frames.length - 1)];
   const controlRef = useRef<HTMLButtonElement>(null);
   const reduceMotion = useReducedMotion();
+  const primaryPlaybackControl =
+    state.mode === "autoplay"
+      ? { label: "暂停演示", onClick: pause, icon: <Pause data-icon="inline-start" /> }
+      : state.mode === "paused"
+        ? { label: "继续演示", onClick: play, icon: <Play data-icon="inline-start" /> }
+        : state.mode === "poster"
+          ? { label: "观看 60 秒演示", onClick: play, icon: <Play data-icon="inline-start" /> }
+          : null;
 
   useEffect(() => {
     if (autoFocusControls) controlRef.current?.focus();
@@ -50,7 +58,7 @@ export function DijkstraDemo({ compact = false, autoFocusControls = false }: Dij
 
       <div className="dijkstra-demo__stage">
         <div className="dijkstra-demo__graph stage-grid paper-surface">
-          <SimulationGraph frame={frame} edges={scenario.edges} compact={compact} />
+          <SimulationGraph frame={frame} edges={scenario.edges} compact={compact || undefined} />
         </div>
         <DemoStatusTable frame={frame} />
         {!compact && (
@@ -81,19 +89,9 @@ export function DijkstraDemo({ compact = false, autoFocusControls = false }: Dij
           {state.edgeWeight === 3 && <p role="status" className="dijkstra-demo__result">D 的最短距离变为 5</p>}
         </div>
         <div className="dijkstra-demo__controls" aria-label="演示播放控制">
-          {state.mode === "poster" && (
-            <Button ref={controlRef} type="button" onClick={play}>
-              <Play data-icon="inline-start" />观看 60 秒演示
-            </Button>
-          )}
-          {state.mode === "autoplay" && (
-            <Button ref={controlRef} type="button" onClick={pause}>
-              <Pause data-icon="inline-start" />暂停演示
-            </Button>
-          )}
-          {state.mode === "paused" && (
-            <Button ref={controlRef} type="button" onClick={play}>
-              <Play data-icon="inline-start" />继续演示
+          {primaryPlaybackControl && (
+            <Button ref={controlRef} type="button" onClick={primaryPlaybackControl.onClick}>
+              {primaryPlaybackControl.icon}{primaryPlaybackControl.label}
             </Button>
           )}
           {state.mode !== "poster" && (
