@@ -40,7 +40,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("关闭 checkpointer 异常: %s", exc)
 
-    # TODO: 关闭 DB 连接池、Redis 客户端
+    from db.redis import close_redis
+    await close_redis()
+
+    # TODO: 关闭 DB 连接池
     logger.info("EduFlow-Agent 已关闭")
 
 

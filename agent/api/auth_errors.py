@@ -64,6 +64,24 @@ def account_disabled() -> HTTPException:
     return auth_http_error(403, "ACCOUNT_DISABLED", "账号已被禁用")
 
 
-def auth_rate_limited() -> HTTPException:
+def auth_rate_limited(retry_after: int | None = None) -> HTTPException:
     """Return the stable authentication rate-limit error."""
-    return auth_http_error(429, "AUTH_RATE_LIMITED", "认证请求过于频繁，请稍后重试")
+    headers = None
+    if retry_after is not None:
+        headers = {"Retry-After": str(max(1, retry_after))}
+    return auth_http_error(
+        429,
+        "AUTH_RATE_LIMITED",
+        "认证请求过于频繁，请稍后重试",
+        headers,
+    )
+
+
+def auth_rate_limit_unavailable() -> HTTPException:
+    """Return the explicit fail-closed response for a Redis outage."""
+    return auth_http_error(
+        503,
+        "AUTH_RATE_LIMIT_UNAVAILABLE",
+        "认证限流服务暂不可用，请稍后重试",
+        {"Retry-After": "1"},
+    )

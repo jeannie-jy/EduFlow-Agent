@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     auth_refresh_cookie_name: str = "eduflow_refresh"
     auth_cookie_secure: bool = True
     auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    auth_trusted_proxy_ips: list[str] = []
     cors_allowed_origins: list[str] = ["http://localhost:5173"]
 
     @field_validator("auth_jwt_secret")

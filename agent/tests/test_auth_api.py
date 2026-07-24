@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import select
 
 from api.auth_errors import (
@@ -18,6 +20,47 @@ from api.auth_errors import (
 )
 from api.error_handlers import register_error_handlers
 from schema.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
+
+
+class FakeRedis:
+    """Small async Redis double for fixed-window rate-limit tests."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, int] = {}
+        self.expires_in: dict[str, int] = {}
+
+    async def eval(self, _script: str, _numkeys: int, key: str, window: int):
+        count = self.values.get(key, 0) + 1
+        self.values[key] = count
+        self.expires_in.setdefault(key, int(window))
+        return [count, self.expires_in[key]]
+
+    async def get(self, key: str) -> int | None:
+        return self.values.get(key)
+
+    async def ttl(self, key: str) -> int:
+        return self.expires_in.get(key, -2)
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.values
+        self.values.pop(key, None)
+        self.expires_in.pop(key, None)
+        return int(existed)
+
+
+class UnavailableRedis:
+    """Redis double that models a connection outage."""
+
+    async def eval(self, *_args, **_kwargs):
+        raise RedisConnectionError("Redis is unavailable")
+
+
+@pytest.fixture(autouse=True)
+def fake_redis(monkeypatch: pytest.MonkeyPatch) -> FakeRedis:
+    """Keep HTTP auth tests isolated from a real Redis service."""
+    redis = FakeRedis()
+    monkeypatch.setattr("api.auth.get_redis", lambda: redis, raising=False)
+    return redis
 
 
 async def _register(
@@ -341,6 +384,257 @@ async def test_logout_rejects_untrusted_origin(auth_api_client) -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_sixth_failed_login_is_limited_with_retry_after(fake_redis: FakeRedis) -> None:
+    from services.auth_rate_limit import (
+        AuthRateLimited,
+        check_login_limit,
+        record_login_failure,
+    )
+
+    for _ in range(5):
+        await check_login_limit(fake_redis, "198.51.100.10", "student@example.com")
+        await record_login_failure(fake_redis, "198.51.100.10", "student@example.com")
+
+    with pytest.raises(AuthRateLimited) as error:
+        await check_login_limit(fake_redis, "198.51.100.10", "student@example.com")
+
+    assert error.value.retry_after == 900
+
+
+@pytest.mark.asyncio
+async def test_successful_login_clears_its_failure_counter(fake_redis: FakeRedis) -> None:
+    from services.auth_rate_limit import (
+        clear_login_failures,
+        login_key,
+        record_login_failure,
+    )
+
+    client_ip = "198.51.100.10"
+    email = "student@example.com"
+    await record_login_failure(fake_redis, client_ip, email)
+    await clear_login_failures(fake_redis, client_ip, email)
+
+    assert login_key(client_ip, email) not in fake_redis.values
+
+
+@pytest.mark.asyncio
+async def test_sixth_registration_in_an_hour_is_limited(fake_redis: FakeRedis) -> None:
+    from services.auth_rate_limit import AuthRateLimited, check_registration_limit
+
+    for _ in range(5):
+        await check_registration_limit(fake_redis, "198.51.100.10")
+
+    with pytest.raises(AuthRateLimited) as error:
+        await check_registration_limit(fake_redis, "198.51.100.10")
+
+    assert error.value.retry_after == 3600
+
+
+@pytest.mark.asyncio
+async def test_thirty_first_refresh_in_a_minute_is_limited(fake_redis: FakeRedis) -> None:
+    from services.auth_rate_limit import AuthRateLimited, check_refresh_limit
+
+    for _ in range(30):
+        await check_refresh_limit(fake_redis, "refresh-session-key")
+
+    with pytest.raises(AuthRateLimited) as error:
+        await check_refresh_limit(fake_redis, "refresh-session-key")
+
+    assert error.value.retry_after == 60
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_keys_do_not_expose_normalized_email(fake_redis: FakeRedis) -> None:
+    from services.auth_rate_limit import login_key, record_login_failure
+
+    normalized_email = "student@example.com"
+    await record_login_failure(fake_redis, "198.51.100.10", normalized_email)
+    key = login_key("198.51.100.10", normalized_email)
+
+    assert normalized_email not in key
+    assert key in fake_redis.values
+
+
+@pytest.mark.asyncio
+async def test_login_route_limits_before_a_sixth_credential_check(
+    auth_api_client, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.auth_service import InvalidCredentials
+
+    calls = 0
+
+    async def always_fail(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise InvalidCredentials
+
+    monkeypatch.setattr("api.auth.authenticate_user", always_fail)
+    for _ in range(5):
+        response = await auth_api_client.client.post(
+            "/api/auth/login",
+            json={"email": "student@example.com", "password": "learning2026"},
+        )
+        assert response.status_code == 401
+
+    limited = await auth_api_client.client.post(
+        "/api/auth/login",
+        json={"email": "student@example.com", "password": "learning2026"},
+    )
+
+    assert calls == 5
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "AUTH_RATE_LIMITED"
+    assert limited.headers["retry-after"] == "900"
+
+
+@pytest.mark.asyncio
+async def test_registration_route_limits_before_the_sixth_service_call(
+    auth_api_client, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.auth_service import EmailAlreadyRegistered
+
+    calls = 0
+
+    async def always_fail(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise EmailAlreadyRegistered
+
+    monkeypatch.setattr("api.auth.register_user", always_fail)
+    for index in range(5):
+        response = await auth_api_client.client.post(
+            "/api/auth/register",
+            json={
+                "email": f"student{index}@example.com",
+                "nickname": "Student",
+                "password": "learning2026",
+            },
+        )
+        assert response.status_code == 409
+
+    limited = await auth_api_client.client.post(
+        "/api/auth/register",
+        json={
+            "email": "student6@example.com",
+            "nickname": "Student",
+            "password": "learning2026",
+        },
+    )
+
+    assert calls == 5
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "3600"
+
+
+@pytest.mark.asyncio
+async def test_refresh_route_uses_its_session_key_for_rate_limiting(
+    auth_api_client, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.auth_service import InvalidRefreshToken
+
+    calls = 0
+
+    async def always_fail(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise InvalidRefreshToken
+
+    monkeypatch.setattr("api.auth.rotate_refresh_token", always_fail)
+    for _ in range(30):
+        response = await auth_api_client.client.post(
+            "/api/auth/refresh",
+            headers={"Cookie": "eduflow_refresh=valid-session-key"},
+        )
+        assert response.status_code == 401
+
+    limited = await auth_api_client.client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": "eduflow_refresh=valid-session-key"},
+    )
+
+    assert calls == 30
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_returns_a_retryable_service_unavailable_error(
+    auth_api_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("api.auth.get_redis", lambda: UnavailableRedis())
+
+    response = await auth_api_client.client.post(
+        "/api/auth/register",
+        json={
+            "email": "student@example.com",
+            "nickname": "Student",
+            "password": "learning2026",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "AUTH_RATE_LIMIT_UNAVAILABLE"
+    assert response.headers["retry-after"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_redis_lifecycle_reuses_and_closes_the_shared_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from db import redis as redis_db
+
+    class CloseableRedis:
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    client = CloseableRedis()
+    redis_db._redis = None
+    monkeypatch.setattr(redis_db, "get_settings", lambda: SimpleNamespace(redis_url="redis://test"))
+    monkeypatch.setattr(redis_db.Redis, "from_url", lambda *_args, **_kwargs: client)
+
+    assert redis_db.get_redis() is client
+    assert redis_db.get_redis() is client
+    await redis_db.close_redis()
+
+    assert client.closed is True
+    assert redis_db._redis is None
+
+
+def test_client_ip_ignores_forwarded_header_unless_peer_is_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from starlette.requests import Request
+
+    from api.auth import _client_ip
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "scheme": "https",
+        "path": "/api/auth/login",
+        "raw_path": b"/api/auth/login",
+        "query_string": b"",
+        "headers": [(b"x-forwarded-for", b"203.0.113.10, 10.0.0.1")],
+        "client": ("10.0.0.1", 12345),
+        "server": ("testserver", 443),
+    }
+    request = Request(scope)
+
+    monkeypatch.setattr(
+        "api.auth.get_settings", lambda: SimpleNamespace(auth_trusted_proxy_ips=[])
+    )
+    assert _client_ip(request) == "10.0.0.1"
+
+    monkeypatch.setattr(
+        "api.auth.get_settings",
+        lambda: SimpleNamespace(auth_trusted_proxy_ips=["10.0.0.1"]),
+    )
+    assert _client_ip(request) == "203.0.113.10"
 
 
 @pytest.fixture

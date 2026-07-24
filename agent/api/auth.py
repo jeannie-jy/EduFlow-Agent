@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth_errors import (
+    auth_rate_limit_unavailable,
+    auth_rate_limited,
     email_registered,
     invalid_credentials,
     refresh_token_invalid,
@@ -16,7 +18,18 @@ from api.auth_errors import (
 from api.deps import CurrentUser
 from config import get_settings
 from db.database import get_session
+from db.redis import get_redis
 from schema.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
+from security.passwords import normalize_email
+from services.auth_rate_limit import (
+    AuthRateLimitUnavailable,
+    AuthRateLimited,
+    check_login_limit,
+    check_refresh_limit,
+    check_registration_limit,
+    clear_login_failures,
+    record_login_failure,
+)
 from services.auth_service import (
     EmailAlreadyRegistered,
     InvalidCredentials,
@@ -88,6 +101,24 @@ def _user_agent(request: Request) -> str | None:
     return user_agent[:500] if user_agent else None
 
 
+def _client_ip(request: Request) -> str:
+    """Use proxy forwarding headers only from explicitly trusted peers."""
+    peer_ip = request.client.host if request.client is not None else "unknown"
+    if peer_ip not in get_settings().auth_trusted_proxy_ips:
+        return peer_ip
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if not forwarded_for:
+        return peer_ip
+    candidate = forwarded_for.split(",", 1)[0].strip()
+    return candidate or peer_ip
+
+
+def _raise_rate_limit_error(error: Exception) -> None:
+    if isinstance(error, AuthRateLimited):
+        raise auth_rate_limited(error.retry_after)
+    raise auth_rate_limit_unavailable()
+
+
 @router.post("/register", response_model=AuthResponse, status_code=201)
 async def register(
     payload: RegisterRequest,
@@ -96,6 +127,10 @@ async def register(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     """Create an account and issue its initial access/refresh token pair."""
+    try:
+        await check_registration_limit(get_redis(), _client_ip(request))
+    except (AuthRateLimited, AuthRateLimitUnavailable) as error:
+        _raise_rate_limit_error(error)
     try:
         result = await register_user(session, payload, _user_agent(request))
     except EmailAlreadyRegistered:
@@ -112,10 +147,25 @@ async def login(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
     """Verify credentials and issue a new access/refresh token pair."""
+    client_ip = _client_ip(request)
+    normalized_email = normalize_email(str(payload.email))
+    redis = get_redis()
+    try:
+        await check_login_limit(redis, client_ip, normalized_email)
+    except (AuthRateLimited, AuthRateLimitUnavailable) as error:
+        _raise_rate_limit_error(error)
     try:
         result = await authenticate_user(session, payload, _user_agent(request))
     except InvalidCredentials:
+        try:
+            await record_login_failure(redis, client_ip, normalized_email)
+        except AuthRateLimitUnavailable as error:
+            _raise_rate_limit_error(error)
         raise invalid_credentials()
+    try:
+        await clear_login_failures(redis, client_ip, normalized_email)
+    except AuthRateLimitUnavailable as error:
+        _raise_rate_limit_error(error)
     set_refresh_cookie(response, result.refresh_token)
     return _auth_response(result)
 
@@ -132,6 +182,10 @@ async def refresh(
     raw_token = request.cookies.get(settings.auth_refresh_cookie_name)
     if not raw_token:
         return _invalid_refresh_response()
+    try:
+        await check_refresh_limit(get_redis(), raw_token)
+    except (AuthRateLimited, AuthRateLimitUnavailable) as error:
+        _raise_rate_limit_error(error)
     try:
         result = await rotate_refresh_token(session, raw_token, _user_agent(request))
     except InvalidRefreshToken:
