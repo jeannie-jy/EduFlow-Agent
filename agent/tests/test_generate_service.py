@@ -526,6 +526,9 @@ class TestHITLInterruptResume:
         mock_db_session.__aexit__ = AsyncMock(return_value=None)
         mock_db_session.get = AsyncMock(return_value=mock_project)
         mock_db_session.add = MagicMock()
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar = MagicMock(return_value=0)
+        mock_db_session.execute = AsyncMock(return_value=mock_execute_result)
         mock_db_session.commit = AsyncMock()
         mock_db_session.flush = AsyncMock()
 
@@ -542,6 +545,7 @@ class TestHITLInterruptResume:
 
         assert any(e["event"] == "done" for e in events)
         assert not any(e["event"] == "waiting_approval" for e in events)
+        mock_db_session.execute.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_resume_reject_returns_immediately(self):

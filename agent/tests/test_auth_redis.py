@@ -25,6 +25,21 @@ from services.auth_rate_limit import (
 pytestmark = pytest.mark.redis
 
 
+class _StartGate:
+    """Release every worker together so the Lua increment contest is real."""
+
+    def __init__(self, participants: int) -> None:
+        self.participants = participants
+        self.arrivals = 0
+        self._released = asyncio.Event()
+
+    async def wait(self) -> None:
+        self.arrivals += 1
+        if self.arrivals == self.participants:
+            self._released.set()
+        await asyncio.wait_for(self._released.wait(), timeout=5)
+
+
 @pytest_asyncio.fixture
 async def redis_client():
     """Use the real isolated CI Redis service, never a behavioral double."""
@@ -48,10 +63,17 @@ async def test_real_redis_counter_expiry_and_atomic_concurrency(redis_client: Re
     assert await redis_client.get(expiry_key) is None
 
     client_ip = "198.51.100.10"
+    gate = _StartGate(20)
+
+    async def increment() -> None:
+        await gate.wait()
+        await check_registration_limit(redis_client, client_ip)
+
     results = await asyncio.gather(
-        *(check_registration_limit(redis_client, client_ip) for _ in range(20)),
+        *(increment() for _ in range(20)),
         return_exceptions=True,
     )
+    assert gate.arrivals == 20
     assert sum(item is None for item in results) == 5
     assert sum(isinstance(item, AuthRateLimited) for item in results) == 15
     ttl = await redis_client.ttl(_registration_key(client_ip))
