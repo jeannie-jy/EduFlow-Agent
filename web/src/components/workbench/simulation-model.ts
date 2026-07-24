@@ -167,6 +167,15 @@ export type SimulationFrame = {
   interactionHooks?: { type: string; param: string; [key: string]: unknown }[];
 };
 
+export type DijkstraScenario = {
+  edges: GraphEdgeSpec[];
+  frames: SimulationFrame[];
+};
+
+export type DijkstraScenarioOptions = {
+  edgeOverrides?: Partial<Record<string, number>>;
+};
+
 export const graphNodes: GraphNodeSpec[] = [
   { id: "A", position: { x: 70, y: 250 } },
   { id: "B", position: { x: 340, y: 70 } },
@@ -209,18 +218,18 @@ const createPredecessors = (): Record<GraphNodeId, GraphNodeId | null> => ({
 const formatDistance = (distance: number) =>
   Number.isFinite(distance) ? String(distance) : "∞";
 
-const buildAdjacency = () => {
+const buildAdjacency = (edges: GraphEdgeSpec[]) => {
   const adjacency = new Map<GraphNodeId, Array<{ edge: GraphEdgeSpec; neighbor: GraphNodeId }>>();
   graphNodeIds.forEach((node) => adjacency.set(node, []));
-  graphEdges.forEach((edge) => {
+  edges.forEach((edge) => {
     adjacency.get(edge.source)?.push({ edge, neighbor: edge.target });
     adjacency.get(edge.target)?.push({ edge, neighbor: edge.source });
   });
   return adjacency;
 };
 
-export function buildDijkstraFrames(): SimulationFrame[] {
-  const adjacency = buildAdjacency();
+function buildFramesFromEdges(edges: GraphEdgeSpec[]): SimulationFrame[] {
+  const adjacency = buildAdjacency(edges);
   const distances = createDistances();
   const predecessors = createPredecessors();
   const settled = new Set<GraphNodeId>();
@@ -304,6 +313,21 @@ export function buildDijkstraFrames(): SimulationFrame[] {
   }
 
   return frames;
+}
+
+export function buildDijkstraScenario(
+  options: DijkstraScenarioOptions = {},
+): DijkstraScenario {
+  const edges = graphEdges.map((edge) => ({
+    ...edge,
+    weight: options.edgeOverrides?.[edge.id] ?? edge.weight,
+  }));
+
+  return { edges, frames: buildFramesFromEdges(edges) };
+}
+
+export function buildDijkstraFrames(): SimulationFrame[] {
+  return buildDijkstraScenario().frames;
 }
 
 export const simulationFrames = buildDijkstraFrames();
