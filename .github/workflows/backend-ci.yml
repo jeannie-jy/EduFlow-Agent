@@ -19,7 +19,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://agent:changeme@localhost:5432/eduflow_test
       REDIS_URL: redis://localhost:6379/0
-      AUTH_JWT_SECRET: ci-only-secret-with-at-least-sixty-four-characters-000000000000
+      AUTH_JWT_SECRET: ci-only-secret-with-at-least-sixty-four-characters-0000000000000
       AUTH_COOKIE_SECURE: "false"
       PYTHONWARNINGS: error
     services:
