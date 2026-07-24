@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -78,6 +79,7 @@ async def client():
     """
     from main import app
     from db.database import get_session, get_readonly_session
+    from security.tokens import create_access_token
 
     mock_session = _make_session()
 
@@ -100,11 +102,15 @@ async def client():
         interaction_hooks=[], quality_status="ok", is_locked=False,
         updated_at=None,
     )
+    user_id = uuid.uuid4()
+    mock_user = _MockRow(id=user_id, is_active=True)
 
     async def _mock_get(model_cls, ident, **kw):
         # 特殊 UUID 用于 404 测试
         if str(ident) == "00000000-0000-0000-0000-000000000000":
             return None
+        if model_cls.__name__ == "User":
+            return mock_user
         return mock_project if "Project" in str(model_cls) else mock_frame
 
     mock_session.get = _mock_get
@@ -113,7 +119,12 @@ async def client():
     app.dependency_overrides[get_readonly_session] = lambda: mock_session
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    access_token = create_access_token(user_id, uuid.uuid4())
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {access_token.token}"},
+    ) as ac:
         yield ac
 
     app.dependency_overrides.clear()
