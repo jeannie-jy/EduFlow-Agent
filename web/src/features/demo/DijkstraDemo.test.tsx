@@ -90,6 +90,32 @@ describe("DijkstraDemo", () => {
     expect(screen.getByRole("button", { name: "跳到第 14 帧" })).toHaveAttribute("aria-current", "step");
   });
 
+  it("leaves body Space untouched under reduced motion while preserving ArrowRight stepping", () => {
+    window.matchMedia = createReducedMotionMatchMedia(true);
+    renderPage(<DijkstraDemo />);
+
+    const spaceEvent = new KeyboardEvent("keydown", {
+      key: " ",
+      code: "Space",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(document.body, spaceEvent);
+
+    expect(spaceEvent.defaultPrevented).toBe(false);
+    expect(screen.getByText("准备体验")).toBeVisible();
+
+    const arrowEvent = new KeyboardEvent("keydown", {
+      key: "ArrowRight",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(document.body, arrowEvent);
+
+    expect(arrowEvent.defaultPrevented).toBe(true);
+    expect(screen.getByRole("button", { name: "跳到第 2 帧" })).toHaveAttribute("aria-current", "step");
+  });
+
   it("immediately stops autoplay when native reduced motion changes", () => {
     vi.useFakeTimers();
     const matchMedia = createReducedMotionMatchMediaController();

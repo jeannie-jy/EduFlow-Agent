@@ -93,6 +93,8 @@ export function DijkstraDemo({ compact = false }: DijkstraDemoProps) {
       }
 
       if (event.key === " " || event.code === "Space") {
+        if (prefersReducedMotion) return;
+
         if (state.mode === "autoplay") {
           event.preventDefault();
           pause();
@@ -119,7 +121,7 @@ export function DijkstraDemo({ compact = false }: DijkstraDemoProps) {
 
     document.addEventListener("keydown", handlePlaybackKeyboard);
     return () => document.removeEventListener("keydown", handlePlaybackKeyboard);
-  }, [goToFrame, pause, play, replay, scenario.frames.length, state.frameIndex, state.mode]);
+  }, [goToFrame, pause, play, prefersReducedMotion, replay, scenario.frames.length, state.frameIndex, state.mode]);
 
   return (
     <section ref={demoRef} className={cn("dijkstra-demo", compact && "dijkstra-demo--compact")} aria-label="Dijkstra 最短路径互动演示">
@@ -133,7 +135,12 @@ export function DijkstraDemo({ compact = false }: DijkstraDemoProps) {
 
       <div className="dijkstra-demo__stage">
         <div className="dijkstra-demo__graph stage-grid paper-surface">
-          <SimulationGraph frame={frame} edges={scenario.edges} compact={compact || undefined} />
+          <SimulationGraph
+            frame={frame}
+            edges={scenario.edges}
+            compact={compact || undefined}
+            panActivationKeyCode={prefersReducedMotion ? null : undefined}
+          />
         </div>
         <DemoStatusTable frame={frame} />
         {!compact && (

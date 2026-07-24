@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import { demoReducer } from "./demo-reducer";
 import { initialDemoState, type DemoState } from "./demo-types";
@@ -37,6 +37,7 @@ export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
   const prefersReducedMotion = nativeReducedMotion.available
     ? nativeReducedMotion.matches
     : Boolean(reduceMotion);
+  const pause = useCallback(() => dispatch({ type: "PAUSE" }), []);
 
   useEffect(() => {
     const mediaQuery = getReducedMotionMediaQuery();
@@ -82,7 +83,7 @@ export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
     play: () => {
       if (!prefersReducedMotion) dispatch({ type: "PLAY" });
     },
-    pause: () => dispatch({ type: "PAUSE" }),
+    pause,
     replay: () => {
       if (!prefersReducedMotion) dispatch({ type: "REPLAY" });
     },

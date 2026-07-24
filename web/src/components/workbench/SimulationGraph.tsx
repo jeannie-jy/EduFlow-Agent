@@ -66,12 +66,14 @@ type SimulationGraphProps = {
   frame: SimulationFrame;
   edges?: GraphEdgeSpec[];
   compact?: boolean;
+  panActivationKeyCode?: string | null;
 };
 
 export function SimulationGraph({
   frame,
   edges: edgeSpecs = graphEdges,
   compact: compactOverride,
+  panActivationKeyCode,
 }: SimulationGraphProps) {
   const [viewportCompact, setViewportCompact] = useState(() => window.matchMedia("(max-width: 639px)").matches);
   const compact = compactOverride ?? viewportCompact;
@@ -208,6 +210,7 @@ export function SimulationGraph({
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
+          panActivationKeyCode={panActivationKeyCode}
           panOnScroll
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}
