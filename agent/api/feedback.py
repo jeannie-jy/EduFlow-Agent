@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session
 from schema.project import FeedbackRequest
-from .deps import parse_project_id, safe_project_uuid
+from .deps import CurrentUser, safe_project_uuid
+from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +26,17 @@ router = APIRouter(prefix="/projects", tags=["feedback"])
 @router.get("/{project_id}/feedback")
 async def list_feedback(
     project_id: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """查询项目的反馈列表。"""
-    from db.models import Feedback, Project as ProjectModel
+    from db.models import Feedback
 
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(session, project_id, current_user.id)
 
     query = (
         select(Feedback)
-        .where(Feedback.project_id == parse_project_id(project_id))
+        .where(Feedback.project_id == project.id)
         .order_by(Feedback.created_at.desc())
     )
     result = await session.execute(query)
@@ -62,6 +62,7 @@ async def list_feedback(
 async def submit_feedback(
     project_id: str,
     body: FeedbackRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """提交用户反馈，并触发反思修订。
@@ -71,12 +72,12 @@ async def submit_feedback(
     - correction: 纠错，关联到具体帧，触发局部重生成
     - suggestion: 建议，记录但不自动触发修订
     """
-    from db.models import Feedback, Project as ProjectModel
+    from db.models import Feedback
 
-    pid = parse_project_id(project_id)
-    project = await session.get(ProjectModel, pid)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
+    pid = project.id
 
     # 持久化反馈（safe_project_uuid 避免非法 UUID → 500）
     feedback = Feedback(

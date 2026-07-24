@@ -24,6 +24,9 @@ class AuthenticatedClient:
     async def delete(self, path: str):
         return await self.client.delete(path, headers=self.headers)
 
+    async def put(self, path: str, **kwargs):
+        return await self.client.put(path, headers=self.headers, **kwargs)
+
     async def post(self, path: str, **kwargs):
         return await self.client.post(path, headers=self.headers, **kwargs)
 
@@ -155,6 +158,156 @@ async def test_foreign_project_delete_is_indistinguishable_from_missing_project(
 
     assert foreign.status_code == missing.status_code == 404
     assert foreign.json() == missing.json()
+
+
+@pytest_asyncio.fixture
+async def owned_business_resources(auth_api_client, user_a, tmp_path):
+    """Create every nested resource needed to prove B cannot enumerate A's data."""
+    from db.models import ExportJobModel, Feedback, Frame, ParameterModel, Project, ProjectVersion
+
+    project_id = uuid4()
+    version_id = uuid4()
+    job_id = uuid4()
+    artifact = tmp_path / "owner-a-private.py"
+    artifact.write_text("private export", encoding="utf-8")
+    project = Project(
+        id=project_id,
+        owner_id=user_a["id"],
+        title="A's private project",
+        audience="undergraduate_cs",
+        difficulty="intermediate",
+        status="draft",
+        dsl_snapshot={
+            "frames": [{"frame_id": "f_001"}],
+            "parameters": [{"key": "speed", "label": "Speed"}],
+        },
+    )
+    async with auth_api_client.session_factory() as session:
+        session.add_all(
+            [
+                project,
+                Frame(
+                    id=uuid4(),
+                    project_id=project_id,
+                    version=1,
+                    frame_id="f_001",
+                    order_index=1,
+                    title="Private frame",
+                    quality_status="pending",
+                    is_locked=False,
+                ),
+                ParameterModel(
+                    id=uuid4(),
+                    project_id=project_id,
+                    key="speed",
+                    label="Speed",
+                    param_type="number",
+                    default_value={"value": 1},
+                    current_value={"value": 1},
+                ),
+                Feedback(
+                    id=uuid4(),
+                    project_id=project_id,
+                    type="suggestion",
+                    content="Private feedback",
+                ),
+                ProjectVersion(
+                    id=version_id,
+                    project_id=project_id,
+                    version=1,
+                    dsl_snapshot={"frames": [{"frame_id": "f_001"}]},
+                    change_summary="Private version",
+                ),
+                ExportJobModel(
+                    id=job_id,
+                    project_id=project_id,
+                    target="manim_video",
+                    status="completed",
+                    config={},
+                ),
+            ]
+        )
+        await session.commit()
+    return {
+        "project_id": project_id,
+        "version_id": version_id,
+        "job_id": job_id,
+        "artifact": artifact,
+    }
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_access_any_foreign_business_project_route(
+    client_for_user_b,
+    owned_business_resources,
+):
+    """Every business API resolves a project through the authenticated owner."""
+    project_id = owned_business_resources["project_id"]
+    version_id = owned_business_resources["version_id"]
+    requests = [
+        ("get", f"/api/projects/{project_id}/frames", {}),
+        ("put", f"/api/projects/{project_id}/frames/f_001", {"json": {"title": "stolen"}}),
+        ("post", f"/api/projects/{project_id}/frames/f_001/lock", {"json": {"is_locked": True}}),
+        ("get", f"/api/projects/{project_id}/parameters", {}),
+        ("post", f"/api/projects/{project_id}/recompute", {"json": {"changed_params": {"speed": 2}}}),
+        ("get", f"/api/projects/{project_id}/feedback", {}),
+        ("post", f"/api/projects/{project_id}/feedback", {"json": {"type": "suggestion", "content": "stolen"}}),
+        ("post", f"/api/projects/{project_id}/versions", {"json": {"change_summary": "stolen"}}),
+        ("get", f"/api/projects/{project_id}/versions", {}),
+        ("get", f"/api/projects/{project_id}/versions/{version_id}", {}),
+        ("post", f"/api/projects/{project_id}/versions/{version_id}/restore", {}),
+        ("post", f"/api/projects/{project_id}/generate", {"json": {"action": "full"}}),
+        ("get", f"/api/projects/{project_id}/generate/stream", {}),
+        ("get", f"/api/projects/{project_id}/generate/resume/stream", {}),
+        ("post", f"/api/projects/{project_id}/generate/approve", {}),
+        ("post", f"/api/projects/{project_id}/generate/reject", {"json": {"feedback": "stolen"}}),
+        ("post", f"/api/projects/{project_id}/regenerate", {"json": {"scope": {"type": "from_frame"}}}),
+        ("get", f"/api/projects/{project_id}/generate/regenerate/stream", {}),
+        ("post", f"/api/projects/{project_id}/export/manim", {"json": {}}),
+    ]
+
+    for method, path, kwargs in requests:
+        response = await getattr(client_for_user_b, method)(path, **kwargs)
+        assert response.status_code == 404, f"{method.upper()} {path}: {response.text}"
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_access_foreign_export_status_or_download(
+    client_for_user_b,
+    owned_business_resources,
+    tmp_path,
+):
+    """Export-job lookup joins its project, before Redis or filesystem access."""
+    from config import get_settings
+
+    job_id = owned_business_resources["job_id"]
+    artifact = owned_business_resources["artifact"]
+    export_root = artifact.parent
+    export_dir = export_root / str(job_id)
+    export_dir.mkdir()
+    moved_artifact = export_dir / artifact.name
+    artifact.rename(moved_artifact)
+    settings = get_settings().model_copy(update={"export_dir": export_root})
+
+    with patch("api.export.get_settings", return_value=settings):
+        status = await client_for_user_b.get(f"/api/export/{job_id}")
+        download = await client_for_user_b.get(
+            f"/api/export/{job_id}/download/{moved_artifact.name}"
+        )
+
+    assert status.status_code == 404
+    assert download.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_knowledge_endpoints_require_authentication(auth_api_client):
+    search = await auth_api_client.client.post(
+        "/api/knowledge/search", json={"query": "bubble sort"}
+    )
+    templates = await auth_api_client.client.get("/api/knowledge/templates")
+
+    assert search.status_code == 401
+    assert templates.status_code == 401
 
 
 @pytest.mark.asyncio

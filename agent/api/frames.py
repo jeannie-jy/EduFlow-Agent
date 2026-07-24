@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session, get_readonly_session
 from schema.project import FrameUpdateRequest, FrameLockRequest
-from .deps import parse_project_id
+from .deps import CurrentUser
+from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/projects", tags=["frames"])
 @router.get("/{project_id}/frames")
 async def list_frames(
     project_id: str,
+    current_user: CurrentUser,
     version: int = 1,
     session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
@@ -37,11 +39,13 @@ async def list_frames(
 
     from sqlalchemy import select
 
+    project = await get_owned_project(session, project_id, current_user.id)
+
     # DB frames 表优先（编辑真源，反映最新编辑/锁定状态）
     query = (
         select(FrameModel)
         .where(
-            FrameModel.project_id == parse_project_id(project_id),
+            FrameModel.project_id == project.id,
             FrameModel.version == version,
         )
         .order_by(FrameModel.order_index)
@@ -71,9 +75,7 @@ async def list_frames(
         }
 
     # 回退：DSL snapshot 中的帧数据（尚未落表的历史项目）
-    from db.models import Project as ProjectModel
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project and project.dsl_snapshot:
+    if project.dsl_snapshot:
         snap_frames = project.dsl_snapshot.get("frames", [])
         if snap_frames:
             for f in snap_frames:
@@ -89,6 +91,7 @@ async def update_frame(
     project_id: str,
     fid: str,
     body: FrameUpdateRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """编辑单帧内容。"""
@@ -96,9 +99,13 @@ async def update_frame(
 
     from sqlalchemy import select
 
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
+
     # 查找帧
     query = select(FrameModel).where(
-        FrameModel.project_id == parse_project_id(project_id),
+        FrameModel.project_id == project.id,
         FrameModel.frame_id == fid,
     )
     result = await session.execute(query)
@@ -118,7 +125,7 @@ async def update_frame(
     await session.flush()
 
     # 同步回 dsl_snapshot['frames']，保证「推演/导出」读到的 DSL 与编辑一致
-    await _sync_frame_into_snapshot(session, project_id, fid, updates)
+    await _sync_frame_into_snapshot(session, project, fid, updates)
 
     logger.info("帧编辑: project=%s | frame=%s", project_id, fid)
 
@@ -133,6 +140,7 @@ async def lock_frame(
     project_id: str,
     fid: str,
     body: FrameLockRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """锁定或解锁帧。"""
@@ -140,8 +148,12 @@ async def lock_frame(
 
     from sqlalchemy import select
 
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
+
     query = select(FrameModel).where(
-        FrameModel.project_id == parse_project_id(project_id),
+        FrameModel.project_id == project.id,
         FrameModel.frame_id == fid,
     )
     result = await session.execute(query)
@@ -154,22 +166,19 @@ async def lock_frame(
     await session.flush()
 
     # 同步锁定状态到 dsl_snapshot
-    await _sync_frame_into_snapshot(session, project_id, fid, {"is_locked": body.is_locked})
+    await _sync_frame_into_snapshot(session, project, fid, {"is_locked": body.is_locked})
 
     return {"id": str(frame.id), "is_locked": frame.is_locked}
 
 
 async def _sync_frame_into_snapshot(
     session: AsyncSession,
-    project_id: str,
+    project,
     frame_id: str,
     fields: dict,
 ) -> None:
     """将单帧的字段变更同步回 project.dsl_snapshot['frames']（整体重赋值触发 JSONB 变更）。"""
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None or not project.dsl_snapshot:
+    if not project.dsl_snapshot:
         return
 
     snap = dict(project.dsl_snapshot)

@@ -18,7 +18,8 @@ from sse_starlette.sse import EventSourceResponse
 from db.database import get_session
 from services.generate_service import run_generation_stream, resume_generation_stream, run_regenerate_stream
 from schema.project import GenerateRequest, RegenerateRequest, RejectPlanRequest, ApprovePlanResponse
-from .deps import parse_project_id
+from .deps import CurrentUser
+from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +30,13 @@ router = APIRouter(prefix="/projects", tags=["generate"])
 async def start_generation(
     project_id: str,
     body: GenerateRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """启动生成流程。返回 SSE 流地址。"""
-    from db.models import Project as ProjectModel
-
-    # 验证项目存在
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
 
     # 获取输入内容
     input_content = ""
@@ -63,15 +62,11 @@ async def start_generation(
 async def generation_stream(
     project_id: str,
     request: Request,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ):
     """SSE 流式推送生成进度。"""
-    from db.models import Project as ProjectModel
-
-    # 获取项目信息
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(session, project_id, current_user.id)
 
     input_content = ""
     constraints = {}
@@ -120,6 +115,7 @@ async def generation_stream(
 async def generation_resume_stream(
     project_id: str,
     request: Request,
+    current_user: CurrentUser,
     decision: str = "approve",
     feedback: str = "",
     session: AsyncSession = Depends(get_session),
@@ -130,11 +126,7 @@ async def generation_resume_stream(
         decision: approve | reject
         feedback: 拒绝时的修改意见
     """
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    await get_owned_project(session, project_id, current_user.id)
 
     resume_value = (
         {"action": "reject", "feedback": feedback}
@@ -155,6 +147,7 @@ async def generation_resume_stream(
 async def regenerate_frames(
     project_id: str,
     body: RegenerateRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """局部重生成指定帧范围。
@@ -162,11 +155,7 @@ async def regenerate_frames(
     从 DB frames 表读取锁定帧、从 dsl_snapshot 读取已有规划/知识图谱，
     跳过 Planner+Knowledge，直接驱动 Coder→Quality→Reflection 循环。
     """
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    await get_owned_project(session, project_id, current_user.id, for_update=True)
 
     scope = body.scope
 
@@ -181,14 +170,11 @@ async def regenerate_frames(
 async def regenerate_stream(
     project_id: str,
     request: Request,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ):
     """局部重生成的 SSE 进度流（跳过 Planner+Knowledge，直接到 Coder）。"""
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    await get_owned_project(session, project_id, current_user.id)
 
     async def event_generator():
         async for sse_chunk in run_regenerate_stream(
@@ -205,17 +191,16 @@ async def regenerate_stream(
 @router.post("/{project_id}/generate/approve", status_code=200)
 async def approve_plan(
     project_id: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> ApprovePlanResponse:
     """批准教学计划，清除 pending_approval 并继续生成流程。
 
     前端调用此端点后，应重新连接 SSE stream 继续接收后续进度。
     """
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
 
     # 清除审批标记，更新状态（整体重赋值以触发 JSONB 变更检测）
     if project.dsl_snapshot:
@@ -236,17 +221,16 @@ async def approve_plan(
 async def reject_plan(
     project_id: str,
     body: RejectPlanRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> ApprovePlanResponse:
     """拒绝教学计划，携带修改意见重新规划。
 
     将用户反馈写入 project DSL snapshot，前端可重新触发生成流程。
     """
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
 
     # 记录拒绝反馈（整体重赋值以触发 JSONB 变更检测）
     if project.dsl_snapshot:

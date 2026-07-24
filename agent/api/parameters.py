@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session, get_readonly_session
 from schema.project import RecomputeRequest
-from .deps import parse_project_id
+from .deps import CurrentUser
+from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,14 @@ router = APIRouter(prefix="/projects", tags=["parameters"])
 @router.get("/{project_id}/parameters")
 async def list_parameters(
     project_id: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """获取项目的参数列表。"""
+    project = await get_owned_project(session, project_id, current_user.id)
+
     # 优先从 DSL snapshot 获取
-    from db.models import Project as ProjectModel
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project and project.dsl_snapshot:
+    if project.dsl_snapshot:
         params = project.dsl_snapshot.get("parameters", [])
         if params:
             for p in params:
@@ -44,7 +46,7 @@ async def list_parameters(
     from sqlalchemy import select
 
     query = select(ParameterModel).where(
-        ParameterModel.project_id == parse_project_id(project_id)
+        ParameterModel.project_id == project.id
     )
     result = await session.execute(query)
     params = result.scalars().all()
@@ -70,14 +72,13 @@ async def list_parameters(
 async def recompute_project(
     project_id: str,
     body: RecomputeRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """参数变更触发状态重算。"""
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
 
     changed_params = body.changed_params
 
@@ -92,7 +93,7 @@ async def recompute_project(
         await session.execute(
             update(ParameterModel)
             .where(
-                ParameterModel.project_id == parse_project_id(project_id),
+                ParameterModel.project_id == project.id,
                 ParameterModel.key == key,
             )
             .values(current_value=value)

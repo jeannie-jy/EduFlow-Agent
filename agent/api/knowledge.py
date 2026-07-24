@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_readonly_session
+from .deps import CurrentUser
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ except Exception:
 @router.post("/search")
 async def search_knowledge(
     body: dict,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """语义检索知识库。
@@ -104,6 +106,7 @@ async def search_knowledge(
 
 @router.get("/templates")
 async def list_templates(
+    current_user: CurrentUser,
     subject: str | None = Query(default=None),
     difficulty: int | None = Query(default=None, ge=1, le=5),
 ) -> dict:

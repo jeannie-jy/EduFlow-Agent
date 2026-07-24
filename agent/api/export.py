@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings
 from db.database import get_session
 from schema.project import ExportManimRequest
-from .deps import parse_project_id
+from .deps import CurrentUser
+from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +61,16 @@ async def _get_redis():
 async def create_export_job(
     project_id: str,
     body: ExportManimRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """创建 Manim 视频导出任务。"""
-    from db.models import Project, ExportJobModel
+    from db.models import ExportJobModel
 
-    pid = parse_project_id(project_id)
-    project = await session.get(Project, pid)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
+    pid = project.id
 
     if not project.dsl_snapshot or not project.dsl_snapshot.get("frames"):
         raise HTTPException(status_code=400, detail="Project has no frames to export")
@@ -257,12 +259,27 @@ async def _update_db_export_status(job_id: str, status: str, *, error_log: str =
 @router.get("/export/{job_id}")
 async def get_export_status(
     job_id: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """查询导出任务状态。先查 Redis（实时进度），再查 DB（持久记录）。"""
-    from db.models import ExportJobModel
+    from sqlalchemy import select
+
+    from db.models import ExportJobModel, Project
 
     jid = uuid.UUID(job_id) if _is_uuid(job_id) else None
+    job = None
+    if jid:
+        job = await session.scalar(
+            select(ExportJobModel)
+            .join(Project, Project.id == ExportJobModel.project_id)
+            .where(
+                ExportJobModel.id == jid,
+                Project.owner_id == current_user.id,
+            )
+        )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Export job not found")
 
     # 1. 尝试从 Redis 获取实时进度
     r = await _get_redis()
@@ -294,31 +311,23 @@ async def get_export_status(
                 ]
 
                 # 同步状态到 DB
-                if jid:
-                    job = await session.get(ExportJobModel, jid)
-                    if job:
-                        job.status = "completed"
-                        job.progress_pct = 100
-                        job.artifacts = artifacts
-                        await session.flush()
+                job.status = "completed"
+                job.progress_pct = 100
+                job.artifacts = artifacts
+                await session.flush()
 
             return result
 
-    # 2. 回退到 DB 查询
-    if jid:
-        job = await session.get(ExportJobModel, jid)
-        if job:
-            return {
-                "job_id": str(job.id),
-                "status": job.status,
-                "progress_pct": job.progress_pct or 0,
-                "artifacts": job.artifacts,
-                "error_log": job.error_log,
-                "duration_ms": None,
-                "total_frames": None,
-            }
-
-    raise HTTPException(status_code=404, detail="Export job not found")
+    # 2. 回退到已授权的 DB 记录
+    return {
+        "job_id": str(job.id),
+        "status": job.status,
+        "progress_pct": job.progress_pct or 0,
+        "artifacts": job.artifacts,
+        "error_log": job.error_log,
+        "duration_ms": None,
+        "total_frames": None,
+    }
 
 
 # ============================================================================
@@ -330,6 +339,8 @@ async def get_export_status(
 async def download_artifact(
     job_id: str,
     filename: str,
+    current_user: CurrentUser,
+    session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     """下载导出的产物文件。
 
@@ -338,6 +349,23 @@ async def download_artifact(
     2. /app/data/exports / job_id（Docker 共享卷）
     3. 递归搜索 mp4 文件（Manim 会创建视频子目录）
     """
+    from sqlalchemy import select
+    from db.models import ExportJobModel, Project
+
+    jid = uuid.UUID(job_id) if _is_uuid(job_id) else None
+    job = None
+    if jid:
+        job = await session.scalar(
+            select(ExportJobModel)
+            .join(Project, Project.id == ExportJobModel.project_id)
+            .where(
+                ExportJobModel.id == jid,
+                Project.owner_id == current_user.id,
+            )
+        )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Export job not found")
+
     settings = get_settings()
     export_dir = Path(settings.export_dir) / job_id
 

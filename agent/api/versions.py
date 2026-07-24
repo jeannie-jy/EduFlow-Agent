@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session, get_readonly_session
 from schema.project import CreateVersionRequest
-from .deps import parse_project_id, safe_project_uuid
+from .deps import CurrentUser, parse_project_id, safe_project_uuid
+from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +65,13 @@ async def save_version(
 async def create_version(
     project_id: str,
     body: CreateVersionRequest,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """手动保存当前 DSL 为新版本。"""
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
     if not project.dsl_snapshot:
         raise HTTPException(status_code=400, detail="Project has no DSL to save")
 
@@ -86,14 +86,17 @@ async def create_version(
 @router.get("/{project_id}/versions")
 async def list_versions(
     project_id: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """获取项目的所有历史版本。"""
     from db.models import ProjectVersion
 
+    project = await get_owned_project(session, project_id, current_user.id)
+
     query = (
         select(ProjectVersion)
-        .where(ProjectVersion.project_id == parse_project_id(project_id))
+        .where(ProjectVersion.project_id == project.id)
         .order_by(ProjectVersion.version.desc())
     )
     result = await session.execute(query)
@@ -116,16 +119,24 @@ async def list_versions(
 async def get_version(
     project_id: str,
     vid: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """获取指定版本的完整 DSL。"""
     from db.models import ProjectVersion
 
+    project = await get_owned_project(session, project_id, current_user.id)
+
     vid_uuid = safe_project_uuid(vid)
     if vid_uuid is None:
         raise HTTPException(status_code=422, detail="无效的版本 ID 格式")
-    v = await session.get(ProjectVersion, vid_uuid)
-    if v is None or str(v.project_id) != project_id:
+    v = await session.scalar(
+        select(ProjectVersion).where(
+            ProjectVersion.id == vid_uuid,
+            ProjectVersion.project_id == project.id,
+        )
+    )
+    if v is None:
         raise HTTPException(status_code=404, detail="Version not found")
 
     return {
@@ -141,20 +152,26 @@ async def get_version(
 async def restore_version(
     project_id: str,
     vid: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """恢复到指定版本（将 DSL 替换为该版本的快照）。"""
-    from db.models import Project as ProjectModel, ProjectVersion
+    from db.models import ProjectVersion
 
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await get_owned_project(
+        session, project_id, current_user.id, for_update=True
+    )
 
     vid_uuid = safe_project_uuid(vid)
     if vid_uuid is None:
         raise HTTPException(status_code=422, detail="无效的版本 ID 格式")
-    v = await session.get(ProjectVersion, vid_uuid)
-    if v is None or str(v.project_id) != project_id:
+    v = await session.scalar(
+        select(ProjectVersion).where(
+            ProjectVersion.id == vid_uuid,
+            ProjectVersion.project_id == project.id,
+        )
+    )
+    if v is None:
         raise HTTPException(status_code=404, detail="Version not found")
 
     # 恢复前先保存当前版本
