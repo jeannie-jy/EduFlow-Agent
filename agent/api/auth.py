@@ -84,7 +84,8 @@ def _require_trusted_cookie_origin(request: Request) -> None:
 
 
 def _user_agent(request: Request) -> str | None:
-    return request.headers.get("user-agent")
+    user_agent = request.headers.get("user-agent")
+    return user_agent[:500] if user_agent else None
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)

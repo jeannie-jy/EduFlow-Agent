@@ -20,7 +20,12 @@ from api.error_handlers import register_error_handlers
 from schema.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
 
 
-async def _register(client, *, email: str = "student@example.com"):
+async def _register(
+    client,
+    *,
+    email: str = "student@example.com",
+    headers: dict[str, str] | None = None,
+):
     response = await client.post(
         "/api/auth/register",
         json={
@@ -28,6 +33,7 @@ async def _register(client, *, email: str = "student@example.com"):
             "nickname": "Student",
             "password": "learning2026",
         },
+        headers=headers,
     )
     assert response.status_code == 201
     return response
@@ -50,9 +56,28 @@ async def test_register_sets_refresh_cookie_and_omits_sensitive_values(auth_api_
     assert "HttpOnly" in response.headers["set-cookie"]
     assert "SameSite=lax" in response.headers["set-cookie"]
     assert "Path=/api/auth" in response.headers["set-cookie"]
+    assert "Max-Age=2592000" in response.headers["set-cookie"]
+    assert "Secure" in response.headers["set-cookie"]
+    assert "Domain=" not in response.headers["set-cookie"]
     assert response.json()["user"]["email"] == "student@example.com"
     assert "password" not in response.text.lower()
     assert "refresh_token" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_registration_truncates_oversized_user_agent(auth_api_client) -> None:
+    from db.models import AuthSession
+
+    oversized_user_agent = "browser/" + "x" * 600
+    await _register(
+        auth_api_client.client,
+        headers={"User-Agent": oversized_user_agent},
+    )
+
+    async with auth_api_client.session_factory() as session:
+        auth_session = await session.scalar(select(AuthSession))
+    assert auth_session is not None
+    assert auth_session.user_agent == oversized_user_agent[:500]
 
 
 @pytest.mark.asyncio
@@ -290,6 +315,21 @@ async def test_refresh_rejects_untrusted_origin(auth_api_client) -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_trusted_origin_preflight_allows_credentials(auth_api_client) -> None:
+    response = await auth_api_client.client.options(
+        "/api/auth/refresh",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert response.headers["access-control-allow-credentials"] == "true"
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,15 @@ def test_samesite_none_requires_secure_cookie(monkeypatch) -> None:
         Settings(_env_file=None)
 
 
+def test_credentialed_cors_rejects_wildcard_origin() -> None:
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS"):
+        Settings(
+            AUTH_JWT_SECRET="x" * 64,
+            cors_allowed_origins=["*"],
+            _env_file=None,
+        )
+
+
 def test_auth_deployment_defaults_require_a_secret_and_secure_cookies() -> None:
     project_root = Path(__file__).resolve().parents[2]
     env_example = (project_root / ".env.example").read_text(encoding="utf-8")

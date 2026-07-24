@@ -84,6 +84,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUTH_COOKIE_SAMESITE='none' requires AUTH_COOKIE_SECURE=true"
             )
+        if "*" in self.cors_allowed_origins:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must not contain '*' when credentials are enabled"
+            )
         return self
 
     @property
