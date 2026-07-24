@@ -21,6 +21,7 @@
 - Motion must respect `prefers-reduced-motion`; reduced motion keeps opacity feedback but removes large transforms and autoplay.
 - Do not add Three.js, shader backgrounds, continuous particles, cursor-following glow, 3D card tilt, or looping typewriter effects.
 - Do not stage or commit `.gitignore`, `docs/ui-audit/`, `web/src/lib/auth.ts`, or `web/src/lib/auth.test.ts`.
+- The selected visual target is `docs/design-references/eduflow-landing-interactive-manuscript.png`; where the earlier prose plan conflicts with this image, the selected image governs visual hierarchy and spacing.
 
 ## Scope Decomposition
 
@@ -1099,7 +1100,19 @@ Expected: FAIL against the old centered SaaS landing page.
 
 - [ ] **Step 4: Create the Hero**
 
-Use a two-column responsive layout. Render the exact heading:
+Use the selected interactive-manuscript composition:
+
+- a slim chapter/index rail at the left edge on wide screens;
+- a wide editorial headline band across the upper content area;
+- the title, explanation, and actions grouped compactly rather than centered;
+- a panoramic Dijkstra simulation plate spanning the main width below the title band;
+- the distance ledger integrated at the right side of the plate;
+- narration and timeline integrated along the lower edge of the plate;
+- the next section heading visible at the bottom of the first viewport.
+
+On tablet and mobile, remove the chapter rail, keep the headline first, and stack the complete simulation plate below it without cropping.
+
+Render the exact heading:
 
 ```text
 让抽象知识，
@@ -1112,7 +1125,7 @@ Render body copy:
 从一个知识点出发，自动生成教学计划、逐帧动画、交互参数和可导出的教学内容。
 ```
 
-Use `motion` reveal variants for the text group and render `<DijkstraDemo compact />` on the right. On mobile, text precedes the demo.
+Use `motion` reveal variants for the text group and render `<DijkstraDemo compact />` as the panoramic interactive plate below the headline band. Do not wrap the whole Hero in a generic centered card.
 
 - [ ] **Step 5: Replace the landing shell**
 
