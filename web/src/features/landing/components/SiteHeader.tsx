@@ -46,9 +46,9 @@ export function SiteHeader() {
 
         <nav className="site-header__nav" aria-label="主导航">
           {landingNavigation.map((item) => (
-            <Link key={item.href} to={item.href}>
+            <a key={item.href} href={item.href}>
               {item.label}
-            </Link>
+            </a>
           ))}
         </nav>
 
@@ -76,7 +76,7 @@ export function SiteHeader() {
         <div className="site-header__mobile-surface">
           <nav ref={mobileNavigationRef} id="site-mobile-navigation" className="site-header__mobile-nav" aria-label="移动主导航">
             {landingNavigation.map((item) => (
-              <Link key={item.href} to={item.href} onClick={closeMobileNavigation}>{item.label}</Link>
+              <a key={item.href} href={item.href} onClick={closeMobileNavigation}>{item.label}</a>
             ))}
             <Link to="/login" onClick={closeMobileNavigation}>登录</Link>
             <Link to="/app/new" className="site-header__mobile-create" onClick={closeMobileNavigation}>开始创建 <ArrowUpRight aria-hidden="true" /></Link>

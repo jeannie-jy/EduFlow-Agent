@@ -13,7 +13,7 @@ describe("LandingPage", () => {
     Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
   });
 
-  it("explains the product and exposes the public, creation, and root-qualified navigation paths", () => {
+  it("explains the product and exposes the public, creation, and native root-qualified navigation paths", () => {
     renderPage(<LandingPage />);
 
     expect(screen.getByRole("heading", {
@@ -38,6 +38,29 @@ describe("LandingPage", () => {
     }
     expect(screen.getByRole("heading", { name: "从一个问题，到一场完整推演" })).toBeVisible();
     expect(screen.getByLabelText("Dijkstra 最短路径互动演示")).toBeVisible();
+    expect(screen.getByRole("region", { name: "距离表（从 A 出发）" })).toBeVisible();
+    expect(screen.getByText(/选择 A 作为源点/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "跳到第 6 帧" })).toBeVisible();
+  });
+
+  it("leaves root-qualified section navigation to the browser instead of React Router", async () => {
+    const user = userEvent.setup();
+    renderPage(<LandingPage />);
+
+    const desktopLink = screen.getByRole("link", { name: "产品原理" });
+    const desktopClick = new MouseEvent("click", { bubbles: true, button: 0, cancelable: true });
+    fireEvent(desktopLink, desktopClick);
+    expect(desktopLink).not.toHaveAttribute("data-discover");
+    expect(desktopClick.defaultPrevented).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileLink = within(screen.getByRole("navigation", { name: "移动主导航" }))
+      .getByRole("link", { name: "交互案例" });
+    const mobileClick = new MouseEvent("click", { bubbles: true, button: 0, cancelable: true });
+    fireEvent(mobileLink, mobileClick);
+    expect(mobileLink).not.toHaveAttribute("data-discover");
+    expect(mobileClick.defaultPrevented).toBe(false);
+    expect(screen.queryByRole("navigation", { name: "移动主导航" })).not.toBeInTheDocument();
   });
 
   it("adds a paper surface after the header scroll threshold", () => {
@@ -80,9 +103,13 @@ describe("LandingPage", () => {
     expect(screen.queryByRole("navigation", { name: "移动主导航" })).not.toBeInTheDocument();
   });
 
-  it("keeps the desktop hero within a viewport budget and offsets every section target", () => {
-    expect(landingStyles).toMatch(/@media \(min-width: 901px\) and \(min-height: 820px\) \{\s*\.landing-hero \{[^}]*height: calc\(100svh - 7rem\);/);
+  it("keeps the hero intrinsic while applying dense desktop demo rules and target offsets", () => {
+    expect(landingStyles).not.toMatch(/\.landing-hero\s*\{[^}]*\b(?:min-)?height:/);
+    expect(landingStyles).not.toContain("height: calc(100svh - 7rem)");
     expect(landingStyles).toContain("margin-inline: clamp(-1.5rem, -1.75vw, -0.25rem);");
+    expect(landingStyles).toContain(".landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 12rem; }");
+    expect(landingStyles).toContain(".landing-hero__demo-plate .demo-status-table { padding: 0.55rem 0.7rem; }");
+    expect(landingStyles).toContain(".landing-hero__demo-plate .demo-timeline__track { margin-top: 0.45rem; }");
     expect(landingStyles).toMatch(/#product,\s*#examples,\s*#audiences,\s*#templates \{\s*scroll-margin-top:/);
   });
 });
