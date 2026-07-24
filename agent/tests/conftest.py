@@ -344,6 +344,38 @@ class AuthApiClient:
     session_factory: Any
 
 
+class InMemoryRateLimitRedis:
+    """Minimal async Redis implementation for auth-backed HTTP test clients."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, int] = {}
+        self.expires_in: dict[str, int] = {}
+
+    async def eval(self, _script: str, _numkeys: int, key: str, window: int):
+        count = self.values.get(key, 0) + 1
+        self.values[key] = count
+        self.expires_in.setdefault(key, int(window))
+        return [count, self.expires_in[key]]
+
+    async def get(self, key: str) -> int | None:
+        return self.values.get(key)
+
+    async def ttl(self, key: str) -> int:
+        return self.expires_in.get(key, -2)
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.values
+        self.values.pop(key, None)
+        self.expires_in.pop(key, None)
+        return int(existed)
+
+
+@pytest.fixture
+def auth_rate_limit_redis() -> InMemoryRateLimitRedis:
+    """Provide real limiter behavior without requiring a Redis server in tests."""
+    return InMemoryRateLimitRedis()
+
+
 def _make_sqlite_compatible() -> None:
     """Adapt PostgreSQL-only model types for isolated HTTP API tests."""
     from sqlalchemy import schema, types
@@ -363,7 +395,10 @@ def _make_sqlite_compatible() -> None:
 
 
 @pytest_asyncio.fixture
-async def auth_api_client() -> AuthApiClient:
+async def auth_api_client(
+    auth_rate_limit_redis: InMemoryRateLimitRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AuthApiClient:
     """Run authentication requests against an isolated transactional database."""
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -372,6 +407,8 @@ async def auth_api_client() -> AuthApiClient:
     from db.models import Base
     from db.database import get_readonly_session, get_session
     from main import app
+
+    monkeypatch.setattr("api.auth.get_redis", lambda: auth_rate_limit_redis)
 
     _make_sqlite_compatible()
     engine = create_async_engine(
