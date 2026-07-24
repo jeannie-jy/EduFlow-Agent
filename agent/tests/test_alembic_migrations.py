@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy import BigInteger
 
-from db.models import ExportJobModel, Feedback, SourceMaterial
+from db.models import ExportJobModel, Feedback, SourceMaterial, User
 
 
 def test_alembic_env_uses_async_engine() -> None:
@@ -56,3 +56,48 @@ def test_baseline_sql_preserves_legacy_bootstrap_schema() -> None:
     assert "size_bytes BIGINT" in source_materials
 
     assert "CHECK (rating BETWEEN 1 AND 5)" in table_sql("feedback")
+
+
+def test_authentication_migration_handles_legacy_ownership_data() -> None:
+    agent_dir = Path(__file__).resolve().parents[1]
+    upgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
+        cwd=agent_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    downgrade = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "20260724_0002:base",
+            "--sql",
+        ],
+        cwd=agent_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    clear_legacy_owner_ids = (
+        "UPDATE projects SET owner_id = NULL WHERE owner_id IS NOT NULL;"
+    )
+    cast_owner_id = "ALTER TABLE projects ALTER COLUMN owner_id TYPE UUID USING owner_id::uuid;"
+    assert clear_legacy_owner_ids in upgrade
+    assert upgrade.index(clear_legacy_owner_ids) < upgrade.index(cast_owner_id)
+
+    remove_unrepresentable_materials = (
+        "DELETE FROM source_materials WHERE project_id IS NULL;"
+    )
+    restore_required_project_id = (
+        "ALTER TABLE source_materials ALTER COLUMN project_id SET NOT NULL;"
+    )
+    assert remove_unrepresentable_materials in downgrade
+    assert downgrade.index(remove_unrepresentable_materials) < downgrade.index(
+        restore_required_project_id
+    )
+
+    assert str(User.__table__.c.is_active.server_default.arg) == "true"

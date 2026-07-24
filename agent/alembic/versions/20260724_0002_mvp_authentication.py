@@ -89,13 +89,9 @@ def upgrade() -> None:
         ),
     )
 
-    op.execute(
-        "UPDATE projects SET owner_id = NULL "
-        "WHERE owner_id IS NOT NULL "
-        "AND owner_id !~* "
-        "'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-        "[89ab][0-9a-f]{3}-[0-9a-f]{12}$'"
-    )
+    # This migration creates an empty users table, so no legacy owner ID can
+    # reference a valid user yet. Clear every legacy value before adding the FK.
+    op.execute("UPDATE projects SET owner_id = NULL WHERE owner_id IS NOT NULL")
     op.alter_column(
         "projects",
         "owner_id",
@@ -144,6 +140,9 @@ def downgrade() -> None:
     op.drop_index("idx_auth_sessions_family", table_name="auth_sessions")
     op.drop_index("idx_auth_sessions_user_active", table_name="auth_sessions")
 
+    # The baseline schema cannot represent owner-only materials. Removing them
+    # is the explicit, data-destructive downgrade policy before NOT NULL returns.
+    op.execute("DELETE FROM source_materials WHERE project_id IS NULL")
     op.alter_column(
         "source_materials",
         "project_id",
