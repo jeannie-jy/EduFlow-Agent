@@ -7,6 +7,7 @@ export function demoReducer(state: DemoState, event: DemoEvent): DemoState {
     case "PAUSE":
       return state.mode === "autoplay" ? { ...state, mode: "paused" } : state;
     case "TICK": {
+      if (state.mode !== "autoplay") return state;
       const last = Math.max(0, event.totalFrames - 1);
       if (state.frameIndex >= last) return { ...state, mode: "completed" };
       return { ...state, frameIndex: Math.min(last, state.frameIndex + 1) };

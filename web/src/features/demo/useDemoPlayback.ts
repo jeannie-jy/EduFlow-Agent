@@ -23,14 +23,14 @@ export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
   }, [reduceMotion]);
 
   useEffect(() => {
-    if (state.mode !== "autoplay") return;
+    if (reduceMotion || state.mode !== "autoplay") return;
 
     const timer = window.setTimeout(
       () => dispatch({ type: "TICK", totalFrames }),
       1400 / state.speed,
     );
     return () => window.clearTimeout(timer);
-  }, [state.mode, state.frameIndex, state.speed, totalFrames]);
+  }, [reduceMotion, state.mode, state.frameIndex, state.speed, totalFrames]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -43,9 +43,13 @@ export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
 
   return {
     state,
-    play: () => dispatch({ type: "PLAY" }),
+    play: () => {
+      if (!reduceMotion) dispatch({ type: "PLAY" });
+    },
     pause: () => dispatch({ type: "PAUSE" }),
-    replay: () => dispatch({ type: "REPLAY" }),
+    replay: () => {
+      if (!reduceMotion) dispatch({ type: "REPLAY" });
+    },
     skip: () => dispatch({ type: "SKIP" }),
     goToFrame: (frameIndex) => dispatch({ type: "USER_FRAME", frameIndex }),
     setEdgeWeight: (value) => dispatch({ type: "SET_EDGE_WEIGHT", value }),

@@ -31,6 +31,17 @@ describe("demoReducer", () => {
     });
   });
 
+  it.each([
+    ["poster", initialDemoState],
+    ["paused", { ...initialDemoState, mode: "paused" as const, frameIndex: 1 }],
+    ["explore after skip", { ...initialDemoState, mode: "explore" as const, frameIndex: 1 }],
+    ["explore after a frame jump", { ...initialDemoState, mode: "explore" as const, frameIndex: 5 }],
+    ["explore after an edge change", { ...initialDemoState, mode: "explore" as const, edgeWeight: 3 }],
+    ["poster after reduced motion", { ...initialDemoState, mode: "poster" as const, frameIndex: 1 }],
+  ])("ignores a stale tick while %s owns the demo", (_interruption, state) => {
+    expect(demoReducer(state, { type: "TICK", totalFrames: 8 })).toBe(state);
+  });
+
   it("hands control to explore after a user frame jump", () => {
     const playing = { ...initialDemoState, mode: "autoplay" as const };
     expect(demoReducer(playing, { type: "USER_FRAME", frameIndex: 5 })).toMatchObject({

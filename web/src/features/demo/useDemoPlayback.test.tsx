@@ -73,4 +73,18 @@ describe("useDemoPlayback", () => {
 
     expect(result.current.state.mode).toBe("poster");
   });
+
+  it("keeps reduced-motion users on the poster when they play or replay", () => {
+    vi.useFakeTimers();
+    reducedMotion = true;
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+    const { result } = renderHook(() => useDemoPlayback(3));
+
+    act(() => result.current.play());
+    act(() => result.current.replay());
+    act(() => vi.advanceTimersByTime(2800));
+
+    expect(result.current.state).toMatchObject({ mode: "poster", frameIndex: 0 });
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+  });
 });
