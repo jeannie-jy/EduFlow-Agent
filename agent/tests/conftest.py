@@ -10,12 +10,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+
+
+os.environ.setdefault(
+    "AUTH_JWT_SECRET",
+    "pytest-only-secret-with-at-least-sixty-four-characters-000000000000",
+)
 
 
 # ============================================================================

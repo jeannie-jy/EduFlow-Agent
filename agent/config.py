@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,6 +40,18 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
         description="完整数据库 URL。设置后将忽略拆分字段。",
     )
+
+    # ── Authentication ───────────────────────────────────
+    auth_jwt_secret: SecretStr = Field(alias="AUTH_JWT_SECRET")
+    auth_jwt_algorithm: str = "HS256"
+    auth_jwt_issuer: str = "eduflow-agent"
+    auth_jwt_audience: str = "eduflow-web"
+    auth_access_token_seconds: int = 900
+    auth_refresh_token_days: int = 30
+    auth_refresh_cookie_name: str = "eduflow_refresh"
+    auth_cookie_secure: bool = True
+    auth_cookie_samesite: str = "lax"
+    cors_allowed_origins: list[str] = ["http://localhost:5173"]
 
     @property
     def database_url(self) -> str:
