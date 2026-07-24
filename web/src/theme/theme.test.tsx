@@ -1,10 +1,13 @@
 import { render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import indexHtml from "../../index.html?raw";
 // @ts-expect-error Node test helper types are excluded from the browser build.
 import { readFileSync } from "node:fs";
-import indexHtml from "../../index.html?raw";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
 import { themeScript } from "./theme-script";
+
+const testModuleDirectory = (import.meta as ImportMeta & { dirname: string }).dirname;
+const globalsCss = readFileSync(`${testModuleDirectory}/../styles/globals.css`, "utf8");
 
 function createMatchMedia(matches: boolean) {
   return (query: string) =>
@@ -59,10 +62,18 @@ it("keeps the pre-hydration script aligned with its exported source", () => {
 });
 
 it("ships the required Light and Dark semantic tokens", () => {
-  const css = readFileSync("src/styles/globals.css", "utf8");
-  expect(css).toContain("--paper-texture-opacity");
-  expect(css).toContain("--canvas-background");
-  expect(css).toContain("--motion-layout");
-  expect(css).toContain("#F3EBD8");
-  expect(css).toContain("#1B1814");
+  expect(globalsCss).toContain("--paper-texture-opacity");
+  expect(globalsCss).toContain("--canvas-background");
+  expect(globalsCss).toContain("--motion-layout");
+  expect(globalsCss).toContain("#F3EBD8");
+  expect(globalsCss).toContain("#1B1814");
+});
+
+it("removes transform motion while retaining reduced-motion feedback", () => {
+  expect(globalsCss).toContain("@keyframes reduced-motion-appear");
+  expect(globalsCss).toContain("animation-name: reduced-motion-appear !important;");
+  expect(globalsCss).toContain(".animate-move,\n  .animate-swap");
+  expect(globalsCss).toContain("animation: none !important;");
+  expect(globalsCss).toContain("[data-slot=\"button\"]:active:not([aria-haspopup])");
+  expect(globalsCss).toContain("transition-property: color, background-color, border-color, box-shadow, opacity !important;");
 });
