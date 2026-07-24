@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, func, schema, types
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -28,7 +29,61 @@ from db.models import (
     Feedback,
     SourceMaterial,
     ProjectVersion,
+    User,
+    AuthSession,
 )
+
+
+# ============================================================================
+# Authentication models
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_user_email_normalized_is_unique(db_session: AsyncSession):
+    first = User(
+        email="Student@example.com",
+        email_normalized="student@example.com",
+        nickname="Student",
+        password_hash="encoded",
+    )
+    db_session.add(first)
+    await db_session.flush()
+
+    db_session.add(
+        User(
+            email="student@example.com",
+            email_normalized="student@example.com",
+            nickname="Other",
+            password_hash="encoded",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_auth_session_is_deleted_with_user(db_session: AsyncSession):
+    user = User(
+        email="user@example.com",
+        email_normalized="user@example.com",
+        nickname="User",
+        password_hash="encoded",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(
+        AuthSession(
+            user_id=user.id,
+            family_id=uuid.uuid4(),
+            refresh_token_hash="a" * 64,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+        )
+    )
+    await db_session.flush()
+    await db_session.delete(user)
+    await db_session.flush()
+    assert await db_session.scalar(select(func.count(AuthSession.id))) == 0
 
 
 # ============================================================================

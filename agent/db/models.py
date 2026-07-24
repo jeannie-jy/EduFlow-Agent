@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -29,6 +30,86 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 class Base(DeclarativeBase):
     """声明式基类。"""
     pass
+
+
+# ============================================================================
+# Authentication
+# ============================================================================
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("email_normalized", name="uq_users_email_normalized"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    email_normalized: Mapped[str] = mapped_column(String(320), nullable=False)
+    nickname: Mapped[str] = mapped_column(String(100), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    sessions: Mapped[list["AuthSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    projects: Mapped[list["Project"]] = relationship(
+        back_populates="owner", foreign_keys="Project.owner_id", passive_deletes=True
+    )
+    source_materials: Mapped[list["SourceMaterial"]] = relationship(
+        back_populates="owner",
+        foreign_keys="SourceMaterial.owner_id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "refresh_token_hash", name="uq_auth_sessions_refresh_token_hash"
+        ),
+        Index("idx_auth_sessions_user_active", "user_id", "revoked_at"),
+        Index("idx_auth_sessions_family", "family_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auth_sessions.id", ondelete="SET NULL"),
+    )
+    user_agent: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="sessions")
+    replaced_by: Mapped["AuthSession | None"] = relationship(
+        remote_side="AuthSession.id", foreign_keys=[replaced_by_id]
+    )
 
 
 # ============================================================================
@@ -48,7 +129,12 @@ class Project(Base):
     course: Mapped[str | None] = mapped_column(String(300))
     audience: Mapped[str] = mapped_column(String(100), default="undergraduate_cs")
     difficulty: Mapped[str] = mapped_column(String(50), default="intermediate")
-    owner_id: Mapped[str | None] = mapped_column(String(200))
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(String(50), default="draft")
     dsl_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
@@ -61,6 +147,9 @@ class Project(Base):
     # 关联
     frames: Mapped[list["Frame"]] = relationship(back_populates="project", lazy="raise", cascade="all, delete-orphan")
     parameters: Mapped[list["ParameterModel"]] = relationship(back_populates="project", lazy="raise", cascade="all, delete-orphan")
+    owner: Mapped[User | None] = relationship(
+        back_populates="projects", foreign_keys=[owner_id]
+    )
 
     def __repr__(self) -> str:
         return f"<Project id={self.id!s} title={self.title[:30]!r}>"
@@ -99,6 +188,7 @@ class Frame(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -236,8 +326,14 @@ class SourceMaterial(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)   # pdf / ppt / markdown / text / code
     filename: Mapped[str | None] = mapped_column(String(500))
@@ -248,6 +344,10 @@ class SourceMaterial(Base):
     storage_path: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+    owner: Mapped[User | None] = relationship(
+        back_populates="source_materials", foreign_keys=[owner_id]
     )
 
 
