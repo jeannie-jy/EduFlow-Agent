@@ -22,6 +22,7 @@
 - Access Tokens and raw Refresh Tokens must never be written to logs or database columns.
 - Foreign and missing resources both return 404.
 - Existing anonymous records remain hidden until explicitly assigned; never assign them to the first registrant.
+- The Alembic baseline is the complete database bootstrap and must include all ORM tables plus `teaching_plans`, `knowledge_base`, `langgraph_checkpoints`, `vector`, and `uuid-ossp` from `db/init.sql`.
 - Preserve unrelated working-tree changes in `.gitignore`, `docs/ui-audit/`, and `web/src/lib/auth*`.
 
 ---
@@ -79,6 +80,8 @@
 
 **Files:**
 - Modify: `agent/alembic/env.py`
+- Modify: `db/init.sql`
+- Modify: `docker-compose.yml`
 - Create: `agent/alembic/versions/20260724_0001_existing_schema_baseline.py`
 - Test: `agent/tests/test_alembic_migrations.py`
 
@@ -199,9 +202,27 @@ export_jobs
 feedback
 source_materials
 project_versions
+teaching_plans
+knowledge_base
+langgraph_checkpoints
 ```
 
-Do not add `users` or `auth_sessions` in this baseline.
+Autogenerate covers the first eight ORM tables. Manually add the following database bootstrap operations from `db/init.sql` to the same baseline:
+
+```python
+op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
+op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+```
+
+Add explicit `op.create_table()` or equivalent DDL for:
+
+- `teaching_plans`, including its unique project foreign key and JSONB planning fields;
+- `knowledge_base`, including `VECTOR(1536)`, subject/difficulty fields, arrays, JSONB template data, and timestamps;
+- `langgraph_checkpoints`, including the three-column primary key.
+
+Add the existing indexes from `db/init.sql`, including the IVFFlat vector index, knowledge filters, and project indexes. The baseline downgrade removes these indexes and tables but leaves installed PostgreSQL extensions in place because an extension can be shared with schemas outside this application.
+
+Do not add `users` or `auth_sessions` in this baseline. Do not leave `db/init.sql` as a second table-creation path: after the baseline is verified, reduce it to extension initialization comments or update Docker startup so fresh databases run `alembic upgrade head`.
 
 - [ ] **Step 5: Verify empty-database upgrade and downgrade**
 
@@ -228,7 +249,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```powershell
-git add agent/alembic/env.py agent/alembic/versions agent/tests/test_alembic_migrations.py
+git add agent/alembic/env.py agent/alembic/versions agent/tests/test_alembic_migrations.py db/init.sql docker-compose.yml
 git commit -m "build: establish async alembic baseline"
 ```
 
