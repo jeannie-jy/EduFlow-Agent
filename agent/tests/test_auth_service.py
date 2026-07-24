@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -14,12 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from db.models import AuthSession, Base, User
 from schema.auth import LoginRequest, RegisterRequest
 from security.passwords import hash_password
-from security.tokens import hash_refresh_token
+from security.tokens import decode_access_token, hash_refresh_token
 from services.auth_service import (
     EmailAlreadyRegistered,
     InvalidCredentials,
+    InvalidRefreshToken,
     authenticate_user,
     register_user,
+    revoke_all_user_sessions,
+    revoke_refresh_token,
+    revoke_session_family,
+    rotate_refresh_token,
 )
 
 
@@ -47,6 +52,19 @@ async def db_session() -> AsyncSession:
     async with session_factory() as session:
         yield session
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def registered_auth(db_session: AsyncSession):
+    return await register_user(
+        db_session,
+        RegisterRequest(
+            email="student@example.com",
+            nickname="Student",
+            password="learning2026",
+        ),
+        "pytest-register",
+    )
 
 
 async def _create_user(
@@ -210,3 +228,169 @@ async def test_login_updates_last_login_creates_session_and_rehashes_password(
     assert isinstance(user.last_login_at, datetime)
     assert auth_session is not None
     assert auth_session.user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_refresh_rotates_session(
+    db_session: AsyncSession, registered_auth
+) -> None:
+    old = registered_auth
+
+    result = await rotate_refresh_token(
+        db_session,
+        old.refresh_token,
+        "pytest-refresh",
+    )
+    old_record = await db_session.get(
+        AuthSession,
+        decode_access_token(old.access_token.token).session_id,
+    )
+    replacement = await db_session.get(
+        AuthSession,
+        decode_access_token(result.access_token.token).session_id,
+    )
+
+    assert result.user.id == old.user.id
+    assert result.refresh_token != old.refresh_token
+    assert old_record is not None
+    assert old_record.revoked_at is not None
+    assert old_record.replaced_by_id == replacement.id
+    assert replacement is not None
+    assert replacement.family_id == old_record.family_id
+    assert replacement.refresh_token_hash == hash_refresh_token(result.refresh_token)
+    assert replacement.user_agent == "pytest-refresh"
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_expired_token(
+    db_session: AsyncSession, registered_auth
+) -> None:
+    session_id = decode_access_token(registered_auth.access_token.token).session_id
+    record = await db_session.get(AuthSession, session_id)
+    assert record is not None
+    record.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db_session.flush()
+
+    with pytest.raises(InvalidRefreshToken):
+        await rotate_refresh_token(db_session, registered_auth.refresh_token, "pytest-refresh")
+
+    assert record.revoked_at is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_inactive_user(
+    db_session: AsyncSession, registered_auth
+) -> None:
+    registered_auth.user.is_active = False
+    await db_session.flush()
+
+    with pytest.raises(InvalidRefreshToken):
+        await rotate_refresh_token(db_session, registered_auth.refresh_token, "pytest-refresh")
+
+    sessions = (await db_session.scalars(select(AuthSession))).all()
+    assert len(sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_replay_revokes_entire_session_family(
+    db_session: AsyncSession, registered_auth
+) -> None:
+    await rotate_refresh_token(db_session, registered_auth.refresh_token, "pytest-refresh")
+    old_session_id = decode_access_token(registered_auth.access_token.token).session_id
+    old_record = await db_session.get(AuthSession, old_session_id)
+    assert old_record is not None
+
+    with pytest.raises(InvalidRefreshToken):
+        await rotate_refresh_token(db_session, registered_auth.refresh_token, "pytest-replay")
+
+    family_sessions = (
+        await db_session.scalars(
+            select(AuthSession).where(AuthSession.family_id == old_record.family_id)
+        )
+    ).all()
+    assert len(family_sessions) == 2
+    assert all(auth_session.revoked_at is not None for auth_session in family_sessions)
+
+
+@pytest.mark.asyncio
+async def test_revoke_session_family_only_revokes_matching_family(
+    db_session: AsyncSession, registered_auth
+) -> None:
+    await rotate_refresh_token(db_session, registered_auth.refresh_token, "pytest-refresh")
+    separate_auth = await authenticate_user(
+        db_session,
+        LoginRequest(email="student@example.com", password="learning2026"),
+        "pytest-login",
+    )
+    first_session_id = decode_access_token(registered_auth.access_token.token).session_id
+    first_record = await db_session.get(AuthSession, first_session_id)
+    separate_session_id = decode_access_token(separate_auth.access_token.token).session_id
+    separate_record = await db_session.get(AuthSession, separate_session_id)
+    assert first_record is not None
+    assert separate_record is not None
+
+    await revoke_session_family(db_session, first_record.family_id)
+
+    family_sessions = (
+        await db_session.scalars(
+            select(AuthSession).where(AuthSession.family_id == first_record.family_id)
+        )
+    ).all()
+    assert all(auth_session.revoked_at is not None for auth_session in family_sessions)
+    assert separate_record.revoked_at is None
+
+
+@pytest.mark.asyncio
+async def test_logout_is_idempotent(db_session: AsyncSession, registered_auth) -> None:
+    await revoke_refresh_token(db_session, registered_auth.refresh_token)
+    await revoke_refresh_token(db_session, registered_auth.refresh_token)
+
+    session_id = decode_access_token(registered_auth.access_token.token).session_id
+    record = await db_session.get(AuthSession, session_id)
+    assert record is not None
+    assert record.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_logout_ignores_unknown_refresh_token(db_session: AsyncSession) -> None:
+    await revoke_refresh_token(db_session, "unknown-refresh-token")
+
+
+@pytest.mark.asyncio
+async def test_logout_all_only_revokes_selected_users_sessions(
+    db_session: AsyncSession, registered_auth
+) -> None:
+    selected_user = registered_auth.user
+    selected_login = await authenticate_user(
+        db_session,
+        LoginRequest(email="student@example.com", password="learning2026"),
+        "pytest-login",
+    )
+    other_auth = await register_user(
+        db_session,
+        RegisterRequest(
+            email="other@example.com",
+            nickname="Other",
+            password="learning2026",
+        ),
+        "pytest-other",
+    )
+
+    await revoke_all_user_sessions(db_session, selected_user.id)
+
+    selected_session_ids = {
+        decode_access_token(registered_auth.access_token.token).session_id,
+        decode_access_token(selected_login.access_token.token).session_id,
+    }
+    selected_sessions = [
+        await db_session.get(AuthSession, session_id)
+        for session_id in selected_session_ids
+    ]
+    other_session = await db_session.get(
+        AuthSession,
+        decode_access_token(other_auth.access_token.token).session_id,
+    )
+
+    assert all(auth_session is not None and auth_session.revoked_at is not None for auth_session in selected_sessions)
+    assert other_session is not None
+    assert other_session.revoked_at is None
