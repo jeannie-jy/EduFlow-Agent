@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DijkstraDemo } from "./DijkstraDemo";
 
 const renderPage = (ui: React.ReactElement) => render(ui);
@@ -20,8 +20,39 @@ function createReducedMotionMatchMedia(reduce: boolean) {
     }) as MediaQueryList;
 }
 
+function createReducedMotionMatchMediaController(initialReducedMotion = false) {
+  let matches = initialReducedMotion;
+  const changeListeners = new Set<(event: MediaQueryListEvent) => void>();
+  const mediaQueryList = {
+    get matches() {
+      return matches;
+    },
+    media: "(prefers-reduced-motion: reduce)",
+    onchange: null,
+    addListener: (listener: (event: MediaQueryListEvent) => void) => changeListeners.add(listener),
+    removeListener: (listener: (event: MediaQueryListEvent) => void) => changeListeners.delete(listener),
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject | null) => {
+      if (type === "change" && typeof listener === "function") changeListeners.add(listener as (event: MediaQueryListEvent) => void);
+    },
+    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject | null) => {
+      if (type === "change" && typeof listener === "function") changeListeners.delete(listener as (event: MediaQueryListEvent) => void);
+    },
+    dispatchEvent: () => false,
+  } as MediaQueryList;
+
+  return {
+    matchMedia: (query: string) => query === mediaQueryList.media ? mediaQueryList : createReducedMotionMatchMedia(false)(query),
+    setReducedMotion: (nextMatches: boolean) => {
+      matches = nextMatches;
+      const event = { matches, media: mediaQueryList.media } as MediaQueryListEvent;
+      changeListeners.forEach((listener) => listener(event));
+    },
+  };
+}
+
 afterEach(() => {
   window.matchMedia = defaultMatchMedia;
+  vi.useRealTimers();
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
     value: "visible",
@@ -37,6 +68,22 @@ describe("DijkstraDemo", () => {
     await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
 
     expect(screen.getByText("准备体验")).toBeVisible();
+  });
+
+  it("immediately stops autoplay when native reduced motion changes", () => {
+    vi.useFakeTimers();
+    const matchMedia = createReducedMotionMatchMediaController();
+    window.matchMedia = matchMedia.matchMedia;
+    renderPage(<DijkstraDemo />);
+
+    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    expect(screen.getByText("自动演示")).toBeVisible();
+
+    act(() => matchMedia.setReducedMotion(true));
+    expect(screen.getByText("准备体验")).toBeVisible();
+
+    act(() => vi.advanceTimersByTime(1400));
+    expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
   });
 
   it("pauses when the document becomes hidden", async () => {
@@ -82,6 +129,37 @@ describe("DijkstraDemo", () => {
 
     expect(slider).toHaveFocus();
     expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
+  });
+
+  it("keeps playback state at the first and last frame keyboard boundaries", async () => {
+    vi.useFakeTimers();
+    renderPage(<DijkstraDemo />);
+
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(screen.getByText("准备体验")).toBeVisible();
+    expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
+
+    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    for (let tick = 0; tick < 14; tick += 1) {
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+    }
+    expect(screen.getByText("演示完成")).toBeVisible();
+
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(screen.getByText("演示完成")).toBeVisible();
+  });
+
+  it("ignores shifted and repeated playback shortcuts while preserving normal Space", () => {
+    renderPage(<DijkstraDemo />);
+
+    fireEvent.keyDown(document, { key: " ", code: "Space", shiftKey: true });
+    expect(screen.getByText("准备体验")).toBeVisible();
+
+    fireEvent.keyDown(document, { key: " ", code: "Space", repeat: true });
+    expect(screen.getByText("准备体验")).toBeVisible();
+
+    fireEvent.keyDown(document, { key: " ", code: "Space" });
+    expect(screen.getByText("自动演示")).toBeVisible();
   });
 
   it("changes B-D weight and exposes the recomputed distance", async () => {

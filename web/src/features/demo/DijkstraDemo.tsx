@@ -60,6 +60,8 @@ export function DijkstraDemo({ compact = false, autoFocusControls = false }: Dij
         || event.altKey
         || event.ctrlKey
         || event.metaKey
+        || event.shiftKey
+        || event.repeat
         || shouldPreserveNativeKeyboardControl(event.target)
       ) {
         return;
@@ -81,10 +83,12 @@ export function DijkstraDemo({ compact = false, autoFocusControls = false }: Dij
 
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        goToFrame(Math.min(state.frameIndex + 1, scenario.frames.length - 1));
+        const nextFrame = Math.min(state.frameIndex + 1, scenario.frames.length - 1);
+        if (nextFrame !== state.frameIndex) goToFrame(nextFrame);
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
-        goToFrame(Math.max(state.frameIndex - 1, 0));
+        const previousFrame = Math.max(state.frameIndex - 1, 0);
+        if (previousFrame !== state.frameIndex) goToFrame(previousFrame);
       }
     };
 

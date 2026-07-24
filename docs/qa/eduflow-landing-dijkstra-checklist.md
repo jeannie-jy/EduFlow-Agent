@@ -4,12 +4,13 @@
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Demo accessibility and motion coverage | Pass | `npm test -- src/features/demo/DijkstraDemo.test.tsx src/features/demo/useDemoPlayback.test.tsx`: 2 files, 15 tests passed. |
-| Frontend test suite | Pass | `npm test`: 17 files, 118 tests passed. |
-| TypeScript no-emit check | Pass | `npm run typecheck` exited 0. |
+| Demo accessibility and motion coverage | Pass | `npm test -- src/features/demo/DijkstraDemo.test.tsx src/features/demo/useDemoPlayback.test.tsx`: 2 files, 18 tests passed. |
+| Frontend test suite | Pass | `npm test`: 17 files, 121 tests passed. |
+| Root TypeScript command | Not a valid application check | `npm run typecheck` exits 0 only because root `tsconfig.json` has `files: []` and project references are not built by plain `tsc --noEmit`. |
+| Application TypeScript check | Blocked by existing errors | `npx tsc --noEmit -p tsconfig.app.json` exits 1 with the same 23 errors as the production build. |
 | Lint | Pass with existing warnings | `npm run lint` exited 0; it reported 17 existing warnings outside the Task 9 files. |
 | Production build | Blocked by existing errors | `npm run build` exits 1 with 23 TypeScript errors outside this task's scope. See the build blocker list below. |
-| Combined verification | Blocked by production build | `npm run verify` completed typecheck and 118 tests, then exited 1 at the same build errors. |
+| Combined verification | Blocked by production build | The prior `npm run verify` completed the then-current suite, then exited 1 at the same build errors; the post-review full suite is recorded above. |
 | Public demo network audit | Pass | The public demo, explore, landing, and simulation-model imports contain no `/api/generate`, `/api/projects`, service-client import, or LLM-provider reference. |
 
 ### Build blockers (not changed by Task 9)
@@ -47,3 +48,11 @@ Every row below is intentionally pending. No visual or browser-interaction resul
 | Pending | `/explore/dijkstra` | Reduced-motion emulation | Explicit activation leaves static steps available and does not autoplay. | Not performed; automated coverage passes; browser verification pending. | — |
 | Pending | `/explore/dijkstra` | Keyboard-only | Space toggles playback when focus is not editable; arrows move frames; controls retain native key behavior. | Not performed; automated coverage passes; browser verification pending. | — |
 | Pending | `/` and `/explore/dijkstra` | 200% browser zoom | Content reflows without clipped essential controls or unreadable overlap. | Not performed; reserved for main-agent browser QA. | — |
+
+## Review follow-up — accessibility safeguards
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Native reduced-motion change while autoplaying | Pass | A real `MediaQueryList` `change` test confirms playback immediately returns to the poster and a pending timer cannot advance a frame. |
+| Keyboard frame boundaries | Pass | ArrowLeft at the first frame leaves the poster state intact; ArrowRight at the final autoplay frame leaves the completed state intact. |
+| Modified/repeated Space | Pass | Shift+Space and repeated Space are ignored; unmodified Space still starts playback. |

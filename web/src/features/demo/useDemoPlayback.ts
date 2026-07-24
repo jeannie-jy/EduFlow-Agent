@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import { demoReducer } from "./demo-reducer";
 import { initialDemoState, type DemoState } from "./demo-types";
@@ -14,16 +14,33 @@ export type DemoPlaybackController = {
   setSpeed(value: number): void;
 };
 
-function matchesReducedMotionPreference() {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function getReducedMotionMediaQuery() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  return window.matchMedia("(prefers-reduced-motion: reduce)");
 }
 
 export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
   const [state, dispatch] = useReducer(demoReducer, initialDemoState);
   const reduceMotion = useReducedMotion();
-  const prefersReducedMotion = Boolean(reduceMotion) || matchesReducedMotionPreference();
+  const [nativeReducedMotion, setNativeReducedMotion] = useState(
+    () => getReducedMotionMediaQuery()?.matches ?? false,
+  );
+  const prefersReducedMotion = Boolean(reduceMotion) || nativeReducedMotion;
+
+  useEffect(() => {
+    const mediaQuery = getReducedMotionMediaQuery();
+    if (!mediaQuery) return;
+
+    const handleChange = (event: MediaQueryListEvent) => {
+      setNativeReducedMotion(event.matches);
+      if (event.matches) dispatch({ type: "REDUCE_MOTION" });
+    };
+
+    setNativeReducedMotion(mediaQuery.matches);
+    if (mediaQuery.matches) dispatch({ type: "REDUCE_MOTION" });
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
 
   useEffect(() => {
     if (prefersReducedMotion) dispatch({ type: "REDUCE_MOTION" });
