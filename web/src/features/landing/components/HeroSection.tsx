@@ -66,9 +66,9 @@ export function HeroSection() {
             ))}
           </div>
 
-          <div className="landing-hero__demo-plate" id="examples">
+          <section className="landing-hero__demo-plate" id="examples" aria-label="交互案例">
             <DijkstraDemo compact />
-          </div>
+          </section>
         </div>
       </section>
 
@@ -78,8 +78,15 @@ export function HeroSection() {
         <span aria-hidden="true" />
       </section>
 
-      <span id="audiences" aria-hidden="true" />
-      <span id="templates" aria-hidden="true" />
+      <section className="landing-section-preview" id="audiences" aria-labelledby="landing-audiences-heading">
+        <p>CHAPTER 03</p>
+        <h2 id="landing-audiences-heading">为不同的学习与教学路径而设计</h2>
+      </section>
+
+      <section className="landing-section-preview" id="templates" aria-labelledby="landing-templates-heading">
+        <p>CHAPTER 04</p>
+        <h2 id="landing-templates-heading">从一个合适的模板开始</h2>
+      </section>
     </>
   );
 }

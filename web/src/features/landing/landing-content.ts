@@ -1,8 +1,8 @@
 export const landingNavigation = [
-  { label: "产品原理", href: "#product" },
-  { label: "交互案例", href: "#examples" },
-  { label: "使用场景", href: "#audiences" },
-  { label: "模板库", href: "#templates" },
+  { label: "产品原理", href: "/#product" },
+  { label: "交互案例", href: "/#examples" },
+  { label: "使用场景", href: "/#audiences" },
+  { label: "模板库", href: "/#templates" },
 ] as const;
 
 export const heroContent = {
