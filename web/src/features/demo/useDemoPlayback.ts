@@ -14,23 +14,30 @@ export type DemoPlaybackController = {
   setSpeed(value: number): void;
 };
 
+function matchesReducedMotionPreference() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
   const [state, dispatch] = useReducer(demoReducer, initialDemoState);
   const reduceMotion = useReducedMotion();
+  const prefersReducedMotion = Boolean(reduceMotion) || matchesReducedMotionPreference();
 
   useEffect(() => {
-    if (reduceMotion) dispatch({ type: "REDUCE_MOTION" });
-  }, [reduceMotion]);
+    if (prefersReducedMotion) dispatch({ type: "REDUCE_MOTION" });
+  }, [prefersReducedMotion]);
 
   useEffect(() => {
-    if (reduceMotion || state.mode !== "autoplay") return;
+    if (prefersReducedMotion || state.mode !== "autoplay") return;
 
     const timer = window.setTimeout(
       () => dispatch({ type: "TICK", totalFrames }),
       1400 / state.speed,
     );
     return () => window.clearTimeout(timer);
-  }, [reduceMotion, state.mode, state.frameIndex, state.speed, totalFrames]);
+  }, [prefersReducedMotion, state.mode, state.frameIndex, state.speed, totalFrames]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -44,11 +51,11 @@ export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
   return {
     state,
     play: () => {
-      if (!reduceMotion) dispatch({ type: "PLAY" });
+      if (!prefersReducedMotion) dispatch({ type: "PLAY" });
     },
     pause: () => dispatch({ type: "PAUSE" }),
     replay: () => {
-      if (!reduceMotion) dispatch({ type: "REPLAY" });
+      if (!prefersReducedMotion) dispatch({ type: "REPLAY" });
     },
     skip: () => dispatch({ type: "SKIP" }),
     goToFrame: (frameIndex) => dispatch({ type: "USER_FRAME", frameIndex }),

@@ -23,6 +23,13 @@ type DijkstraDemoProps = {
   autoFocusControls?: boolean;
 };
 
+function shouldPreserveNativeKeyboardControl(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+
+  return target.isContentEditable
+    || target.closest("input, textarea, select, button, a, [contenteditable]") !== null;
+}
+
 export function DijkstraDemo({ compact = false, autoFocusControls = false }: DijkstraDemoProps) {
   const initialScenario = useMemo(() => buildDijkstraScenario(), []);
   const { state, play, pause, replay, skip, goToFrame, setEdgeWeight, setSpeed } = useDemoPlayback(initialScenario.frames.length);
@@ -45,6 +52,45 @@ export function DijkstraDemo({ compact = false, autoFocusControls = false }: Dij
   useEffect(() => {
     if (autoFocusControls) controlRef.current?.focus();
   }, [autoFocusControls]);
+
+  useEffect(() => {
+    const handlePlaybackKeyboard = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || shouldPreserveNativeKeyboardControl(event.target)
+      ) {
+        return;
+      }
+
+      if (event.key === " " || event.code === "Space") {
+        if (state.mode === "autoplay") {
+          event.preventDefault();
+          pause();
+        } else if (state.mode === "poster" || state.mode === "paused") {
+          event.preventDefault();
+          play();
+        } else if (state.mode === "completed") {
+          event.preventDefault();
+          replay();
+        }
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        goToFrame(Math.min(state.frameIndex + 1, scenario.frames.length - 1));
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goToFrame(Math.max(state.frameIndex - 1, 0));
+      }
+    };
+
+    document.addEventListener("keydown", handlePlaybackKeyboard);
+    return () => document.removeEventListener("keydown", handlePlaybackKeyboard);
+  }, [goToFrame, pause, play, replay, scenario.frames.length, state.frameIndex, state.mode]);
 
   return (
     <section className={cn("dijkstra-demo", compact && "dijkstra-demo--compact")} aria-label="Dijkstra 最短路径互动演示">

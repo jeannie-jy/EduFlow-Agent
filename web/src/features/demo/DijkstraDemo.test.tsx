@@ -1,11 +1,58 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { DijkstraDemo } from "./DijkstraDemo";
 
 const renderPage = (ui: React.ReactElement) => render(ui);
+const defaultMatchMedia = window.matchMedia;
+
+function createReducedMotionMatchMedia(reduce: boolean) {
+  return (query: string) =>
+    ({
+      matches: query === "(prefers-reduced-motion: reduce)" ? reduce : false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}
+
+afterEach(() => {
+  window.matchMedia = defaultMatchMedia;
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: "visible",
+  });
+});
 
 describe("DijkstraDemo", () => {
+  it("does not autoplay when reduced motion is enabled", async () => {
+    const user = userEvent.setup();
+    window.matchMedia = createReducedMotionMatchMedia(true);
+    renderPage(<DijkstraDemo />);
+
+    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+
+    expect(screen.getByText("准备体验")).toBeVisible();
+  });
+
+  it("pauses when the document becomes hidden", async () => {
+    const user = userEvent.setup();
+    renderPage(<DijkstraDemo />);
+
+    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    fireEvent(document, new Event("visibilitychange"));
+
+    expect(screen.getByText("演示已暂停")).toBeVisible();
+  });
+
   it("starts from a complete poster and only autoplays after activation", async () => {
     const user = userEvent.setup();
     renderPage(<DijkstraDemo compact />);
@@ -16,6 +63,25 @@ describe("DijkstraDemo", () => {
     await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
 
     expect(screen.getByRole("button", { name: "暂停演示" })).toBeVisible();
+  });
+
+  it("supports playback keyboard controls without stealing input keys", async () => {
+    const user = userEvent.setup();
+    renderPage(<DijkstraDemo />);
+
+    await user.keyboard(" ");
+    expect(screen.getByRole("button", { name: "暂停演示" })).toBeVisible();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("button", { name: "跳到第 2 帧" })).toHaveAttribute("aria-current", "step");
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
+
+    const slider = screen.getByRole("slider", { name: "B 到 D 的边权重" });
+    slider.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(slider).toHaveFocus();
+    expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
   });
 
   it("changes B-D weight and exposes the recomputed distance", async () => {
