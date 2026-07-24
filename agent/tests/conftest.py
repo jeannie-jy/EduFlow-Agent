@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -332,6 +333,84 @@ async def test_db():
     async with async_session() as session:
         yield session
 
+    await engine.dispose()
+
+
+@dataclass
+class AuthApiClient:
+    """HTTP client and isolated database used by authentication API tests."""
+
+    client: Any
+    session_factory: Any
+
+
+def _make_sqlite_compatible() -> None:
+    """Adapt PostgreSQL-only model types for isolated HTTP API tests."""
+    from sqlalchemy import schema, types
+    from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
+
+    from db.models import Base
+
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, (JSONB, ARRAY)):
+                column.type = types.JSON()
+            elif isinstance(column.type, PG_UUID):
+                column.type = types.Uuid(as_uuid=True)
+                column.server_default = None
+                if column.default is None and column.primary_key:
+                    column.default = schema.ColumnDefault(uuid.uuid4)
+
+
+@pytest_asyncio.fixture
+async def auth_api_client() -> AuthApiClient:
+    """Run authentication requests against an isolated transactional database."""
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    from db.models import Base
+    from db.database import get_readonly_session, get_session
+    from main import app
+
+    _make_sqlite_compatible()
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async def get_test_session():
+        async with session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    async def get_test_readonly_session():
+        async with session_factory() as session:
+            try:
+                yield session
+            finally:
+                await session.rollback()
+
+    app.dependency_overrides[get_session] = get_test_session
+    app.dependency_overrides[get_readonly_session] = get_test_readonly_session
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="https://testserver") as client:
+        yield AuthApiClient(client=client, session_factory=session_factory)
+
+    app.dependency_overrides.clear()
     await engine.dispose()
 
 

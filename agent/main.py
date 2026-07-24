@@ -63,6 +63,7 @@ def _setup_logging(settings) -> None:
 
 def create_app() -> FastAPI:
     """工厂函数：创建并配置 FastAPI 实例。"""
+    settings = get_settings()
     app = FastAPI(
         title="EduFlow-Agent API",
         description="面向计算机科学教育的自主 Agent 教学推演系统",
@@ -73,12 +74,7 @@ def create_app() -> FastAPI:
     # CORS — MVP 阶段允许本地开发来源
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],

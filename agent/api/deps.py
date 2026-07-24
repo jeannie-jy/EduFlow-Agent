@@ -4,10 +4,46 @@ from __future__ import annotations
 
 import uuid
 import logging
+from typing import Annotated
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.auth_errors import access_token_invalid, account_disabled
+from db.database import get_readonly_session
+from db.models import User
+from security.tokens import AccessTokenError, decode_access_token
 
 logger = logging.getLogger(__name__)
+
+_access_token_scheme = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Security(_access_token_scheme)
+    ],
+    session: Annotated[AsyncSession, Depends(get_readonly_session)],
+) -> User:
+    """Resolve the active user represented by a bearer access token."""
+    if credentials is None:
+        raise access_token_invalid()
+
+    try:
+        claims = decode_access_token(credentials.credentials)
+    except AccessTokenError:
+        raise access_token_invalid()
+
+    user = await session.get(User, claims.user_id)
+    if user is None:
+        raise access_token_invalid()
+    if not user.is_active:
+        raise account_disabled()
+    return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def parse_project_id(project_id: str) -> uuid.UUID:

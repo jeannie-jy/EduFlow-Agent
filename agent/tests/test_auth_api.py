@@ -5,6 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from api.auth_errors import (
     access_token_invalid,
@@ -17,6 +18,289 @@ from api.auth_errors import (
 )
 from api.error_handlers import register_error_handlers
 from schema.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
+
+
+async def _register(client, *, email: str = "student@example.com"):
+    response = await client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "nickname": "Student",
+            "password": "learning2026",
+        },
+    )
+    assert response.status_code == 201
+    return response
+
+
+def _assert_cookie_cleared(response) -> None:
+    cookie = response.headers["set-cookie"].lower()
+    assert "eduflow_refresh=" in cookie
+    assert "max-age=0" in cookie
+    assert "path=/api/auth" in cookie
+    assert "httponly" in cookie
+    assert "samesite=lax" in cookie
+
+
+@pytest.mark.asyncio
+async def test_register_sets_refresh_cookie_and_omits_sensitive_values(auth_api_client) -> None:
+    response = await _register(auth_api_client.client)
+
+    assert "eduflow_refresh=" in response.headers["set-cookie"]
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert "SameSite=lax" in response.headers["set-cookie"]
+    assert "Path=/api/auth" in response.headers["set-cookie"]
+    assert response.json()["user"]["email"] == "student@example.com"
+    assert "password" not in response.text.lower()
+    assert "refresh_token" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_register_commits_user_record(auth_api_client) -> None:
+    from db.models import User
+
+    await _register(auth_api_client.client)
+
+    async with auth_api_client.session_factory() as session:
+        user = await session.scalar(
+            select(User).where(User.email_normalized == "student@example.com")
+        )
+    assert user is not None
+
+
+@pytest.mark.asyncio
+async def test_register_rolls_back_on_unhandled_service_error(
+    auth_api_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from db.models import User
+
+    async def create_then_fail(session, request, user_agent):
+        session.add(
+            User(
+                id=uuid4(),
+                email="rollback@example.com",
+                email_normalized="rollback@example.com",
+                nickname="Rollback",
+                password_hash="not-a-real-password-hash",
+            )
+        )
+        raise RuntimeError("simulated persistence failure")
+
+    monkeypatch.setattr("api.auth.register_user", create_then_fail)
+    response = await auth_api_client.client.post(
+        "/api/auth/register",
+        json={
+            "email": "rollback@example.com",
+            "nickname": "Rollback",
+            "password": "learning2026",
+        },
+    )
+
+    assert response.status_code == 500
+    async with auth_api_client.session_factory() as session:
+        user = await session.scalar(
+            select(User).where(User.email_normalized == "rollback@example.com")
+        )
+    assert user is None
+
+
+@pytest.mark.asyncio
+async def test_login_sets_refresh_cookie_and_preserves_invalid_credentials_privacy(
+    auth_api_client,
+) -> None:
+    client = auth_api_client.client
+    await _register(client)
+
+    response = await client.post(
+        "/api/auth/login",
+        json={"email": "student@example.com", "password": "learning2026"},
+    )
+    assert response.status_code == 200
+    assert "eduflow_refresh=" in response.headers["set-cookie"]
+
+    invalid = await client.post(
+        "/api/auth/login",
+        json={"email": "missing@example.com", "password": "learning2026"},
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["error"]["code"] == "INVALID_CREDENTIALS"
+    assert invalid.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.asyncio
+async def test_refresh_rotates_cookie_and_replay_invalidates_session_family(auth_api_client) -> None:
+    client = auth_api_client.client
+    await _register(client)
+    original_refresh = client.cookies.get("eduflow_refresh")
+    assert original_refresh
+
+    refreshed = await client.post("/api/auth/refresh")
+    assert refreshed.status_code == 200
+    rotated_refresh = client.cookies.get("eduflow_refresh")
+    assert rotated_refresh and rotated_refresh != original_refresh
+    assert original_refresh not in refreshed.text
+    assert rotated_refresh not in refreshed.text
+
+    client.cookies.clear()
+    replay = await client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": f"eduflow_refresh={original_refresh}"},
+    )
+    assert replay.status_code == 401
+    assert replay.json()["error"]["code"] == "REFRESH_TOKEN_INVALID"
+    assert replay.headers["www-authenticate"] == "Bearer"
+    _assert_cookie_cleared(replay)
+
+    replacement = await client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": f"eduflow_refresh={rotated_refresh}"},
+    )
+    assert replacement.status_code == 401
+    assert replacement.json()["error"]["code"] == "REFRESH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_invalid_refresh_clears_cookie(auth_api_client) -> None:
+    response = await auth_api_client.client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": "eduflow_refresh=not-a-valid-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "REFRESH_TOKEN_INVALID"
+    assert response.headers["www-authenticate"] == "Bearer"
+    _assert_cookie_cleared(response)
+
+
+@pytest.mark.asyncio
+async def test_logout_is_idempotent_revokes_refresh_session_and_clears_cookie(auth_api_client) -> None:
+    client = auth_api_client.client
+    await _register(client)
+    refresh_token = client.cookies.get("eduflow_refresh")
+    assert refresh_token
+
+    first_logout = await client.post("/api/auth/logout")
+    assert first_logout.status_code == 204
+    _assert_cookie_cleared(first_logout)
+
+    second_logout = await client.post("/api/auth/logout")
+    assert second_logout.status_code == 204
+    _assert_cookie_cleared(second_logout)
+
+    revoked = await client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": f"eduflow_refresh={refresh_token}"},
+    )
+    assert revoked.status_code == 401
+    assert revoked.json()["error"]["code"] == "REFRESH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_logout_all_revokes_every_session_and_clears_current_cookie(auth_api_client) -> None:
+    client = auth_api_client.client
+    registration = await _register(client)
+    first_refresh = client.cookies.get("eduflow_refresh")
+    login = await client.post(
+        "/api/auth/login",
+        json={"email": "student@example.com", "password": "learning2026"},
+    )
+    assert login.status_code == 200
+    second_refresh = client.cookies.get("eduflow_refresh")
+    assert first_refresh and second_refresh and first_refresh != second_refresh
+
+    response = await client.post(
+        "/api/auth/logout-all",
+        headers={"Authorization": f"Bearer {registration.json()['access_token']}"},
+    )
+    assert response.status_code == 204
+    _assert_cookie_cleared(response)
+
+    revoked = await client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": f"eduflow_refresh={second_refresh}"},
+    )
+    assert revoked.status_code == 401
+    assert revoked.json()["error"]["code"] == "REFRESH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_me_requires_bearer_token(auth_api_client) -> None:
+    response = await auth_api_client.client.get("/api/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "ACCESS_TOKEN_INVALID"
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.asyncio
+async def test_me_returns_authenticated_user_without_sensitive_values(auth_api_client) -> None:
+    client = auth_api_client.client
+    registration = await _register(client)
+
+    response = await client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {registration.json()['access_token']}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["email"] == "student@example.com"
+    assert "password" not in response.text.lower()
+    assert "refresh_token" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_me_rejects_disabled_user_and_refresh_keeps_account_state_private(
+    auth_api_client,
+) -> None:
+    from db.models import User
+
+    client = auth_api_client.client
+    registration = await _register(client)
+    refresh_token = client.cookies.get("eduflow_refresh")
+    assert refresh_token
+    async with auth_api_client.session_factory() as session:
+        user = await session.scalar(
+            select(User).where(User.email_normalized == "student@example.com")
+        )
+        assert user is not None
+        user.is_active = False
+        await session.commit()
+
+    me = await client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {registration.json()['access_token']}"},
+    )
+    assert me.status_code == 403
+    assert me.json()["error"]["code"] == "ACCOUNT_DISABLED"
+
+    refresh = await client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": f"eduflow_refresh={refresh_token}"},
+    )
+    assert refresh.status_code == 401
+    assert refresh.json()["error"]["code"] == "REFRESH_TOKEN_INVALID"
+    _assert_cookie_cleared(refresh)
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_untrusted_origin(auth_api_client) -> None:
+    response = await auth_api_client.client.post(
+        "/api/auth/refresh",
+        headers={"Origin": "https://attacker.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_logout_rejects_untrusted_origin(auth_api_client) -> None:
+    response = await auth_api_client.client.post(
+        "/api/auth/logout",
+        headers={"Origin": "https://attacker.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.fixture
