@@ -30,3 +30,26 @@ Implementation commit: `479c041bd0c0a9c3939e53b0d8388191da65d6a8`
 - Docker-backed PostgreSQL and Redis were unavailable locally, so the live migration upgrade/check and service-backed PostgreSQL/Redis tests were not run here. CI now performs the upgrade followed by `alembic check`; its existing service jobs cover the live integrations.
 - Frontend work remains intentionally deferred and was not changed.
 - The validation suite was not run with warnings promoted to errors because that was outside this review scope.
+
+## Follow-up: Logout Revocation Commit Ordering
+
+Implementation commit: `da3b2ad17a777f5e86ba3cd432b2cf12084bda17`
+
+### RED
+
+- Real HTTP commit-failure tests for `/api/auth/logout` and `/api/auth/logout-all` initially returned `204` and emitted the deletion cookie.
+- Real HTTP ordering tests initially observed only cookie clearing, with no route-level commit.
+
+### GREEN
+
+- Both routes now explicitly commit after their revocation work and before clearing the refresh cookie or returning `204`.
+- If that commit raises, the existing session dependency receives the exception and rolls back; the error handler returns the standard safe `500` response. No deletion cookie is emitted because cookie clearing has not started.
+- The new tests cover both routes' commit-failure status/header behavior and successful commit-before-cookie ordering.
+
+### Verification
+
+- Focused red/green test: four targeted HTTP cases passed after the change.
+- `python -m pytest tests/test_auth_api.py tests/test_final_review_fixes.py -v` — 82 passed.
+- `python -m py_compile api/auth.py` — passed.
+- `python -m pytest tests -p no:cacheprovider -v -m "not postgres and not redis"` — 541 passed, 3 skipped, 8 deselected.
+- Patch integrity check — passed.
