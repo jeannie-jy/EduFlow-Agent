@@ -1088,13 +1088,23 @@ function ExportTabContent({ projectId }: { projectId: string }) {
           )}
 
           {job.status === "completed" && job.artifacts && (
-            <div className="space-y-2">
-              {job.artifacts.map((a) => (
-                <a key={a.type} href={a.url} download className="flex items-center justify-between rounded-lg border p-3 hover:bg-muted transition-colors">
-                  <span className="text-sm font-medium">{a.type === "mp4" ? "视频文件" : a.type === "manim_source" ? "源码" : "字幕"}</span>
-                  <Download size={16} className="text-muted-foreground" />
-                </a>
+            <div className="space-y-4">
+              {job.artifacts.filter((a) => a.type === "mp4").map((a) => (
+                <div key={a.type} className="rounded-lg border overflow-hidden bg-black">
+                  <video src={a.url} controls className="w-full" style={{ maxHeight: 400 }}>
+                    您的浏览器不支持视频播放
+                  </video>
+                </div>
               ))}
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">下载文件</p>
+                {job.artifacts.map((a) => (
+                  <a key={a.type} href={a.url} download className="flex items-center justify-between rounded-lg border p-3 hover:bg-muted transition-colors">
+                    <span className="text-sm font-medium">{a.type === "mp4" ? "视频文件 (MP4)" : a.type === "manim_source" ? "Manim 源码 (main.py)" : "字幕 (SRT)"}</span>
+                    <Download size={16} className="text-muted-foreground" />
+                  </a>
+                ))}
+              </div>
             </div>
           )}
         </div>
