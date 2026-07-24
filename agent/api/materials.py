@@ -12,7 +12,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +38,40 @@ ALLOWED_EXTENSIONS = {
 }
 
 
+def _normalize_original_filename(filename: str | None) -> str:
+    """Return a database-safe display name without changing the stored path."""
+    basename = (filename or "unknown").replace("\\", "/").rsplit("/", 1)[-1]
+    cleaned = "".join(
+        character for character in basename if ord(character) >= 32 and ord(character) != 127
+    ).strip()
+    if not cleaned:
+        return "unknown"
+
+    suffix = Path(cleaned).suffix
+    if len(cleaned) > 500:
+        if suffix and len(suffix) < 500:
+            return f"{cleaned[:500 - len(suffix)]}{suffix}"
+        return cleaned[:500]
+    return cleaned
+
+
+def _resolve_material_storage_path(storage_path: str | None) -> Path:
+    """Resolve a persisted path only when it remains inside the upload root."""
+    if storage_path is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    upload_root = get_settings().upload_dir.resolve()
+    try:
+        file_path = Path(storage_path).resolve()
+        file_path.relative_to(upload_root)
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Material not found")
+    return file_path
+
+
 @router.post("/upload", status_code=201)
 async def upload_material(
     current_user: CurrentUser,
@@ -52,7 +86,7 @@ async def upload_material(
     settings = get_settings()
 
     # 文件名安全检查
-    original_name = file.filename or "unknown"
+    original_name = _normalize_original_filename(file.filename)
     suffix = Path(original_name).suffix.lower()
 
     if suffix not in ALLOWED_EXTENSIONS:
@@ -60,6 +94,13 @@ async def upload_material(
             status_code=400,
             detail=f"不支持的文件类型: {suffix}。支持: {', '.join(ALLOWED_EXTENSIONS.keys())}",
         )
+
+    expected_content_type = ALLOWED_EXTENSIONS[suffix]
+    if (
+        expected_content_type not in settings.allowed_upload_types
+        or file.content_type != expected_content_type
+    ):
+        raise HTTPException(status_code=400, detail="File content type does not match its extension")
 
     # 大小检查
     contents = await file.read()
@@ -90,8 +131,18 @@ async def upload_material(
     try:
         session.add(material)
         await session.flush()
-    except Exception:
-        shutil.rmtree(upload_dir, ignore_errors=True)
+        await session.commit()
+    except BaseException:
+        # Cleanup is best-effort so it never masks the original database error
+        # or cancellation signal.
+        try:
+            await session.rollback()
+        except BaseException:
+            logger.exception("素材上传失败后的数据库回滚失败: id=%s", material_id)
+        try:
+            shutil.rmtree(upload_dir)
+        except OSError:
+            logger.exception("素材上传失败后的文件清理失败: id=%s", material_id)
         raise
 
     logger.info("文件上传: id=%s | name=%s | size=%d | type=%s",
@@ -161,11 +212,10 @@ async def parse_material(
 ) -> dict:
     """解析上传的课件文件，提取结构化内容。"""
     material = await get_owned_material(session, material_id, current_user.id)
-    if material.storage_path is None:
-        raise HTTPException(status_code=404, detail="Material not found")
+    file_path = _resolve_material_storage_path(material.storage_path)
 
     try:
-        parsed = parse_material_file(material.storage_path)
+        parsed = parse_material_file(file_path)
     except Exception as exc:
         logger.exception("文件解析失败: material=%s", material_id)
         raise HTTPException(status_code=500, detail=f"解析失败: {exc}")
@@ -195,12 +245,7 @@ async def preview_material(
 ) -> dict:
     """预览文件解析结果（只读，不触发重新解析）。"""
     material = await get_owned_material(session, material_id, current_user.id)
-    if material.storage_path is None:
-        raise HTTPException(status_code=404, detail="Material not found")
-
-    file_path = Path(material.storage_path)
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    file_path = _resolve_material_storage_path(material.storage_path)
 
     suffix = file_path.suffix.lower()
 

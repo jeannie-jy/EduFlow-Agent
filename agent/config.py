@@ -142,6 +142,7 @@ class Settings(BaseSettings):
         "text/x-python",
         "text/x-csrc",
         "text/x-java-source",
+        "text/x-c++src",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ]
 

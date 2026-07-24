@@ -42,6 +42,8 @@ async def create_project(
         material_ids = [uuid.UUID(str(material_id)) for material_id in material_ids_raw]
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid material ID")
+    if len(material_ids) != len(set(material_ids)):
+        raise HTTPException(status_code=400, detail="Invalid material ID")
 
     materials = []
     if material_ids:
@@ -51,7 +53,9 @@ async def create_project(
                     select(SourceMaterial).where(
                         SourceMaterial.id.in_(material_ids),
                         SourceMaterial.owner_id == current_user.id,
+                        SourceMaterial.project_id.is_(None),
                     )
+                    .with_for_update()
                 )
             ).scalars()
         )

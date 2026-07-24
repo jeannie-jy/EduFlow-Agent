@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from uuid import UUID, uuid4
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -254,3 +255,120 @@ async def test_project_creation_rejects_foreign_or_missing_materials(
 
     assert foreign.status_code == 400
     assert missing.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_project_creation_rejects_already_bound_material(
+    auth_api_client,
+    client_for_user_a,
+    user_a,
+    tmp_path,
+):
+    """An already-bound material cannot be silently rebound to another project."""
+    from config import get_settings
+    from db.models import Project, SourceMaterial
+    from sqlalchemy import select
+
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    with patch("api.materials.get_settings", return_value=settings):
+        upload = await client_for_user_a.post(
+            "/api/materials/upload",
+            files={"file": ("once.txt", b"bind once", "text/plain")},
+        )
+        assert upload.status_code == 201
+        material_id = upload.json()["id"]
+        first = await client_for_user_a.post(
+            "/api/projects",
+            json={
+                "title": "Initially bound",
+                "constraints": {"material_ids": [material_id]},
+            },
+        )
+        second = await client_for_user_a.post(
+            "/api/projects",
+            json={
+                "title": "Must not claim the material",
+                "constraints": {"material_ids": [material_id]},
+            },
+        )
+
+    assert first.status_code == 201
+    assert second.status_code == 400
+    async with auth_api_client.session_factory() as session:
+        material = await session.scalar(
+            select(SourceMaterial).where(SourceMaterial.id == UUID(material_id))
+        )
+        projects = list(
+            (await session.scalars(select(Project).where(Project.owner_id == user_a["id"])))
+        )
+    assert material is not None
+    assert material.project_id == UUID(first.json()["id"])
+    assert [project.title for project in projects] == ["Initially bound"]
+
+
+@pytest.mark.asyncio
+async def test_project_material_lookup_locks_only_unbound_owned_rows():
+    """The binding query protects unbound rows against concurrent rebinding."""
+    from sqlalchemy.dialects import postgresql
+    from api.projects import create_project
+    from db.models import SourceMaterial
+    from schema.project import ProjectCreateRequest
+
+    user_id = uuid4()
+    material_id = uuid4()
+    material = SourceMaterial(id=material_id, owner_id=user_id, type="txt")
+    result = MagicMock()
+    result.scalars.return_value = [material]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    session.flush = AsyncMock()
+
+    await create_project(
+        ProjectCreateRequest(
+            title="Lock material",
+            constraints={"material_ids": [str(material_id)]},
+        ),
+        SimpleNamespace(id=user_id),
+        session,
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "source_materials.project_id IS NULL" in compiled
+    assert "FOR UPDATE" in compiled
+
+
+@pytest.mark.asyncio
+async def test_corrupted_material_path_outside_upload_root_is_not_accessible(
+    auth_api_client,
+    client_for_user_a,
+    tmp_path,
+):
+    """Parse and preview reject a database path that escapes the upload root."""
+    from config import get_settings
+    from db.models import SourceMaterial
+    from sqlalchemy import select
+
+    outside_path = tmp_path.parent / "outside.txt"
+    outside_path.write_text("must not be read", encoding="utf-8")
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    with patch("api.materials.get_settings", return_value=settings):
+        upload = await client_for_user_a.post(
+            "/api/materials/upload",
+            files={"file": ("inside.txt", b"inside", "text/plain")},
+        )
+        assert upload.status_code == 201
+        material_id = upload.json()["id"]
+        async with auth_api_client.session_factory() as session:
+            material = await session.scalar(
+                select(SourceMaterial).where(SourceMaterial.id == UUID(material_id))
+            )
+            assert material is not None
+            material.storage_path = str(outside_path)
+            await session.commit()
+
+        parse = await client_for_user_a.post(f"/api/materials/{material_id}/parse")
+        preview = await client_for_user_a.get(f"/api/materials/{material_id}/preview")
+
+    assert parse.status_code == preview.status_code == 404
+    assert parse.json() == preview.json()

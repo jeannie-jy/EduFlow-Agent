@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import pytest
 from pathlib import Path
@@ -60,13 +61,18 @@ async def test_upload_removes_file_when_metadata_persistence_fails(tmp_path):
     """A failed database flush does not leave an untracked uploaded file behind."""
     from fastapi import UploadFile
     from sqlalchemy.exc import SQLAlchemyError
+    from starlette.datastructures import Headers
     from api.materials import upload_material
     from config import get_settings
 
     settings = get_settings().model_copy(update={"upload_dir": tmp_path})
     session = MagicMock()
     session.flush = AsyncMock(side_effect=SQLAlchemyError("database unavailable"))
-    file = UploadFile(filename="lecture.txt", file=io.BytesIO(b"TCP and HTTP"))
+    file = UploadFile(
+        filename="lecture.txt",
+        file=io.BytesIO(b"TCP and HTTP"),
+        headers=Headers({"content-type": "text/plain"}),
+    )
 
     with patch("api.materials.get_settings", return_value=settings):
         with pytest.raises(SQLAlchemyError, match="database unavailable"):
@@ -77,6 +83,119 @@ async def test_upload_removes_file_when_metadata_persistence_fails(tmp_path):
             )
 
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_upload_removes_file_when_database_commit_fails(tmp_path):
+    """A commit failure rolls back metadata and removes the just-written file."""
+    from fastapi import UploadFile
+    from sqlalchemy.exc import SQLAlchemyError
+    from starlette.datastructures import Headers
+    from api.materials import upload_material
+    from config import get_settings
+
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    session = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock(side_effect=SQLAlchemyError("connection lost"))
+    session.rollback = AsyncMock()
+    file = UploadFile(
+        filename="lecture.txt",
+        file=io.BytesIO(b"TCP and HTTP"),
+        headers=Headers({"content-type": "text/plain"}),
+    )
+
+    with patch("api.materials.get_settings", return_value=settings):
+        with pytest.raises(SQLAlchemyError, match="connection lost"):
+            await upload_material(
+                current_user=SimpleNamespace(id=UUID("9cc4f03c-ef67-4cff-a0fd-8e43c7717743")),
+                file=file,
+                session=session,
+            )
+
+    session.rollback.assert_awaited_once()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_upload_cancellation_rolls_back_and_removes_file(tmp_path):
+    """Cancellation uses the same cleanup path without being converted to an error."""
+    from fastapi import UploadFile
+    from api.materials import upload_material
+    from config import get_settings
+    from starlette.datastructures import Headers
+
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    session = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock(side_effect=asyncio.CancelledError())
+    session.rollback = AsyncMock()
+    file = UploadFile(
+        filename="lecture.txt",
+        file=io.BytesIO(b"TCP and HTTP"),
+        headers=Headers({"content-type": "text/plain"}),
+    )
+
+    with patch("api.materials.get_settings", return_value=settings):
+        with pytest.raises(asyncio.CancelledError):
+            await upload_material(
+                current_user=SimpleNamespace(id=UUID("9cc4f03c-ef67-4cff-a0fd-8e43c7717743")),
+                file=file,
+                session=session,
+            )
+
+    session.rollback.assert_awaited_once()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("raw_filename", "expected"),
+    [
+        ("../../private/lecture.txt", "lecture.txt"),
+        (r"..\\private\\lecture.txt", "lecture.txt"),
+        ("notes\x00\n.txt", "notes.txt"),
+        ("a" * 600 + ".txt", "a" * 496 + ".txt"),
+    ],
+)
+def test_original_filename_is_normalized_for_database(raw_filename, expected):
+    """Database metadata never retains traversal, controls, or overlong names."""
+    from api.materials import _normalize_original_filename
+
+    assert _normalize_original_filename(raw_filename) == expected
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_mismatched_declared_content_type(auth_api_client, tmp_path):
+    """A filename extension cannot be used to bypass the configured MIME allowlist."""
+    registration = await auth_api_client.client.post(
+        "/api/auth/register",
+        json={
+            "email": "material-mime@example.com",
+            "nickname": "material-mime",
+            "password": "learning2026",
+        },
+    )
+    assert registration.status_code == 201
+    headers = {"Authorization": f"Bearer {registration.json()['access_token']}"}
+
+    from config import get_settings
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    with patch("api.materials.get_settings", return_value=settings):
+        response = await auth_api_client.client.post(
+            "/api/materials/upload",
+            files={"file": ("lecture.txt", b"not a PDF", "application/pdf")},
+            headers=headers,
+        )
+
+    assert response.status_code == 400
+
+
+def test_cpp_mime_is_present_in_the_configured_upload_allowlist():
+    """The extension mapping and configured MIME allowlist stay in sync."""
+    from api.materials import ALLOWED_EXTENSIONS
+    from config import get_settings
+
+    assert ALLOWED_EXTENSIONS[".cpp"] in get_settings().allowed_upload_types
 
 
 @pytest.mark.asyncio
