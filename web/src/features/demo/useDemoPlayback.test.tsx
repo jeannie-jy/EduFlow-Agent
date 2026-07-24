@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDemoPlayback } from "./useDemoPlayback";
 
 let reducedMotion = false;
+const defaultMatchMedia = window.matchMedia;
 
 vi.mock("motion/react", () => ({
   useReducedMotion: () => reducedMotion,
@@ -11,6 +12,7 @@ vi.mock("motion/react", () => ({
 afterEach(() => {
   cleanup();
   reducedMotion = false;
+  window.matchMedia = defaultMatchMedia;
   vi.useRealTimers();
 });
 
@@ -65,6 +67,7 @@ describe("useDemoPlayback", () => {
   });
 
   it("returns to the poster when reduced motion becomes active", () => {
+    window.matchMedia = undefined as unknown as typeof window.matchMedia;
     const { result, rerender } = renderHook(() => useDemoPlayback(3));
 
     act(() => result.current.play());
@@ -76,6 +79,7 @@ describe("useDemoPlayback", () => {
 
   it("keeps reduced-motion users on the poster when they play or replay", () => {
     vi.useFakeTimers();
+    window.matchMedia = undefined as unknown as typeof window.matchMedia;
     reducedMotion = true;
     const setTimeoutSpy = vi.spyOn(window, "setTimeout");
     const { result } = renderHook(() => useDemoPlayback(3));

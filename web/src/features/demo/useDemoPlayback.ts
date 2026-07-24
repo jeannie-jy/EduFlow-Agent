@@ -19,24 +19,34 @@ function getReducedMotionMediaQuery() {
   return window.matchMedia("(prefers-reduced-motion: reduce)");
 }
 
+type NativeReducedMotionPreference = {
+  available: boolean;
+  matches: boolean;
+};
+
+function readNativeReducedMotionPreference(): NativeReducedMotionPreference {
+  const mediaQuery = getReducedMotionMediaQuery();
+  return { available: mediaQuery !== null, matches: mediaQuery?.matches ?? false };
+}
+
 export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
   const [state, dispatch] = useReducer(demoReducer, initialDemoState);
   const reduceMotion = useReducedMotion();
-  const [nativeReducedMotion, setNativeReducedMotion] = useState(
-    () => getReducedMotionMediaQuery()?.matches ?? false,
-  );
-  const prefersReducedMotion = Boolean(reduceMotion) || nativeReducedMotion;
+  const [nativeReducedMotion, setNativeReducedMotion] = useState(readNativeReducedMotionPreference);
+  const prefersReducedMotion = nativeReducedMotion.available
+    ? nativeReducedMotion.matches
+    : Boolean(reduceMotion);
 
   useEffect(() => {
     const mediaQuery = getReducedMotionMediaQuery();
     if (!mediaQuery) return;
 
     const handleChange = (event: MediaQueryListEvent) => {
-      setNativeReducedMotion(event.matches);
+      setNativeReducedMotion({ available: true, matches: event.matches });
       if (event.matches) dispatch({ type: "REDUCE_MOTION" });
     };
 
-    setNativeReducedMotion(mediaQuery.matches);
+    setNativeReducedMotion({ available: true, matches: mediaQuery.matches });
     if (mediaQuery.matches) dispatch({ type: "REDUCE_MOTION" });
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);

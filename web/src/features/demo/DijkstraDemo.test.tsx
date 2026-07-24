@@ -86,6 +86,20 @@ describe("DijkstraDemo", () => {
     expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
   });
 
+  it("enables explicit playback when native reduced motion turns off", () => {
+    const matchMedia = createReducedMotionMatchMediaController(true);
+    window.matchMedia = matchMedia.matchMedia;
+    renderPage(<DijkstraDemo />);
+
+    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    expect(screen.getByText("准备体验")).toBeVisible();
+
+    act(() => matchMedia.setReducedMotion(false));
+    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+
+    expect(screen.getByText("自动演示")).toBeVisible();
+  });
+
   it("pauses when the document becomes hidden", async () => {
     const user = userEvent.setup();
     renderPage(<DijkstraDemo />);
