@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderPage } from "@/test/render";
 import { LandingPage } from "./LandingPage";
+import { processSteps, templates } from "./landing-content";
 
 const landingStyles = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
 
@@ -64,6 +65,57 @@ describe("LandingPage", () => {
     expect(screen.getByRole("region", { name: "距离表（从 A 出发）" })).toBeVisible();
     expect(screen.getByText(/选择 A 作为源点/)).toBeVisible();
     expect(screen.getByRole("button", { name: "跳到第 6 帧" })).toBeVisible();
+  });
+
+  it("renders the complete process, two audience paths, and honest template previews in narrative order", () => {
+    renderPage(<LandingPage />);
+
+    const processLedger = screen.getByRole("list", { name: "教学推演的五个步骤" });
+    const processRows = within(processLedger).getAllByRole("listitem");
+    expect(processRows).toHaveLength(5);
+    processSteps.forEach(([title, description], index) => {
+      expect(processRows[index]).toHaveTextContent(`0${index + 1}${title}${description}`);
+    });
+
+    const audienceCards = document.querySelectorAll("#audiences .landing-audience-path");
+    expect(audienceCards).toHaveLength(2);
+    expect(audienceCards[0]).toHaveTextContent("学生：我想理解一个知识点");
+    expect(audienceCards[1]).toHaveTextContent("教师：我想创建教学推演");
+    expect(screen.getByRole("link", { name: "体验学生推演" })).toHaveAttribute("href", "/explore/dijkstra");
+    expect(screen.getByRole("link", { name: "开始创建推演" })).toHaveAttribute("href", "/app/new");
+    expect(screen.queryByText("助教")).not.toBeInTheDocument();
+    expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+
+    const templateCards = document.querySelectorAll("#templates .landing-template");
+    expect(templateCards).toHaveLength(3);
+    templates.forEach(([name, category, frames, duration], index) => {
+      for (const value of [name, category, frames, duration]) {
+        expect(templateCards[index]).toHaveTextContent(value);
+      }
+    });
+    expect(screen.getByText("推演对象：加权图")).toBeVisible();
+    expect(screen.getByText("推演对象：数组交换")).toBeVisible();
+    expect(screen.getByText("推演对象：进程队列")).toBeVisible();
+    expect(screen.getByLabelText("Dijkstra 静态预览：节点 A 到 C 的距离从 ∞ 更新为 2")).toBeVisible();
+    expect(screen.getByLabelText("冒泡排序静态预览：5 与 3 交换后为 [3, 5, 8]")).toBeVisible();
+    expect(screen.getByLabelText("Round Robin 静态预览：进程 B 在 2 ms 时间片后回到队尾")).toBeVisible();
+
+    expect(screen.getByRole("link", { name: "体验 Dijkstra 案例" })).toHaveAttribute("href", "/explore/dijkstra");
+    expect(screen.queryByRole("link", { name: "体验 冒泡排序 案例" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "体验 Round Robin 案例" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("公开案例筹备中")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "基于 Dijkstra 模板创建" })).toHaveAttribute("href", "/app/new?template=Dijkstra");
+    expect(screen.getByRole("link", { name: "基于 冒泡排序 模板创建" })).toHaveAttribute("href", "/app/new?template=%E5%86%92%E6%B3%A1%E6%8E%92%E5%BA%8F");
+    expect(screen.getByRole("link", { name: "基于 Round Robin 模板创建" })).toHaveAttribute("href", "/app/new?template=Round%20Robin");
+
+    expect(Array.from(document.querySelectorAll("main > section")).map((section) => section.id || section.getAttribute("aria-labelledby"))).toEqual([
+      "landing-hero-title",
+      "product",
+      "audiences",
+      "capabilities-heading",
+      "templates",
+      "final-action-heading",
+    ]);
   });
 
   it("leaves root-qualified section navigation to the browser instead of React Router", async () => {

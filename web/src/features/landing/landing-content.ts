@@ -27,3 +27,37 @@ export const templates = [
   ["冒泡排序", "数据结构", "12 帧", "约 4 分钟"],
   ["Round Robin", "操作系统", "16 帧", "约 7 分钟"],
 ] as const;
+
+type TemplateName = (typeof templates)[number][0];
+
+export type TemplatePreview = {
+  objectType: string;
+  label: string;
+  before: string;
+  focus: string;
+  after: string;
+};
+
+export const templatePreviews: Record<TemplateName, TemplatePreview> = {
+  Dijkstra: {
+    objectType: "加权图",
+    label: "Dijkstra 静态预览：节点 A 到 C 的距离从 ∞ 更新为 2",
+    before: "A → C",
+    focus: "dist(C): ∞ → 2",
+    after: "边权 2",
+  },
+  冒泡排序: {
+    objectType: "数组交换",
+    label: "冒泡排序静态预览：5 与 3 交换后为 [3, 5, 8]",
+    before: "[5, 3, 8]",
+    focus: "5 ↔ 3",
+    after: "[3, 5, 8]",
+  },
+  "Round Robin": {
+    objectType: "进程队列",
+    label: "Round Robin 静态预览：进程 B 在 2 ms 时间片后回到队尾",
+    before: "A · B · C",
+    focus: "B / 2 ms",
+    after: "C · A · B",
+  },
+};
