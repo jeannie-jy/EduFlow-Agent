@@ -1,5 +1,7 @@
 import { render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+// @ts-expect-error Node test helper types are excluded from the browser build.
+import { readFileSync } from "node:fs";
 import indexHtml from "../../index.html?raw";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
 import { themeScript } from "./theme-script";
@@ -54,4 +56,13 @@ it("keeps the pre-hydration script aligned with its exported source", () => {
   const inlineScript = indexHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
   const normalize = (value: string) => value.replace(/\s+/g, "");
   expect(normalize(inlineScript)).toBe(normalize(themeScript));
+});
+
+it("ships the required Light and Dark semantic tokens", () => {
+  const css = readFileSync("src/styles/globals.css", "utf8");
+  expect(css).toContain("--paper-texture-opacity");
+  expect(css).toContain("--canvas-background");
+  expect(css).toContain("--motion-layout");
+  expect(css).toContain("#F3EBD8");
+  expect(css).toContain("#1B1814");
 });
