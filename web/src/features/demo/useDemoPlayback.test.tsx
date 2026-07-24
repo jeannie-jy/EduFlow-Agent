@@ -88,6 +88,7 @@ describe("useDemoPlayback", () => {
     act(() => result.current.replay());
     act(() => vi.advanceTimersByTime(2800));
 
+    expect(result.current.prefersReducedMotion).toBe(true);
     expect(result.current.state).toMatchObject({ mode: "poster", frameIndex: 0 });
     expect(setTimeoutSpy).not.toHaveBeenCalled();
   });

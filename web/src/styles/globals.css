@@ -246,6 +246,7 @@ button, a, [role="button"] { cursor: pointer; }
 .landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 13.25rem; }
 .landing-hero__demo-plate .dijkstra-demo__explanation { padding-top: 0.55rem; }
 .landing-hero__demo-plate .demo-timeline { padding-top: 0.55rem; }
+.landing-hero__demo-loading { position: relative; z-index: 1; display: grid; min-height: 20rem; place-items: center; margin: 0; border: 1px solid var(--border); background: var(--card); color: var(--muted-foreground); }
 .landing-next-chapter { display: grid; grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr) minmax(4rem, 15rem); gap: clamp(1rem, 4vw, 5rem); align-items: start; min-height: 8rem; max-width: 104rem; margin: 0 auto; padding: 0.55rem clamp(1rem, 4vw, 5.25rem) 1.25rem 0; }
 .landing-next-chapter p { align-self: start; margin: 0; padding-left: 1.7rem; color: var(--primary); }
 .landing-next-chapter h2 { font-size: clamp(2rem, 4vw, 4.2rem); line-height: 1.1; }
@@ -476,6 +477,14 @@ button, a, [role="button"] { cursor: pointer; }
 .dijkstra-explore__create-link:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 4px;
+}
+
+.dijkstra-explore__demo-loading {
+  display: grid;
+  min-height: 20rem;
+  place-items: center;
+  margin: 0;
+  color: var(--muted-foreground);
 }
 
 #product,
@@ -898,8 +907,20 @@ button, a, [role="button"] { cursor: pointer; }
 .dijkstra-demo__controls {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.dijkstra-demo__frame-control {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.dijkstra-demo__checkpoints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
 .demo-timeline {

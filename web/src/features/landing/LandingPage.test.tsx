@@ -1,6 +1,7 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
+import { setAuthState } from "@/lib/auth";
 import { renderPage } from "@/test/render";
 import { LandingPage } from "./LandingPage";
 import { processSteps, templates } from "./landing-content";
@@ -39,10 +40,55 @@ globalThis.IntersectionObserver = IntersectionObserverMock as unknown as typeof 
 
 describe("LandingPage", () => {
   beforeEach(() => {
+    localStorage.clear();
     Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
   });
 
-  it("explains the product and exposes the public, creation, and native root-qualified navigation paths", () => {
+  it("announces an honest loading status while the Hero demo is lazy-loaded", () => {
+    renderPage(<LandingPage />);
+
+    const loadingStatus = screen.getByText("正在加载交互演示…");
+    expect(loadingStatus).toHaveAttribute("role", "status");
+    expect(loadingStatus).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("keeps signed-out landing actions pointed at login and project creation", async () => {
+    const user = userEvent.setup();
+    renderPage(<LandingPage />);
+
+    expect(screen.getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/new");
+    expect(screen.getByRole("link", { name: "创建新的推演" })).toHaveAttribute("href", "/app/new");
+
+    await user.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动主导航" });
+    expect(within(mobileNavigation).getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
+    expect(within(mobileNavigation).getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/new");
+  });
+
+  it("sends signed-in landing actions to the existing workspace while preserving the public demo", async () => {
+    const user = userEvent.setup();
+    setAuthState({
+      isAuthenticated: true,
+      nickname: "Ada",
+      email: "ada@example.com",
+    });
+    renderPage(<LandingPage />);
+
+    expect(screen.getByRole("link", { name: "打开工作台" })).toHaveAttribute("href", "/app");
+    expect(screen.queryByRole("link", { name: "登录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "开始创建" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "继续上次项目" })).toHaveAttribute("href", "/app");
+    expect(screen.getByRole("link", { name: "体验交互推演" })).toHaveAttribute("href", "/explore/dijkstra");
+
+    await user.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileNavigation = screen.getByRole("navigation", { name: "移动主导航" });
+    expect(within(mobileNavigation).getByRole("link", { name: "打开工作台" })).toHaveAttribute("href", "/app");
+    expect(within(mobileNavigation).queryByRole("link", { name: "登录" })).not.toBeInTheDocument();
+    expect(within(mobileNavigation).queryByRole("link", { name: "开始创建" })).not.toBeInTheDocument();
+  });
+
+  it("explains the product and exposes the public, creation, and native root-qualified navigation paths", async () => {
     renderPage(<LandingPage />);
 
     expect(screen.getByRole("heading", {
@@ -71,7 +117,7 @@ describe("LandingPage", () => {
     expect(screen.queryByText("助教")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "教学内容值得被认真校对" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "不必从空白开始" })).toBeVisible();
-    expect(screen.getByLabelText("Dijkstra 最短路径互动演示")).toBeVisible();
+    expect(await screen.findByLabelText("Dijkstra 最短路径互动演示")).toBeVisible();
     expect(screen.getByRole("region", { name: "距离表（从 A 出发）" })).toBeVisible();
     expect(screen.getByText(/选择 A 作为源点/)).toBeVisible();
     expect(screen.getByRole("button", { name: "跳到第 6 帧" })).toBeVisible();

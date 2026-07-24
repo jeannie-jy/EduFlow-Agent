@@ -1,15 +1,23 @@
+import { lazy, Suspense } from "react";
 import { ArrowRight, BookOpenText } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { Link } from "react-router-dom";
-import { DijkstraDemo } from "@/features/demo/DijkstraDemo";
 import { heroContent, heroExamples } from "../landing-content";
+
+const LazyDijkstraDemo = lazy(() =>
+  import("@/features/demo/DijkstraDemo").then(({ DijkstraDemo }) => ({ default: DijkstraDemo })),
+);
 
 const reveal = {
   hidden: { opacity: 1, y: 14 },
   visible: { opacity: 1, y: 0 },
 };
 
-export function HeroSection() {
+type HeroSectionProps = {
+  isAuthenticated: boolean;
+};
+
+export function HeroSection({ isAuthenticated }: HeroSectionProps) {
   const reduceMotion = useReducedMotion();
 
   return (
@@ -48,7 +56,12 @@ export function HeroSection() {
                 <Link to="/explore/dijkstra" className="landing-action landing-action--primary">
                   体验交互推演 <ArrowRight aria-hidden="true" />
                 </Link>
-                <Link to="/app/new" className="landing-action landing-action--secondary">创建新的推演</Link>
+                <Link
+                  to={isAuthenticated ? "/app" : "/app/new"}
+                  className="landing-action landing-action--secondary"
+                >
+                  {isAuthenticated ? "继续上次项目" : "创建新的推演"}
+                </Link>
               </motion.div>
             </motion.div>
 
@@ -67,7 +80,15 @@ export function HeroSection() {
           </div>
 
           <section className="landing-hero__demo-plate" id="examples" aria-label="交互案例">
-            <DijkstraDemo compact />
+            <Suspense
+              fallback={(
+                <p className="landing-hero__demo-loading" role="status" aria-live="polite">
+                  正在加载交互演示…
+                </p>
+              )}
+            >
+              <LazyDijkstraDemo compact />
+            </Suspense>
           </section>
         </div>
       </section>

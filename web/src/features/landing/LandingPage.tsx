@@ -1,4 +1,5 @@
 import { AudienceSection } from "./components/AudienceSection";
+import { getAuthState } from "@/lib/auth";
 import { CapabilitySection } from "./components/CapabilitySection";
 import { FinalActionSection } from "./components/FinalActionSection";
 import { HeroSection } from "./components/HeroSection";
@@ -7,11 +8,13 @@ import { SiteHeader } from "./components/SiteHeader";
 import { TemplateSection } from "./components/TemplateSection";
 
 export function LandingPage() {
+  const isAuthenticated = getAuthState()?.isAuthenticated ?? false;
+
   return (
     <div className="landing-page min-h-screen bg-background text-foreground">
-      <SiteHeader />
+      <SiteHeader isAuthenticated={isAuthenticated} />
       <main>
-        <HeroSection />
+        <HeroSection isAuthenticated={isAuthenticated} />
         <HowItWorksSection />
         <AudienceSection />
         <CapabilitySection />

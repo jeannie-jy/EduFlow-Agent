@@ -1,6 +1,10 @@
+import { lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
-import { DijkstraDemo } from "@/features/demo/DijkstraDemo";
 import { SiteHeader } from "@/features/landing/components/SiteHeader";
+
+const LazyDijkstraDemo = lazy(() =>
+  import("@/features/demo/DijkstraDemo").then(({ DijkstraDemo }) => ({ default: DijkstraDemo })),
+);
 
 export function DijkstraExplorePage() {
   return (
@@ -13,7 +17,15 @@ export function DijkstraExplorePage() {
           <p className="dijkstra-explore__lede">逐帧观察选点、松弛和距离表变化，再修改一条边权重新计算路径。</p>
         </header>
 
-        <DijkstraDemo autoFocusControls />
+        <Suspense
+          fallback={(
+            <p className="dijkstra-explore__demo-loading paper-surface" role="status" aria-live="polite">
+              正在加载交互演示…
+            </p>
+          )}
+        >
+          <LazyDijkstraDemo />
+        </Suspense>
 
         <section className="dijkstra-explore__what-you-saw" aria-labelledby="what-you-saw">
           <p className="dijkstra-explore__eyebrow">案例笔记</p>

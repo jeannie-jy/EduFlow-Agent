@@ -6,7 +6,11 @@ import { ThemeSwitcher } from "@/components/layout/ThemeSwitcher";
 import { cn } from "@/lib/utils";
 import { landingNavigation } from "../landing-content";
 
-export function SiteHeader() {
+type SiteHeaderProps = {
+  isAuthenticated?: boolean;
+};
+
+export function SiteHeader({ isAuthenticated = false }: SiteHeaderProps) {
   const [hasScrolled, setHasScrolled] = useState(false);
   const [isNavigationOpen, setIsNavigationOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -54,10 +58,18 @@ export function SiteHeader() {
 
         <div className="site-header__actions">
           <ThemeSwitcher />
-          <Link to="/login" className="site-header__login">登录</Link>
-          <Link to="/app/new" className="site-header__create">
-            开始创建 <ArrowUpRight aria-hidden="true" />
-          </Link>
+          {isAuthenticated ? (
+            <Link to="/app" className="site-header__create">
+              打开工作台 <ArrowUpRight aria-hidden="true" />
+            </Link>
+          ) : (
+            <>
+              <Link to="/login" className="site-header__login">登录</Link>
+              <Link to="/app/new" className="site-header__create">
+                开始创建 <ArrowUpRight aria-hidden="true" />
+              </Link>
+            </>
+          )}
           <button
             ref={triggerRef}
             type="button"
@@ -78,8 +90,16 @@ export function SiteHeader() {
             {landingNavigation.map((item) => (
               <a key={item.href} href={item.href} onClick={closeMobileNavigation}>{item.label}</a>
             ))}
-            <Link to="/login" onClick={closeMobileNavigation}>登录</Link>
-            <Link to="/app/new" className="site-header__mobile-create" onClick={closeMobileNavigation}>开始创建 <ArrowUpRight aria-hidden="true" /></Link>
+            {isAuthenticated ? (
+              <Link to="/app" className="site-header__mobile-create" onClick={closeMobileNavigation}>
+                打开工作台 <ArrowUpRight aria-hidden="true" />
+              </Link>
+            ) : (
+              <>
+                <Link to="/login" onClick={closeMobileNavigation}>登录</Link>
+                <Link to="/app/new" className="site-header__mobile-create" onClick={closeMobileNavigation}>开始创建 <ArrowUpRight aria-hidden="true" /></Link>
+              </>
+            )}
           </nav>
         </div>
       )}

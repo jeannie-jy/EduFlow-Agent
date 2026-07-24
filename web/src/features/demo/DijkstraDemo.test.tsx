@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DijkstraDemo } from "./DijkstraDemo";
@@ -60,14 +60,34 @@ afterEach(() => {
 });
 
 describe("DijkstraDemo", () => {
-  it("does not autoplay when reduced motion is enabled", async () => {
+  it("does not move focus on a fresh render", () => {
+    renderPage(<DijkstraDemo />);
+
+    expect(document.body).toHaveFocus();
+  });
+
+  it("offers five useful static checkpoints instead of playback when reduced motion is enabled", async () => {
     const user = userEvent.setup();
     window.matchMedia = createReducedMotionMatchMedia(true);
     renderPage(<DijkstraDemo />);
 
-    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    expect(screen.queryByRole("button", { name: "观看交互演示" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新播放演示" })).not.toBeInTheDocument();
+    const checkpoints = screen.getByRole("group", { name: "静态演示检查点" });
+    expect(within(checkpoints).getAllByRole("button")).toHaveLength(5);
+    expect(within(checkpoints).getByRole("button", { name: "起点设置" })).toBeVisible();
+    expect(within(checkpoints).getByRole("button", { name: "初始化距离" })).toBeVisible();
+    expect(within(checkpoints).getByRole("button", { name: "首轮松弛" })).toBeVisible();
+    expect(within(checkpoints).getByRole("button", { name: "路径收敛" })).toBeVisible();
+    expect(within(checkpoints).getByRole("button", { name: "完成结果" })).toBeVisible();
 
-    expect(screen.getByText("准备体验")).toBeVisible();
+    await user.click(within(checkpoints).getByRole("button", { name: "路径收敛" }));
+    expect(screen.getByText("松弛 C 的邻边")).toBeVisible();
+    expect(screen.getByRole("button", { name: "跳到第 8 帧" })).toHaveAttribute("aria-current", "step");
+
+    await user.click(within(checkpoints).getByRole("button", { name: "完成结果" }));
+    expect(screen.getByText("推演完成")).toBeVisible();
+    expect(screen.getByRole("button", { name: "跳到第 14 帧" })).toHaveAttribute("aria-current", "step");
   });
 
   it("immediately stops autoplay when native reduced motion changes", () => {
@@ -76,11 +96,12 @@ describe("DijkstraDemo", () => {
     window.matchMedia = matchMedia.matchMedia;
     renderPage(<DijkstraDemo />);
 
-    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    fireEvent.click(screen.getByRole("button", { name: "观看交互演示" }));
     expect(screen.getByText("自动演示")).toBeVisible();
 
     act(() => matchMedia.setReducedMotion(true));
     expect(screen.getByText("准备体验")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "观看交互演示" })).not.toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(1400));
     expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
@@ -91,11 +112,10 @@ describe("DijkstraDemo", () => {
     window.matchMedia = matchMedia.matchMedia;
     renderPage(<DijkstraDemo />);
 
-    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
-    expect(screen.getByText("准备体验")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "观看交互演示" })).not.toBeInTheDocument();
 
     act(() => matchMedia.setReducedMotion(false));
-    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    fireEvent.click(screen.getByRole("button", { name: "观看交互演示" }));
 
     expect(screen.getByText("自动演示")).toBeVisible();
   });
@@ -104,7 +124,7 @@ describe("DijkstraDemo", () => {
     const user = userEvent.setup();
     renderPage(<DijkstraDemo />);
 
-    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    await user.click(screen.getByRole("button", { name: "观看交互演示" }));
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "hidden",
@@ -119,9 +139,9 @@ describe("DijkstraDemo", () => {
     renderPage(<DijkstraDemo compact />);
 
     expect(screen.getByText("设置源点")).toBeVisible();
-    expect(screen.getByRole("button", { name: "观看 60 秒演示" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "观看交互演示" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    await user.click(screen.getByRole("button", { name: "观看交互演示" }));
 
     expect(screen.getByRole("button", { name: "暂停演示" })).toBeVisible();
   });
@@ -153,7 +173,7 @@ describe("DijkstraDemo", () => {
     expect(screen.getByText("准备体验")).toBeVisible();
     expect(screen.getByRole("button", { name: "跳到第 1 帧" })).toHaveAttribute("aria-current", "step");
 
-    fireEvent.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    fireEvent.click(screen.getByRole("button", { name: "观看交互演示" }));
     for (let tick = 0; tick < 14; tick += 1) {
       await act(async () => vi.advanceTimersByTimeAsync(1400));
     }
@@ -190,7 +210,7 @@ describe("DijkstraDemo", () => {
     const user = userEvent.setup();
     renderPage(<DijkstraDemo />);
 
-    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    await user.click(screen.getByRole("button", { name: "观看交互演示" }));
     await user.click(screen.getByRole("button", { name: "跳到第 6 帧" }));
 
     expect(screen.getByText("自由体验")).toBeVisible();
@@ -200,7 +220,7 @@ describe("DijkstraDemo", () => {
     const user = userEvent.setup();
     renderPage(<DijkstraDemo />);
 
-    await user.click(screen.getByRole("button", { name: "观看 60 秒演示" }));
+    await user.click(screen.getByRole("button", { name: "观看交互演示" }));
     await user.click(screen.getByRole("button", { name: "暂停演示" }));
     expect(screen.getByText("演示已暂停")).toBeVisible();
 
@@ -215,7 +235,7 @@ describe("DijkstraDemo", () => {
     const user = userEvent.setup();
     renderPage(<DijkstraDemo />);
 
-    const primaryControl = screen.getByRole("button", { name: "观看 60 秒演示" });
+    const primaryControl = screen.getByRole("button", { name: "观看交互演示" });
     primaryControl.focus();
     await user.click(primaryControl);
 
@@ -236,5 +256,24 @@ describe("DijkstraDemo", () => {
     expect(screen.getByRole("button", { name: "跳到第 6 帧" })).toBeVisible();
     expect(screen.getByText(/选择 A 作为源点/)).toBeVisible();
     expect(screen.queryByRole("slider", { name: "B 到 D 的边权重" })).not.toBeInTheDocument();
+  });
+
+  it("steps with native previous and next buttons and disables them at frame boundaries", async () => {
+    const user = userEvent.setup();
+    renderPage(<DijkstraDemo />);
+
+    const previousFrame = screen.getByRole("button", { name: "上一帧" });
+    const nextFrame = screen.getByRole("button", { name: "下一帧" });
+    expect(previousFrame).toBeDisabled();
+    expect(previousFrame).toHaveClass("dijkstra-demo__frame-control");
+    expect(nextFrame).toBeEnabled();
+    expect(nextFrame).toHaveClass("dijkstra-demo__frame-control");
+
+    await user.click(nextFrame);
+    expect(screen.getByRole("button", { name: "跳到第 2 帧" })).toHaveAttribute("aria-current", "step");
+    expect(previousFrame).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "跳到第 14 帧" }));
+    expect(nextFrame).toBeDisabled();
   });
 });

@@ -5,6 +5,7 @@ import { initialDemoState, type DemoState } from "./demo-types";
 
 export type DemoPlaybackController = {
   state: DemoState;
+  prefersReducedMotion: boolean;
   play(): void;
   pause(): void;
   replay(): void;
@@ -77,6 +78,7 @@ export function useDemoPlayback(totalFrames: number): DemoPlaybackController {
 
   return {
     state,
+    prefersReducedMotion,
     play: () => {
       if (!prefersReducedMotion) dispatch({ type: "PLAY" });
     },
