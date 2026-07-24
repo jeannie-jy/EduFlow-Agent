@@ -15,7 +15,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,11 @@ router = APIRouter(tags=["export"])
 # Redis 客户端（延迟初始化，asyncio.Lock 保护）
 _redis_client = None
 _redis_lock = asyncio.Lock()
+
+
+def _schedule_export_fallback(job_id: str, dsl: dict, config: dict) -> None:
+    """Schedule the local fallback only after an export job is authorized."""
+    asyncio.create_task(_fallback_export(job_id, dsl, config))
 
 
 async def _get_redis():
@@ -111,7 +116,7 @@ async def create_export_job(
             export_job.error_log = f"Redis 入队失败: {exc}"
 
     # 启动后台 fallback：3s 内若 Worker 没消费则自己处理
-    asyncio.create_task(_fallback_export(str(job_id), project.dsl_snapshot, export_job.config))
+    _schedule_export_fallback(str(job_id), project.dsl_snapshot, export_job.config)
 
     return {
         "job_id": str(job_id),

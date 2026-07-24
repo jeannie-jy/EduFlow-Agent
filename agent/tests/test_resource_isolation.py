@@ -166,6 +166,7 @@ async def owned_business_resources(auth_api_client, user_a, tmp_path):
     from db.models import ExportJobModel, Feedback, Frame, ParameterModel, Project, ProjectVersion
 
     project_id = uuid4()
+    frame_id = uuid4()
     version_id = uuid4()
     job_id = uuid4()
     artifact = tmp_path / "owner-a-private.py"
@@ -187,7 +188,7 @@ async def owned_business_resources(auth_api_client, user_a, tmp_path):
             [
                 project,
                 Frame(
-                    id=uuid4(),
+                    id=frame_id,
                     project_id=project_id,
                     version=1,
                     frame_id="f_001",
@@ -230,6 +231,7 @@ async def owned_business_resources(auth_api_client, user_a, tmp_path):
         await session.commit()
     return {
         "project_id": project_id,
+        "frame_id": frame_id,
         "version_id": version_id,
         "job_id": job_id,
         "artifact": artifact,
@@ -308,6 +310,201 @@ async def test_knowledge_endpoints_require_authentication(auth_api_client):
 
     assert search.status_code == 401
     assert templates.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_feedback_frame_must_belong_to_the_authorized_project(
+    auth_api_client,
+    client_for_user_a,
+    project_owned_by_user_a,
+    project_owned_by_user_b,
+):
+    """Foreign and missing frame IDs are indistinguishable and create nothing."""
+    from sqlalchemy import select
+    from db.models import Feedback, Frame
+
+    foreign_frame_id = uuid4()
+    async with auth_api_client.session_factory() as session:
+        session.add(
+            Frame(
+                id=foreign_frame_id,
+                project_id=project_owned_by_user_b.id,
+                version=1,
+                frame_id="foreign-frame",
+                order_index=1,
+                title="Other project frame",
+                quality_status="pending",
+                is_locked=False,
+            )
+        )
+        await session.commit()
+
+    request_body = {"type": "correction", "content": "wrong frame"}
+    foreign = await client_for_user_a.post(
+        f"/api/projects/{project_owned_by_user_a.id}/feedback",
+        json={**request_body, "frame_id": str(foreign_frame_id)},
+    )
+    missing = await client_for_user_a.post(
+        f"/api/projects/{project_owned_by_user_a.id}/feedback",
+        json={**request_body, "frame_id": str(uuid4())},
+    )
+
+    assert foreign.status_code == missing.status_code == 404
+    assert foreign.json() == missing.json()
+    async with auth_api_client.session_factory() as session:
+        feedback = list(
+            await session.scalars(
+                select(Feedback).where(
+                    Feedback.project_id == project_owned_by_user_a.id
+                )
+            )
+        )
+    assert feedback == []
+
+
+@pytest.mark.asyncio
+async def test_changed_route_families_make_foreign_and_missing_projects_indistinguishable(
+    client_for_user_b,
+    owned_business_resources,
+):
+    """Representative business routes use the shared not-found contract."""
+    foreign_project_id = owned_business_resources["project_id"]
+    missing_project_id = uuid4()
+    foreign_job_id = owned_business_resources["job_id"]
+
+    foreign_frames = await client_for_user_b.get(
+        f"/api/projects/{foreign_project_id}/frames"
+    )
+    missing_frames = await client_for_user_b.get(
+        f"/api/projects/{missing_project_id}/frames"
+    )
+    foreign_generate = await client_for_user_b.post(
+        f"/api/projects/{foreign_project_id}/generate", json={"action": "full"}
+    )
+    missing_generate = await client_for_user_b.post(
+        f"/api/projects/{missing_project_id}/generate", json={"action": "full"}
+    )
+    foreign_export = await client_for_user_b.get(f"/api/export/{foreign_job_id}")
+    missing_export = await client_for_user_b.get(f"/api/export/{uuid4()}")
+
+    for foreign, missing in [
+        (foreign_frames, missing_frames),
+        (foreign_generate, missing_generate),
+        (foreign_export, missing_export),
+    ]:
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json()
+
+
+@pytest.mark.asyncio
+async def test_foreign_requests_stop_before_generation_redis_filesystem_or_background_work(
+    client_for_user_b,
+    owned_business_resources,
+):
+    """Authorization precedes all external work for protected resources."""
+    from pathlib import Path
+
+    project_id = owned_business_resources["project_id"]
+    job_id = owned_business_resources["job_id"]
+
+    with (
+        patch("api.generate.run_generation_stream") as generate_stream,
+        patch("api.generate.resume_generation_stream") as resume_stream,
+        patch("api.generate.run_regenerate_stream") as regenerate_stream,
+        patch("api.export._get_redis", new_callable=AsyncMock) as get_redis,
+        patch("api.export._schedule_export_fallback") as schedule_fallback,
+        patch.object(Path, "exists", side_effect=AssertionError("filesystem accessed")) as exists,
+    ):
+        generation = await client_for_user_b.get(
+            f"/api/projects/{project_id}/generate/stream"
+        )
+        resume = await client_for_user_b.get(
+            f"/api/projects/{project_id}/generate/resume/stream"
+        )
+        regenerate = await client_for_user_b.get(
+            f"/api/projects/{project_id}/generate/regenerate/stream"
+        )
+        create_export = await client_for_user_b.post(
+            f"/api/projects/{project_id}/export/manim", json={}
+        )
+        export_status = await client_for_user_b.get(f"/api/export/{job_id}")
+        download = await client_for_user_b.get(
+            f"/api/export/{job_id}/download/owner-a-private.py"
+        )
+
+    for response in [generation, resume, regenerate, create_export, export_status, download]:
+        assert response.status_code == 404
+    generate_stream.assert_not_called()
+    resume_stream.assert_not_called()
+    regenerate_stream.assert_not_called()
+    get_redis.assert_not_awaited()
+    schedule_fallback.assert_not_called()
+    exists.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_owner_can_use_representative_changed_route_families(
+    client_for_user_a,
+    owned_business_resources,
+):
+    """Owner access stays functional against the real isolated database."""
+    from config import get_settings
+
+    project_id = owned_business_resources["project_id"]
+    frame_id = owned_business_resources["frame_id"]
+    version_id = owned_business_resources["version_id"]
+    job_id = owned_business_resources["job_id"]
+    artifact = owned_business_resources["artifact"]
+    export_root = artifact.parent
+    export_dir = export_root / str(job_id)
+    export_dir.mkdir()
+    stored_artifact = export_dir / artifact.name
+    artifact.rename(stored_artifact)
+    settings = get_settings().model_copy(update={"export_dir": export_root})
+
+    assert (await client_for_user_a.get(f"/api/projects/{project_id}/frames")).status_code == 200
+    assert (
+        await client_for_user_a.put(
+            f"/api/projects/{project_id}/frames/f_001", json={"title": "Owner edit"}
+        )
+    ).status_code == 200
+    assert (
+        await client_for_user_a.post(
+            f"/api/projects/{project_id}/recompute", json={"changed_params": {"speed": 2}}
+        )
+    ).status_code == 202
+    assert (
+        await client_for_user_a.post(
+            f"/api/projects/{project_id}/feedback",
+            json={"type": "correction", "content": "Owner feedback", "frame_id": str(frame_id)},
+        )
+    ).status_code == 201
+    assert (await client_for_user_a.get(f"/api/projects/{project_id}/versions")).status_code == 200
+    assert (
+        await client_for_user_a.get(f"/api/projects/{project_id}/versions/{version_id}")
+    ).status_code == 200
+    assert (
+        await client_for_user_a.post(
+            f"/api/projects/{project_id}/generate", json={"action": "full"}
+        )
+    ).status_code == 202
+
+    with (
+        patch("api.export._get_redis", new_callable=AsyncMock, return_value=None),
+        patch("api.export._schedule_export_fallback") as schedule_fallback,
+        patch("api.export.get_settings", return_value=settings),
+    ):
+        assert (
+            await client_for_user_a.post(f"/api/projects/{project_id}/export/manim", json={})
+        ).status_code == 201
+        assert (await client_for_user_a.get(f"/api/export/{job_id}")).status_code == 200
+        assert (
+            await client_for_user_a.get(
+                f"/api/export/{job_id}/download/{stored_artifact.name}"
+            )
+        ).status_code == 200
+    schedule_fallback.assert_called_once()
+    assert (await client_for_user_a.get("/api/knowledge/templates")).status_code == 200
 
 
 @pytest.mark.asyncio

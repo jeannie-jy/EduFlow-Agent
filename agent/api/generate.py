@@ -8,10 +8,8 @@ POST   /api/projects/{id}/regenerate        局部重生成
 from __future__ import annotations
 
 import logging
-import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 

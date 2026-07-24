@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session, get_readonly_session
+from db.database import get_session
 from schema.project import CreateVersionRequest
 from .deps import CurrentUser, parse_project_id, safe_project_uuid
 from .ownership import get_owned_project

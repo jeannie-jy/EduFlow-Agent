@@ -10,7 +10,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session
@@ -72,18 +72,28 @@ async def submit_feedback(
     - correction: 纠错，关联到具体帧，触发局部重生成
     - suggestion: 建议，记录但不自动触发修订
     """
-    from db.models import Feedback
+    from db.models import Feedback, Frame
 
     project = await get_owned_project(
         session, project_id, current_user.id, for_update=True
     )
     pid = project.id
+    frame_id = None
+    if body.frame_id:
+        frame_id = safe_project_uuid(body.frame_id)
+        if frame_id is None or await session.scalar(
+            select(Frame).where(
+                Frame.id == frame_id,
+                Frame.project_id == project.id,
+            )
+        ) is None:
+            raise HTTPException(status_code=404, detail="Frame not found")
 
     # 持久化反馈（safe_project_uuid 避免非法 UUID → 500）
     feedback = Feedback(
         id=uuid.uuid4(),
         project_id=pid,
-        frame_id=safe_project_uuid(body.frame_id) if body.frame_id else None,
+        frame_id=frame_id,
         type=body.type,
         content=body.content,
         rating=body.rating,

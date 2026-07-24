@@ -126,6 +126,7 @@ async def update_frame(
 
     # 同步回 dsl_snapshot['frames']，保证「推演/导出」读到的 DSL 与编辑一致
     await _sync_frame_into_snapshot(session, project, fid, updates)
+    await session.refresh(frame, attribute_names=["updated_at"])
 
     logger.info("帧编辑: project=%s | frame=%s", project_id, fid)
 
