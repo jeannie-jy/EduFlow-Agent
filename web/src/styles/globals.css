@@ -484,24 +484,28 @@ button, a, [role="button"] { cursor: pointer; }
 #templates { scroll-margin-top: 5.5rem; }
 
 @media (min-width: 901px) {
-  .landing-hero__content { padding-top: clamp(1.4rem, 2.25vw, 2.25rem); }
+  .landing-hero__content { padding-top: 1rem; }
   .landing-hero__headline-band { gap: clamp(1.25rem, 3vw, 3.5rem); }
   .landing-kicker { margin-bottom: 0.55rem; }
   .landing-hero__note { padding-top: 2.25rem; }
-  .landing-hero__demo-plate .dijkstra-demo { gap: 0.4rem; padding: 0.55rem 0.7rem; }
+  .landing-hero__examples { margin: 0.6rem 0 0.35rem; }
+  .landing-hero__demo-plate { padding-bottom: 0.55rem; }
+  .landing-hero__demo-plate .dijkstra-demo { gap: 0.25rem; padding: 0.4rem 0.55rem; }
   .landing-hero__demo-plate .dijkstra-demo__header { min-height: 2.2rem; }
   .landing-hero__demo-plate .dijkstra-demo h2 { font-size: 1.1rem; }
   .landing-hero__demo-plate .demo-eyebrow { font-size: 0.64rem; }
   .landing-hero__demo-plate .dijkstra-demo__mode { font-size: 0.7rem; }
-  .landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 12rem; }
-  .landing-hero__demo-plate .demo-status-table { padding: 0.55rem 0.7rem; }
-  .landing-hero__demo-plate .demo-status-table table { font-size: 0.7rem; }
+  .landing-hero__demo-plate .dijkstra-demo.dijkstra-demo--compact .dijkstra-demo__graph { min-height: 10.5rem; }
+  .landing-hero__demo-plate .demo-status-table { padding: 0.35rem 0.55rem; }
+  .landing-hero__demo-plate .demo-status-table table { font-size: 0.66rem; }
   .landing-hero__demo-plate .demo-status-table th,
-  .landing-hero__demo-plate .demo-status-table td { padding: 0.35rem 0.2rem; }
-  .landing-hero__demo-plate .dijkstra-demo__explanation { padding-top: 0.4rem; }
-  .landing-hero__demo-plate .dijkstra-demo__narration-copy { font-size: 0.82rem; line-height: 1.35; }
-  .landing-hero__demo-plate .demo-timeline { padding-top: 0.4rem; }
-  .landing-hero__demo-plate .demo-timeline__track { margin-top: 0.45rem; }
+  .landing-hero__demo-plate .demo-status-table td { padding: 0.15rem 0.18rem; }
+  .landing-hero__demo-plate .dijkstra-demo__explanation { padding-top: 0.25rem; }
+  .landing-hero__demo-plate .dijkstra-demo__narration-copy { font-size: 0.78rem; line-height: 1.3; }
+  .landing-hero__demo-plate .demo-timeline { padding-top: 0.25rem; }
+  .landing-hero__demo-plate .demo-timeline__track { margin-top: 0.3rem; }
+  .landing-hero__demo-plate .demo-timeline__item { gap: 0.3rem; }
+  .landing-hero__demo-plate .demo-timeline__item p { font-size: 0.6rem; line-height: 1.1; }
 }
 
 @media (prefers-reduced-transparency: reduce) {

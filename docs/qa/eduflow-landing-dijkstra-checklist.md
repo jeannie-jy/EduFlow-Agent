@@ -57,3 +57,9 @@ Every row below is intentionally pending. No visual or browser-interaction resul
 | Native reduced-motion change from true to false | Pass | A real `MediaQueryList` `change` test confirms explicit playback becomes available without remounting. When `matchMedia` exists, its subscribed value is authoritative; Motion is only a fallback when it does not. |
 | Keyboard frame boundaries | Pass | ArrowLeft at the first frame leaves the poster state intact; ArrowRight at the final autoplay frame leaves the completed state intact. |
 | Modified/repeated Space | Pass | Shift+Space and repeated Space are ignored; unmodified Space still starts playback. |
+
+## Browser QA iteration — first viewport chapter cue
+
+| Status | Route | Viewport / setting | Expected result | Actual result | Follow-up commit |
+| --- | --- | --- | --- | --- | --- |
+| Pending remeasure | `/` | 1440×900, Light | The `#product` chapter label and heading visibly peek into the first viewport; target section top is approximately 840 px or less, while the compact graph, ledger, narration, controls, and timeline remain present. | Before the density revision, `#product` began at 900.67 px and Chapter 02 was not visible. CSS has been revised; browser remeasurement is pending. | Pending current commit |
