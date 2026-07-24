@@ -5,15 +5,46 @@ on:
     branches: [main, dev]
     paths:
       - "agent/**"
+      - ".github/workflows/backend-ci.yml"
   pull_request:
     branches: [main, dev]
     paths:
       - "agent/**"
+      - ".github/workflows/backend-ci.yml"
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+asyncpg://agent:changeme@localhost:5432/eduflow_test
+      REDIS_URL: redis://localhost:6379/0
+      AUTH_JWT_SECRET: ci-only-secret-with-at-least-sixty-four-characters-000000000000
+      AUTH_COOKIE_SECURE: "false"
+      PYTHONWARNINGS: error
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: eduflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d eduflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: agent
@@ -30,5 +61,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+      - name: Upgrade database
+        run: python -m alembic upgrade head
+
+      - name: Run unit and API tests
+        run: python -m pytest tests/ -v --tb=short -m "not postgres and not redis"
+
+      - name: Run PostgreSQL authentication tests
+        run: python -m pytest tests/test_auth_postgres.py -v -m postgres
+
+      - name: Run Redis authentication tests
+        run: python -m pytest tests/test_auth_redis.py -v -m redis
+
+      - name: Verify database downgrade and re-upgrade
+        run: |
+          python -m alembic downgrade base
+          python -m alembic upgrade head

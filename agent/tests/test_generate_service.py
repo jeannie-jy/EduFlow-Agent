@@ -525,6 +525,7 @@ class TestHITLInterruptResume:
         mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
         mock_db_session.__aexit__ = AsyncMock(return_value=None)
         mock_db_session.get = AsyncMock(return_value=mock_project)
+        mock_db_session.add = MagicMock()
         mock_db_session.commit = AsyncMock()
         mock_db_session.flush = AsyncMock()
 

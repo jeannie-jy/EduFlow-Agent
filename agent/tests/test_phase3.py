@@ -165,6 +165,7 @@ class TestSaveVersionLogic:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_session = AsyncMock()
+        mock_session.add = MagicMock()
         exec_result = MagicMock()
         exec_result.scalar = MagicMock(return_value=0)
         mock_session.execute = AsyncMock(return_value=exec_result)
