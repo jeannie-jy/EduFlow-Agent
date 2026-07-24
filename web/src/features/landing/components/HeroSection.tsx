@@ -72,21 +72,6 @@ export function HeroSection() {
         </div>
       </section>
 
-      <section className="landing-next-chapter" id="product" aria-labelledby="landing-next-heading">
-        <p>CHAPTER 02</p>
-        <h2 id="landing-next-heading">{heroContent.nextHeading}</h2>
-        <span aria-hidden="true" />
-      </section>
-
-      <section className="landing-section-preview" id="audiences" aria-labelledby="landing-audiences-heading">
-        <p>CHAPTER 03</p>
-        <h2 id="landing-audiences-heading">为不同的学习与教学路径而设计</h2>
-      </section>
-
-      <section className="landing-section-preview" id="templates" aria-labelledby="landing-templates-heading">
-        <p>CHAPTER 04</p>
-        <h2 id="landing-templates-heading">从一个合适的模板开始</h2>
-      </section>
     </>
   );
 }

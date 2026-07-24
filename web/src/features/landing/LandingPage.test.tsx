@@ -8,6 +8,24 @@ import { LandingPage } from "./LandingPage";
 
 const landingStyles = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
 
+class IntersectionObserverMock {
+  private readonly callback: IntersectionObserverCallback;
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
+  }
+
+  observe(target: Element) {
+    this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+
+  unobserve() {}
+  disconnect() {}
+  takeRecords() { return []; }
+}
+
+globalThis.IntersectionObserver = IntersectionObserverMock as unknown as typeof IntersectionObserver;
+
 describe("LandingPage", () => {
   beforeEach(() => {
     Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
@@ -37,6 +55,11 @@ describe("LandingPage", () => {
       expect(document.getElementById(target)?.tagName).toBe("SECTION");
     }
     expect(screen.getByRole("heading", { name: "从一个问题，到一场完整推演" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "我想理解一个知识点" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "我想创建教学推演" })).toBeVisible();
+    expect(screen.queryByText("助教")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "教学内容值得被认真校对" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "不必从空白开始" })).toBeVisible();
     expect(screen.getByLabelText("Dijkstra 最短路径互动演示")).toBeVisible();
     expect(screen.getByRole("region", { name: "距离表（从 A 出发）" })).toBeVisible();
     expect(screen.getByText(/选择 A 作为源点/)).toBeVisible();
