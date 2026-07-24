@@ -157,6 +157,26 @@ async def authenticate_user(
     )
 
 
+async def get_refresh_rate_limit_identity(
+    session: AsyncSession,
+    raw_token: str,
+) -> str | None:
+    """Return the stable family identity for a currently valid refresh token."""
+    now = datetime.now(timezone.utc)
+    family_id = await session.scalar(
+        select(AuthSession.family_id)
+        .join(User, User.id == AuthSession.user_id)
+        .where(
+            AuthSession.refresh_token_hash == hash_refresh_token(raw_token),
+            AuthSession.replaced_by_id.is_(None),
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > now,
+            User.is_active.is_(True),
+        )
+    )
+    return str(family_id) if family_id is not None else None
+
+
 async def rotate_refresh_token(
     session: AsyncSession,
     raw_token: str,

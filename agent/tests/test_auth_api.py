@@ -1,5 +1,9 @@
+import asyncio
+import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from types import ModuleType
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -28,8 +32,14 @@ class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, int] = {}
         self.expires_in: dict[str, int] = {}
+        self.locks: dict[str, str] = {}
 
     async def eval(self, _script: str, _numkeys: int, key: str, window: int):
+        if "GET" in _script and "DEL" in _script:
+            if self.locks.get(key) == str(window):
+                self.locks.pop(key, None)
+                return 1
+            return 0
         count = self.values.get(key, 0) + 1
         self.values[key] = count
         self.expires_in.setdefault(key, int(window))
@@ -46,6 +56,12 @@ class FakeRedis:
         self.values.pop(key, None)
         self.expires_in.pop(key, None)
         return int(existed)
+
+    async def set(self, key: str, value: str, *, nx: bool, ex: int) -> bool:
+        if nx and key in self.locks:
+            return False
+        self.locks[key] = value
+        return True
 
 
 class UnavailableRedis:
@@ -421,6 +437,92 @@ async def test_successful_login_clears_its_failure_counter(fake_redis: FakeRedis
 
 
 @pytest.mark.asyncio
+async def test_login_lock_serializes_a_failure_before_a_later_success(
+    fake_redis: FakeRedis,
+) -> None:
+    from services.auth_rate_limit import (
+        clear_login_failures,
+        login_attempt_lock,
+        login_key,
+        record_login_failure,
+    )
+
+    client_ip = "198.51.100.10"
+    email = "student@example.com"
+    failure_entered = asyncio.Event()
+    release_failure = asyncio.Event()
+    events: list[str] = []
+
+    async def failed_attempt() -> None:
+        async with login_attempt_lock(fake_redis, client_ip, email):
+            events.append("failure")
+            failure_entered.set()
+            await release_failure.wait()
+            await record_login_failure(fake_redis, client_ip, email)
+
+    async def successful_attempt() -> None:
+        await failure_entered.wait()
+        async with login_attempt_lock(fake_redis, client_ip, email):
+            events.append("success")
+            await clear_login_failures(fake_redis, client_ip, email)
+
+    failure = asyncio.create_task(failed_attempt())
+    await failure_entered.wait()
+    success = asyncio.create_task(successful_attempt())
+    await asyncio.sleep(0)
+
+    assert events == ["failure"]
+    release_failure.set()
+    await asyncio.gather(failure, success)
+
+    assert events == ["failure", "success"]
+    assert login_key(client_ip, email) not in fake_redis.values
+
+
+@pytest.mark.asyncio
+async def test_login_lock_preserves_a_failure_after_an_earlier_success(
+    fake_redis: FakeRedis,
+) -> None:
+    from services.auth_rate_limit import (
+        clear_login_failures,
+        login_attempt_lock,
+        login_key,
+        record_login_failure,
+    )
+
+    client_ip = "198.51.100.10"
+    email = "student@example.com"
+    success_entered = asyncio.Event()
+    release_success = asyncio.Event()
+    events: list[str] = []
+
+    async def successful_attempt() -> None:
+        async with login_attempt_lock(fake_redis, client_ip, email):
+            events.append("success")
+            success_entered.set()
+            await release_success.wait()
+            await clear_login_failures(fake_redis, client_ip, email)
+
+    async def failed_attempt() -> None:
+        await success_entered.wait()
+        async with login_attempt_lock(fake_redis, client_ip, email):
+            events.append("failure")
+            await record_login_failure(fake_redis, client_ip, email)
+
+    success = asyncio.create_task(successful_attempt())
+    await success_entered.wait()
+    failure = asyncio.create_task(failed_attempt())
+    await asyncio.sleep(0)
+
+    assert events == ["success"]
+    release_success.set()
+    await asyncio.gather(success, failure)
+
+    assert events == ["success", "failure"]
+    assert login_key(client_ip, email) in fake_redis.values
+
+
+@pytest.mark.asyncio
 async def test_sixth_registration_in_an_hour_is_limited(fake_redis: FakeRedis) -> None:
     from services.auth_rate_limit import AuthRateLimited, check_registration_limit
 
@@ -491,6 +593,44 @@ async def test_login_route_limits_before_a_sixth_credential_check(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_login_failures_allow_at_most_five_password_checks(
+    auth_api_client, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.auth_service import InvalidCredentials
+
+    entered = 0
+    first_check_started = asyncio.Event()
+    release_first_check = asyncio.Event()
+
+    async def controlled_failure(*_args, **_kwargs):
+        nonlocal entered
+        entered += 1
+        if entered == 1:
+            first_check_started.set()
+            await release_first_check.wait()
+        raise InvalidCredentials
+
+    monkeypatch.setattr("api.auth.authenticate_user", controlled_failure)
+
+    requests = [
+        asyncio.create_task(
+            auth_api_client.client.post(
+                "/api/auth/login",
+                json={"email": "student@example.com", "password": "learning2026"},
+            )
+        )
+        for _ in range(6)
+    ]
+    await first_check_started.wait()
+    release_first_check.set()
+    responses = await asyncio.gather(*requests)
+
+    assert entered == 5
+    assert [response.status_code for response in responses].count(401) == 5
+    assert [response.status_code for response in responses].count(429) == 1
+
+
+@pytest.mark.asyncio
 async def test_registration_route_limits_before_the_sixth_service_call(
     auth_api_client, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -556,6 +696,44 @@ async def test_refresh_route_uses_its_session_key_for_rate_limiting(
     )
 
     assert calls == 30
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
+
+
+@pytest.mark.asyncio
+async def test_refresh_limit_follows_a_session_family_across_token_rotation(
+    auth_api_client,
+) -> None:
+    client = auth_api_client.client
+    await _register(client)
+
+    for _ in range(30):
+        response = await client.post("/api/auth/refresh")
+        assert response.status_code == 200
+
+    limited = await client.post("/api/auth/refresh")
+
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "AUTH_RATE_LIMITED"
+    assert limited.headers["retry-after"] == "60"
+
+
+@pytest.mark.asyncio
+async def test_refresh_limit_buckets_unknown_tokens_by_client_ip(auth_api_client) -> None:
+    client = auth_api_client.client
+
+    for index in range(30):
+        response = await client.post(
+            "/api/auth/refresh",
+            headers={"Cookie": f"eduflow_refresh=unknown-token-{index}"},
+        )
+        assert response.status_code == 401
+
+    limited = await client.post(
+        "/api/auth/refresh",
+        headers={"Cookie": "eduflow_refresh=unknown-token-final"},
+    )
+
     assert limited.status_code == 429
     assert limited.headers["retry-after"] == "60"
 
@@ -635,6 +813,86 @@ def test_client_ip_ignores_forwarded_header_unless_peer_is_trusted(
         lambda: SimpleNamespace(auth_trusted_proxy_ips=["10.0.0.1"]),
     )
     assert _client_ip(request) == "203.0.113.10"
+
+
+@pytest.mark.parametrize(
+    ("peer", "forwarded_for", "trusted_proxies", "expected"),
+    [
+        (
+            "10.0.0.4",
+            "10.0.0.9, 198.51.100.7, 10.0.0.3",
+            ["10.0.0.3", "10.0.0.4", "10.0.0.9"],
+            "198.51.100.7",
+        ),
+        (
+            "198.51.100.44",
+            "203.0.113.10, 10.0.0.3",
+            ["10.0.0.3"],
+            "198.51.100.44",
+        ),
+        (
+            "2001:db8::4",
+            "2001:db8::9, 2001:db8::3",
+            ["2001:db8::3", "2001:db8::4"],
+            "2001:db8::9",
+        ),
+        (
+            "10.0.0.4",
+            "203.0.113.10, not-an-ip",
+            ["10.0.0.4"],
+            "10.0.0.4",
+        ),
+    ],
+)
+def test_client_ip_parses_trusted_proxy_chains(
+    monkeypatch: pytest.MonkeyPatch,
+    peer: str,
+    forwarded_for: str,
+    trusted_proxies: list[str],
+    expected: str,
+) -> None:
+    from starlette.requests import Request
+
+    from api.auth import _client_ip
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/api/auth/login",
+            "raw_path": b"/api/auth/login",
+            "query_string": b"",
+            "headers": [(b"x-forwarded-for", forwarded_for.encode())],
+            "client": (peer, 12345),
+            "server": ("testserver", 443),
+        }
+    )
+    monkeypatch.setattr(
+        "api.auth.get_settings",
+        lambda: SimpleNamespace(auth_trusted_proxy_ips=trusted_proxies),
+    )
+
+    assert _client_ip(request) == expected
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_redis_when_application_context_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from main import lifespan
+
+    close_redis = AsyncMock()
+    graph_module = ModuleType("agents.graph")
+    graph_module.close_checkpointer = AsyncMock()
+    monkeypatch.setitem(sys.modules, "agents.graph", graph_module)
+    monkeypatch.setattr("db.redis.close_redis", close_redis)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async with lifespan(FastAPI()):
+            raise RuntimeError("boom")
+
+    close_redis.assert_awaited_once()
 
 
 @pytest.fixture

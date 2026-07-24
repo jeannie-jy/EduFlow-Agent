@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -349,25 +351,54 @@ class InMemoryRateLimitRedis:
 
     def __init__(self) -> None:
         self.values: dict[str, int] = {}
-        self.expires_in: dict[str, int] = {}
+        self.expires_at: dict[str, float] = {}
+        self.locks: dict[str, tuple[str, float]] = {}
 
-    async def eval(self, _script: str, _numkeys: int, key: str, window: int):
+    def _expire(self, key: str) -> None:
+        now = time.monotonic()
+        if self.expires_at.get(key, now + 1) <= now:
+            self.values.pop(key, None)
+            self.expires_at.pop(key, None)
+        lock = self.locks.get(key)
+        if lock is not None and lock[1] <= now:
+            self.locks.pop(key, None)
+
+    async def eval(self, script: str, _numkeys: int, key: str, value: int | str):
+        self._expire(key)
+        if "GET" in script and "DEL" in script:
+            lock = self.locks.get(key)
+            if lock is not None and lock[0] == value:
+                self.locks.pop(key, None)
+                return 1
+            return 0
         count = self.values.get(key, 0) + 1
         self.values[key] = count
-        self.expires_in.setdefault(key, int(window))
-        return [count, self.expires_in[key]]
+        self.expires_at.setdefault(key, time.monotonic() + int(value))
+        return [count, await self.ttl(key)]
 
     async def get(self, key: str) -> int | None:
+        self._expire(key)
         return self.values.get(key)
 
     async def ttl(self, key: str) -> int:
-        return self.expires_in.get(key, -2)
+        self._expire(key)
+        if key not in self.values:
+            return -2
+        return max(1, math.ceil(self.expires_at[key] - time.monotonic()))
 
     async def delete(self, key: str) -> int:
+        self._expire(key)
         existed = key in self.values
         self.values.pop(key, None)
-        self.expires_in.pop(key, None)
+        self.expires_at.pop(key, None)
         return int(existed)
+
+    async def set(self, key: str, value: str, *, nx: bool, ex: int) -> bool:
+        self._expire(key)
+        if nx and key in self.locks:
+            return False
+        self.locks[key] = (value, time.monotonic() + ex)
+        return True
 
 
 @pytest.fixture

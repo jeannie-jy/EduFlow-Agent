@@ -30,21 +30,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _setup_logging(settings)
     logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
-    # TODO: 初始化 DB 连接池、Redis 客户端
-    yield
-
-    # 关闭 Agent checkpointer 连接
     try:
-        from agents.graph import close_checkpointer
-        await close_checkpointer()
-    except Exception as exc:
-        logger.warning("关闭 checkpointer 异常: %s", exc)
+        # TODO: 初始化 DB 连接池、Redis 客户端
+        yield
+    finally:
+        # 关闭 Agent checkpointer 连接
+        try:
+            from agents.graph import close_checkpointer
+            await close_checkpointer()
+        except Exception as exc:
+            logger.warning("关闭 checkpointer 异常: %s", exc)
 
-    from db.redis import close_redis
-    await close_redis()
+        try:
+            from db.redis import close_redis
+            await close_redis()
+        except Exception as exc:
+            logger.warning("关闭 Redis 异常: %s", exc)
 
-    # TODO: 关闭 DB 连接池
-    logger.info("EduFlow-Agent 已关闭")
+        # TODO: 关闭 DB 连接池
+        logger.info("EduFlow-Agent 已关闭")
 
 
 def _setup_logging(settings) -> None:

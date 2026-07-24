@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -28,6 +29,7 @@ from services.auth_rate_limit import (
     check_refresh_limit,
     check_registration_limit,
     clear_login_failures,
+    login_attempt_lock,
     record_login_failure,
 )
 from services.auth_service import (
@@ -35,6 +37,7 @@ from services.auth_service import (
     InvalidCredentials,
     InvalidRefreshToken,
     authenticate_user,
+    get_refresh_rate_limit_identity,
     register_user,
     revoke_all_user_sessions,
     revoke_refresh_token,
@@ -102,15 +105,34 @@ def _user_agent(request: Request) -> str | None:
 
 
 def _client_ip(request: Request) -> str:
-    """Use proxy forwarding headers only from explicitly trusted peers."""
+    """Resolve the client after removing only configured trusted proxy hops."""
     peer_ip = request.client.host if request.client is not None else "unknown"
-    if peer_ip not in get_settings().auth_trusted_proxy_ips:
+    try:
+        peer = ipaddress.ip_address(peer_ip)
+        trusted_proxies = {
+            ipaddress.ip_address(value)
+            for value in get_settings().auth_trusted_proxy_ips
+        }
+    except ValueError:
+        return peer_ip
+    if peer not in trusted_proxies:
         return peer_ip
     forwarded_for = request.headers.get("x-forwarded-for")
     if not forwarded_for:
         return peer_ip
-    candidate = forwarded_for.split(",", 1)[0].strip()
-    return candidate or peer_ip
+    try:
+        forwarded_ips = [
+            ipaddress.ip_address(value.strip())
+            for value in forwarded_for.split(",")
+        ]
+    except ValueError:
+        return peer_ip
+    if not forwarded_ips:
+        return peer_ip
+    for candidate in reversed(forwarded_ips):
+        if candidate not in trusted_proxies:
+            return str(candidate)
+    return peer_ip
 
 
 def _raise_rate_limit_error(error: Exception) -> None:
@@ -151,20 +173,15 @@ async def login(
     normalized_email = normalize_email(str(payload.email))
     redis = get_redis()
     try:
-        await check_login_limit(redis, client_ip, normalized_email)
+        async with login_attempt_lock(redis, client_ip, normalized_email):
+            await check_login_limit(redis, client_ip, normalized_email)
+            try:
+                result = await authenticate_user(session, payload, _user_agent(request))
+            except InvalidCredentials:
+                await record_login_failure(redis, client_ip, normalized_email)
+                raise invalid_credentials()
+            await clear_login_failures(redis, client_ip, normalized_email)
     except (AuthRateLimited, AuthRateLimitUnavailable) as error:
-        _raise_rate_limit_error(error)
-    try:
-        result = await authenticate_user(session, payload, _user_agent(request))
-    except InvalidCredentials:
-        try:
-            await record_login_failure(redis, client_ip, normalized_email)
-        except AuthRateLimitUnavailable as error:
-            _raise_rate_limit_error(error)
-        raise invalid_credentials()
-    try:
-        await clear_login_failures(redis, client_ip, normalized_email)
-    except AuthRateLimitUnavailable as error:
         _raise_rate_limit_error(error)
     set_refresh_cookie(response, result.refresh_token)
     return _auth_response(result)
@@ -182,8 +199,12 @@ async def refresh(
     raw_token = request.cookies.get(settings.auth_refresh_cookie_name)
     if not raw_token:
         return _invalid_refresh_response()
+    family_id = await get_refresh_rate_limit_identity(session, raw_token)
+    rate_limit_identity = (
+        f"family:{family_id}" if family_id is not None else f"ip:{_client_ip(request)}"
+    )
     try:
-        await check_refresh_limit(get_redis(), raw_token)
+        await check_refresh_limit(get_redis(), rate_limit_identity)
     except (AuthRateLimited, AuthRateLimitUnavailable) as error:
         _raise_rate_limit_error(error)
     try:
