@@ -374,6 +374,110 @@ button, a, [role="button"] { cursor: pointer; }
 .landing-footer p { display: flex; gap: 0.65rem; margin: 0; }
 .landing-footer strong { color: var(--foreground); font-family: Georgia, "Noto Serif SC", serif; }
 
+.dijkstra-explore {
+  min-height: 100vh;
+  background: var(--background);
+}
+
+.dijkstra-explore__main {
+  display: grid;
+  gap: clamp(2.25rem, 5vw, 4.75rem);
+  max-width: 104rem;
+  margin: 0 auto;
+  padding: clamp(2.75rem, 6vw, 6rem) clamp(1rem, 4vw, 5.25rem) clamp(3.5rem, 8vw, 7rem);
+}
+
+.dijkstra-explore__intro {
+  max-width: 56rem;
+  border-left: 1px solid var(--primary);
+  padding-left: clamp(1rem, 2.5vw, 2.5rem);
+}
+
+.dijkstra-explore__eyebrow {
+  margin: 0;
+  color: var(--primary);
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.dijkstra-explore h1,
+.dijkstra-explore h2 {
+  font-family: Georgia, "Noto Serif SC", "Songti SC", serif;
+  font-weight: 600;
+  letter-spacing: -0.055em;
+}
+
+.dijkstra-explore h1 {
+  margin: 0.7rem 0 0;
+  font-size: clamp(2.35rem, 5vw, 5.35rem);
+  line-height: 1.05;
+}
+
+.dijkstra-explore__lede {
+  max-width: 44rem;
+  margin: 1rem 0 0;
+  color: var(--muted-foreground);
+  font-size: clamp(1rem, 1.4vw, 1.15rem);
+  line-height: 1.75;
+}
+
+.dijkstra-explore__what-you-saw {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 26rem);
+  column-gap: clamp(2rem, 8vw, 9rem);
+  row-gap: 0.9rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: clamp(1.75rem, 4vw, 3.5rem) 0;
+}
+
+.dijkstra-explore__what-you-saw > p,
+.dijkstra-explore__what-you-saw > h2 {
+  grid-column: 1;
+}
+
+.dijkstra-explore h2 {
+  margin: 0;
+  font-size: clamp(1.65rem, 3vw, 3rem);
+  line-height: 1.15;
+}
+
+.dijkstra-explore__what-you-saw ul {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  gap: 0.65rem;
+  align-content: start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted-foreground);
+  line-height: 1.65;
+}
+
+.dijkstra-explore__what-you-saw li::before {
+  color: var(--progress);
+  content: "— ";
+}
+
+.dijkstra-explore__create-link {
+  grid-column: 1;
+  width: max-content;
+  margin-top: 1rem;
+  border-bottom: 1px solid currentColor;
+  color: var(--interactive);
+  font-size: 0.9rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.dijkstra-explore__create-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+
 #product,
 #examples,
 #audiences,
@@ -472,6 +576,12 @@ button, a, [role="button"] { cursor: pointer; }
   .landing-final-action__actions { grid-column: auto; }
   .landing-footer { display: grid; gap: 0.5rem; }
   .landing-footer p { flex-wrap: wrap; }
+  .dijkstra-explore__main { gap: 2.5rem; padding-block: 2.75rem 4rem; }
+  .dijkstra-explore__intro { padding-left: 1rem; }
+  .dijkstra-explore h1 { letter-spacing: -0.06em; }
+  .dijkstra-explore__what-you-saw { display: block; }
+  .dijkstra-explore__what-you-saw ul { margin-top: 1.2rem; }
+  .dijkstra-explore__create-link { display: inline-block; margin-top: 1.5rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

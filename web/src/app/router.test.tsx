@@ -8,6 +8,7 @@ const routes = [
   ["/app/new", "新建推演"],
   ["/login", "欢迎回来"],
   ["/register", "创建你的学习空间"],
+  ["/explore/dijkstra", "Dijkstra 最短路径交互推演"],
   ["/missing", "404"],
 ] as const;
 
