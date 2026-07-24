@@ -82,6 +82,13 @@ def _is_email_unique_violation(error: IntegrityError) -> bool:
     )
 
 
+async def _lock_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """Serialize refresh-token changes for one user before mutating sessions."""
+    return await session.scalar(
+        select(User).where(User.id == user_id).with_for_update()
+    )
+
+
 async def register_user(
     session: AsyncSession,
     request: RegisterRequest,
@@ -157,6 +164,16 @@ async def rotate_refresh_token(
 ) -> AuthResult:
     """Rotate one valid refresh token and preserve its session family."""
     token_hash = hash_refresh_token(raw_token)
+    user_id = await session.scalar(
+        select(AuthSession.user_id).where(AuthSession.refresh_token_hash == token_hash)
+    )
+    if user_id is None:
+        raise InvalidRefreshToken
+
+    user = await _lock_user(session, user_id)
+    if user is None:
+        raise InvalidRefreshToken
+
     record = await session.scalar(
         select(AuthSession)
         .where(AuthSession.refresh_token_hash == token_hash)
@@ -177,8 +194,7 @@ async def rotate_refresh_token(
     if record.revoked_at is not None or expires_at <= now:
         raise InvalidRefreshToken
 
-    user = await session.get(User, record.user_id)
-    if user is None or not user.is_active:
+    if not user.is_active:
         raise InvalidRefreshToken
 
     refresh_token, replacement = _create_refresh_session(
@@ -201,8 +217,17 @@ async def rotate_refresh_token(
 
 async def revoke_refresh_token(session: AsyncSession, raw_token: str) -> None:
     """Revoke a refresh token without revealing whether it existed."""
+    token_hash = hash_refresh_token(raw_token)
+    user_id = await session.scalar(
+        select(AuthSession.user_id).where(AuthSession.refresh_token_hash == token_hash)
+    )
+    if user_id is None or await _lock_user(session, user_id) is None:
+        return
+
     record = await session.scalar(
-        select(AuthSession).where(AuthSession.refresh_token_hash == hash_refresh_token(raw_token))
+        select(AuthSession)
+        .where(AuthSession.refresh_token_hash == token_hash)
+        .with_for_update()
     )
     if record is None or record.revoked_at is not None:
         return
@@ -212,6 +237,9 @@ async def revoke_refresh_token(session: AsyncSession, raw_token: str) -> None:
 
 async def revoke_all_user_sessions(session: AsyncSession, user_id: uuid.UUID) -> None:
     """Revoke every active refresh session belonging to one user."""
+    if await _lock_user(session, user_id) is None:
+        return
+
     await session.execute(
         update(AuthSession)
         .where(
@@ -224,10 +252,17 @@ async def revoke_all_user_sessions(session: AsyncSession, user_id: uuid.UUID) ->
 
 async def revoke_session_family(session: AsyncSession, family_id: uuid.UUID) -> None:
     """Revoke every active refresh session in one rotation family."""
+    user_id = await session.scalar(
+        select(AuthSession.user_id).where(AuthSession.family_id == family_id)
+    )
+    if user_id is None or await _lock_user(session, user_id) is None:
+        return
+
     await session.execute(
         update(AuthSession)
         .where(
             AuthSession.family_id == family_id,
+            AuthSession.user_id == user_id,
             AuthSession.revoked_at.is_(None),
         )
         .values(revoked_at=datetime.now(timezone.utc))

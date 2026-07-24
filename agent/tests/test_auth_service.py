@@ -152,6 +152,78 @@ class _RacingRegistrationSession:
         raise IntegrityError("INSERT", {}, _NamedUniqueViolation())
 
 
+def _statement_table_name(statement) -> str:
+    """Return the table targeted by a SELECT or UPDATE statement."""
+    table = getattr(statement, "table", None)
+    if table is not None:
+        return table.name
+    return statement.get_final_froms()[0].name
+
+
+class _LockRecordingSession:
+    """Record SQL lock ordering while supplying complete auth entities."""
+
+    def __init__(self) -> None:
+        self.user = User(
+            id=uuid.uuid4(),
+            email="student@example.com",
+            email_normalized="student@example.com",
+            nickname="Student",
+            password_hash="not-used",
+            is_active=True,
+        )
+        self.record = AuthSession(
+            id=uuid.uuid4(),
+            user_id=self.user.id,
+            family_id=uuid.uuid4(),
+            refresh_token_hash="a" * 64,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        self.scalar_statements = []
+        self.execute_statements = []
+
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
+        if _statement_table_name(statement) == "users":
+            return self.user
+        if list(statement.selected_columns)[0].key == "user_id":
+            return self.user.id
+        return self.record
+
+    async def get(self, model, identity):
+        return self.user
+
+    def add(self, instance) -> None:
+        return None
+
+    async def flush(self) -> None:
+        return None
+
+    async def execute(self, statement) -> None:
+        self.execute_statements.append(statement)
+
+
+class _UnknownRefreshLockRecordingSession:
+    """Record lock behavior for a refresh token that has no session record."""
+
+    def __init__(self) -> None:
+        self.scalar_statements = []
+
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
+        return None
+
+
+def _lock_shapes(session: _LockRecordingSession | _UnknownRefreshLockRecordingSession):
+    return [
+        (
+            _statement_table_name(statement),
+            getattr(statement, "_for_update_arg", None) is not None,
+        )
+        for statement in session.scalar_statements
+    ]
+
+
 @pytest.mark.asyncio
 async def test_register_converts_named_unique_race_to_duplicate_error() -> None:
     with pytest.raises(EmailAlreadyRegistered):
@@ -164,6 +236,86 @@ async def test_register_converts_named_unique_race_to_duplicate_error() -> None:
             ),
             None,
         )
+
+
+@pytest.mark.asyncio
+async def test_rotate_locks_user_before_relocking_refresh_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _LockRecordingSession()
+    replacement = AuthSession(
+        id=uuid.uuid4(),
+        user_id=session.user.id,
+        family_id=session.record.family_id,
+        refresh_token_hash="b" * 64,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    monkeypatch.setattr(
+        "services.auth_service._create_refresh_session",
+        lambda user_id, user_agent, family_id: ("replacement-token", replacement),
+    )
+
+    await rotate_refresh_token(session, "refresh-token", "pytest-refresh")
+
+    assert _lock_shapes(session) == [
+        ("auth_sessions", False),
+        ("users", True),
+        ("auth_sessions", True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_single_logout_locks_user_before_relocking_refresh_session() -> None:
+    session = _LockRecordingSession()
+
+    await revoke_refresh_token(session, "refresh-token")
+
+    assert _lock_shapes(session) == [
+        ("auth_sessions", False),
+        ("users", True),
+        ("auth_sessions", True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_family_revocation_locks_user_before_updating_sessions() -> None:
+    session = _LockRecordingSession()
+
+    await revoke_session_family(session, session.record.family_id)
+
+    assert _lock_shapes(session) == [
+        ("auth_sessions", False),
+        ("users", True),
+    ]
+    assert [_statement_table_name(statement) for statement in session.execute_statements] == [
+        "auth_sessions"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_logout_all_locks_user_before_updating_sessions() -> None:
+    session = _LockRecordingSession()
+
+    await revoke_all_user_sessions(session, session.user.id)
+
+    assert _lock_shapes(session) == [("users", True)]
+    assert [_statement_table_name(statement) for statement in session.execute_statements] == [
+        "auth_sessions"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unknown_refresh_token_does_not_acquire_user_or_session_locks() -> None:
+    session = _UnknownRefreshLockRecordingSession()
+
+    with pytest.raises(InvalidRefreshToken):
+        await rotate_refresh_token(session, "unknown-refresh-token", "pytest-refresh")
+    await revoke_refresh_token(session, "unknown-refresh-token")
+
+    assert _lock_shapes(session) == [
+        ("auth_sessions", False),
+        ("auth_sessions", False),
+    ]
 
 
 @pytest.mark.asyncio
