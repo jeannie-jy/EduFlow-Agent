@@ -24,6 +24,11 @@ def email_registered() -> HTTPException:
     return auth_http_error(409, "EMAIL_ALREADY_REGISTERED", "邮箱已注册")
 
 
+def password_policy_violation() -> HTTPException:
+    """Return the stable error for a registration password policy violation."""
+    return auth_http_error(400, "PASSWORD_POLICY_VIOLATION", "密码不符合规则")
+
+
 def invalid_credentials() -> HTTPException:
     """Return a generic error that does not reveal account existence or status."""
     return auth_http_error(

@@ -22,6 +22,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from api.auth_errors import password_policy_violation
+from security.passwords import PasswordPolicyViolation
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +50,7 @@ def _build_error_body(
     message: str,
     details: dict[str, Any] | None = None,
     status_code: int = 500,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """构建统一的错误响应 JSON。"""
     return JSONResponse(
@@ -58,6 +62,15 @@ def _build_error_body(
                 "details": details or {},
             }
         },
+        headers=headers,
+    )
+
+
+def _is_password_policy_validation_error(error: dict[str, Any]) -> bool:
+    """Identify the typed password-policy failure retained by Pydantic."""
+    context = error.get("ctx")
+    return isinstance(context, dict) and isinstance(
+        context.get("error"), PasswordPolicyViolation
     )
 
 
@@ -84,6 +97,7 @@ def register_error_handlers(app) -> None:
             return JSONResponse(
                 status_code=exc.status_code,
                 content=detail,
+                headers=exc.headers,
             )
 
         if isinstance(detail, str):
@@ -106,6 +120,7 @@ def register_error_handlers(app) -> None:
             code=code,
             message=message,
             status_code=exc.status_code,
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -116,8 +131,17 @@ def register_error_handlers(app) -> None:
 
         将字段级别的验证错误展开为结构化 details。
         """
+        errors = exc.errors()
+        if any(_is_password_policy_validation_error(error) for error in errors):
+            policy_error = password_policy_violation()
+            return JSONResponse(
+                status_code=policy_error.status_code,
+                content=policy_error.detail,
+                headers=policy_error.headers,
+            )
+
         field_errors: dict[str, list[str]] = {}
-        for error in exc.errors():
+        for error in errors:
             loc = ".".join(str(l) for l in error["loc"])
             msg = error.get("msg", "Unknown error")
             field_errors.setdefault(loc, []).append(msg)

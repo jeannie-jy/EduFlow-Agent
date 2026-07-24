@@ -7,6 +7,10 @@ _password_hash = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = _password_hash.hash("not-a-real-user-password-2026")
 
 
+class PasswordPolicyViolation(ValueError):
+    """Raised when a password violates the shared registration policy."""
+
+
 def normalize_email(value: str) -> str:
     """Normalize an email address for identity comparisons."""
     return value.strip().casefold()
@@ -15,13 +19,13 @@ def normalize_email(value: str) -> str:
 def validate_password_policy(password: str) -> str:
     """Validate the minimum password policy and return the supplied password."""
     if not 8 <= len(password) <= 128:
-        raise ValueError("密码长度必须为 8 至 128 个字符")
+        raise PasswordPolicyViolation("密码长度必须为 8 至 128 个字符")
     if len(password.encode("utf-8")) > 256:
-        raise ValueError("密码编码后不能超过 256 字节")
+        raise PasswordPolicyViolation("密码编码后不能超过 256 字节")
     if not any(character.isalpha() for character in password):
-        raise ValueError("密码必须包含字母")
+        raise PasswordPolicyViolation("密码必须包含字母")
     if not any(character.isdigit() for character in password):
-        raise ValueError("密码必须包含数字")
+        raise PasswordPolicyViolation("密码必须包含数字")
     return password
 
 
