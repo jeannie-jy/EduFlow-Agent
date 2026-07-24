@@ -8,6 +8,7 @@ services:
   # ── Agent API (Python) ──────────────────────────────────
   agent-api:
     build: ./agent
+    command: ["/bin/sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
     ports: ["8000:8000"]
     environment:
       - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
