@@ -257,6 +257,109 @@ async def test_credential_issuing_routes_do_not_emit_credentials_when_commit_fai
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/api/auth/logout", "/api/auth/logout-all"])
+async def test_logout_routes_do_not_clear_cookie_when_revocation_commit_fails(
+    auth_api_client,
+    endpoint: str,
+) -> None:
+    """A failed revocation commit must not claim logout succeeded to the browser."""
+    from db.database import get_session
+    from main import app
+
+    client = auth_api_client.client
+    registration = await _register(client)
+
+    class CommitFailingSession:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        async def commit(self) -> None:
+            raise RuntimeError("simulated logout revocation commit failure")
+
+        def __getattr__(self, name: str):
+            return getattr(self._session, name)
+
+    async def get_commit_failing_session():
+        async with auth_api_client.session_factory() as session:
+            try:
+                yield CommitFailingSession(session)
+            finally:
+                await session.rollback()
+
+    original_dependency = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = get_commit_failing_session
+    try:
+        headers = (
+            {"Authorization": f"Bearer {registration.json()['access_token']}"}
+            if endpoint == "/api/auth/logout-all"
+            else {}
+        )
+        response = await client.post(endpoint, headers=headers)
+    finally:
+        app.dependency_overrides[get_session] = original_dependency
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"
+    assert response.headers.get("set-cookie") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/api/auth/logout", "/api/auth/logout-all"])
+async def test_logout_routes_commit_before_clearing_the_refresh_cookie(
+    auth_api_client,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+) -> None:
+    """The browser may only be told the revocation succeeded after its commit."""
+    from api.auth import clear_refresh_cookie as original_clear_refresh_cookie
+    from db.database import get_session
+    from main import app
+
+    client = auth_api_client.client
+    registration = await _register(client)
+    events: list[str] = []
+
+    class RecordingSession:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        async def commit(self) -> None:
+            events.append("commit")
+            await self._session.commit()
+
+        def __getattr__(self, name: str):
+            return getattr(self._session, name)
+
+    async def get_recording_session():
+        async with auth_api_client.session_factory() as session:
+            try:
+                yield RecordingSession(session)
+            finally:
+                await session.rollback()
+
+    def record_cookie_clear(response) -> None:
+        events.append("clear_cookie")
+        original_clear_refresh_cookie(response)
+
+    original_dependency = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = get_recording_session
+    monkeypatch.setattr("api.auth.clear_refresh_cookie", record_cookie_clear)
+    try:
+        headers = (
+            {"Authorization": f"Bearer {registration.json()['access_token']}"}
+            if endpoint == "/api/auth/logout-all"
+            else {}
+        )
+        response = await client.post(endpoint, headers=headers)
+    finally:
+        app.dependency_overrides[get_session] = original_dependency
+
+    assert response.status_code == 204
+    _assert_cookie_cleared(response)
+    assert events == ["commit", "clear_cookie"]
+
+
+@pytest.mark.asyncio
 async def test_login_sets_refresh_cookie_and_preserves_invalid_credentials_privacy(
     auth_api_client,
 ) -> None:

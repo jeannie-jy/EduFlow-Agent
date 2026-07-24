@@ -229,6 +229,7 @@ async def logout(
     raw_token = request.cookies.get(get_settings().auth_refresh_cookie_name)
     if raw_token:
         await revoke_refresh_token(session, raw_token)
+    await session.commit()
     clear_refresh_cookie(response)
 
 
@@ -240,6 +241,7 @@ async def logout_all(
 ) -> None:
     """Revoke all active refresh sessions belonging to the current user."""
     await revoke_all_user_sessions(session, current_user.id)
+    await session.commit()
     clear_refresh_cookie(response)
 
 
