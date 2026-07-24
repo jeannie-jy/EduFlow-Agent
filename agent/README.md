@@ -5,8 +5,15 @@
 ## 快速启动
 
 ```bash
-# 安装依赖
+# 系统依赖（视频导出需要）
+# Windows: winget install Gyan.FFmpeg
+# macOS:   brew install ffmpeg
+# Linux:   apt install ffmpeg
+
+# 安装 Python 依赖
 pip install -r requirements.txt
+# Windows 注意: pycairo 可能需要手动下载 wheel
+# https://github.com/cgohlke/pycairo-build/releases
 
 # 配置环境变量（确保仓库根目录有 .env）
 cp ../.env.example ../.env
@@ -65,8 +72,10 @@ agent/
 │   ├── design_parameters.py  # 参数设计工具（8 种知识类型模板）
 │   └── generate_asset.py     # 多模态资源生成（card/mindmap/table/code）
 │
-├── adapters/                 # 确定性转换器（不依赖 LLM）
-│   └── manim_adapter.py      # DSL → Manim Python 脚本（14 种 Mobject + 16 种 Animation 映射）
+├── adapters/                 # DSL → Manim 转换器
+│   ├── manim_adapter.py      # 确定性转换（14 种 Mobject + 16 种 Animation 映射）
+│   ├── manim_llm_adapter.py  # LLM 驱动的 Manim 代码生成（教学语义 → 可视化脚本）
+│   └── manim_validator.py    # Manim 脚本质量检测（6 项规则）
 │
 ├── plugins/                  # 领域插件系统
 │   ├── domain_plugin.py      # DomainPlugin Protocol + 注册表

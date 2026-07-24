@@ -63,6 +63,10 @@ EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语�
 - Docker Desktop 24+
 - Node.js 20+ / npm 10+（前端开发）
 - Python 3.11+（后端开发，Docker 模式不需要）
+- FFmpeg（视频导出依赖，Docker 模式不需要）
+  - Windows: `winget install Gyan.FFmpeg`
+  - macOS: `brew install ffmpeg`
+  - Linux: `apt install ffmpeg`
 
 ### 方式一：一键启动脚本
 
@@ -130,6 +134,8 @@ docker compose up -d postgres redis minio
 # 3. 后端（终端 1）
 cd agent
 pip install -r requirements.txt
+# Windows 用户注意：pycairo 可能需要手动下载 wheel
+# 下载地址: https://github.com/cgohlke/pycairo-build/releases
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # 4. 前端（终端 2）
