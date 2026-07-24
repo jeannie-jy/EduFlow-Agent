@@ -8,14 +8,18 @@ GET    /api/materials/{id}/preview                预览解析结果
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from db.database import get_session
+from db.models import SourceMaterial
+from .deps import CurrentUser
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ ALLOWED_EXTENSIONS = {
 
 @router.post("/upload", status_code=201)
 async def upload_material(
+    current_user: CurrentUser,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -73,6 +78,22 @@ async def upload_material(
     file_path = upload_dir / safe_filename
     file_path.write_bytes(contents)
 
+    material = SourceMaterial(
+        id=material_id,
+        owner_id=current_user.id,
+        project_id=None,
+        type=suffix.lstrip("."),
+        filename=original_name,
+        size_bytes=len(contents),
+        storage_path=str(file_path),
+    )
+    try:
+        session.add(material)
+        await session.flush()
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+
     logger.info("文件上传: id=%s | name=%s | size=%d | type=%s",
                 material_id, original_name, len(contents), suffix)
 
@@ -84,21 +105,15 @@ async def upload_material(
     }
 
 
-def parse_material_file(material_id: str) -> dict | None:
-    """解析已上传素材文件，返回 {topics, raw_text}。找不到文件返回 None。
+def parse_material_file(storage_path: str | Path) -> dict | None:
+    """Parse a stored material path into ``{topics, raw_text}``.
 
-    供 parse 端点与生成流程复用（file_upload 素材接线）。
+    Callers must resolve the path from an authorized database record first.
     """
-    settings = get_settings()
-    upload_dir = settings.upload_dir / material_id
-    if not upload_dir.exists():
+    file_path = Path(storage_path)
+    if not file_path.is_file():
         return None
 
-    files = list(upload_dir.glob("uploaded_*"))
-    if not files:
-        return None
-
-    file_path = files[0]
     suffix = file_path.suffix.lower()
 
     raw_text = ""
@@ -116,11 +131,41 @@ def parse_material_file(material_id: str) -> dict | None:
     return {"topics": topics, "raw_text": raw_text[:100000]}  # 截断到 100K 字符
 
 
-@router.post("/{material_id}/parse")
-async def parse_material(material_id: str) -> dict:
-    """解析上传的课件文件，提取结构化内容。"""
+async def get_owned_material(
+    session: AsyncSession,
+    material_id: str,
+    user_id: uuid.UUID,
+) -> SourceMaterial:
+    """Return a material only when it belongs to the authenticated user."""
     try:
-        parsed = parse_material_file(material_id)
+        material_uuid = uuid.UUID(material_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    material = await session.scalar(
+        select(SourceMaterial).where(
+            SourceMaterial.id == material_uuid,
+            SourceMaterial.owner_id == user_id,
+        )
+    )
+    if material is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+    return material
+
+
+@router.post("/{material_id}/parse")
+async def parse_material(
+    material_id: str,
+    current_user: CurrentUser,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """解析上传的课件文件，提取结构化内容。"""
+    material = await get_owned_material(session, material_id, current_user.id)
+    if material.storage_path is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    try:
+        parsed = parse_material_file(material.storage_path)
     except Exception as exc:
         logger.exception("文件解析失败: material=%s", material_id)
         raise HTTPException(status_code=500, detail=f"解析失败: {exc}")
@@ -128,30 +173,35 @@ async def parse_material(material_id: str) -> dict:
     if parsed is None:
         raise HTTPException(status_code=404, detail="Material not found")
 
+    material.content_text = parsed["raw_text"]
+    material.parsed_result = parsed
+    await session.flush()
+
     logger.info("文件解析完成: id=%s | topics=%d | text_len=%d",
                 material_id, len(parsed["topics"]), len(parsed["raw_text"]))
 
     return {
-        "id": material_id,
+        "id": str(material.id),
         "status": "done",
         "parsed_result": parsed,
     }
 
 
 @router.get("/{material_id}/preview")
-async def preview_material(material_id: str) -> dict:
+async def preview_material(
+    material_id: str,
+    current_user: CurrentUser,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
     """预览文件解析结果（只读，不触发重新解析）。"""
-    settings = get_settings()
-    upload_dir = settings.upload_dir / material_id
-
-    if not upload_dir.exists():
+    material = await get_owned_material(session, material_id, current_user.id)
+    if material.storage_path is None:
         raise HTTPException(status_code=404, detail="Material not found")
 
-    files = list(upload_dir.glob("uploaded_*"))
-    if not files:
+    file_path = Path(material.storage_path)
+    if not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
-    file_path = files[0]
     suffix = file_path.suffix.lower()
 
     preview_text = ""
@@ -161,10 +211,10 @@ async def preview_material(material_id: str) -> dict:
         preview_text = f"Binary file: {file_path.name} ({suffix})"
 
     return {
-        "id": material_id,
-        "filename": file_path.name,
-        "type": suffix.lstrip("."),
-        "size_bytes": file_path.stat().st_size,
+        "id": str(material.id),
+        "filename": material.filename,
+        "type": material.type,
+        "size_bytes": material.size_bytes,
         "preview": preview_text,
     }
 

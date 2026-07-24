@@ -11,7 +11,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +32,31 @@ async def create_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """创建推演项目。"""
-    from db.models import Project
+    from db.models import Project, SourceMaterial
+
+    material_ids_raw = body.constraints.get("material_ids", [])
+    if not isinstance(material_ids_raw, list):
+        raise HTTPException(status_code=400, detail="material_ids must be a list")
+
+    try:
+        material_ids = [uuid.UUID(str(material_id)) for material_id in material_ids_raw]
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid material ID")
+
+    materials = []
+    if material_ids:
+        materials = list(
+            (
+                await session.execute(
+                    select(SourceMaterial).where(
+                        SourceMaterial.id.in_(material_ids),
+                        SourceMaterial.owner_id == current_user.id,
+                    )
+                )
+            ).scalars()
+        )
+        if len(materials) != len(set(material_ids)):
+            raise HTTPException(status_code=400, detail="Invalid material ID")
 
     project = Project(
         id=uuid.uuid4(),
@@ -46,6 +70,8 @@ async def create_project(
     )
 
     session.add(project)
+    for material in materials:
+        material.project_id = project.id
     await session.flush()
 
     # 存储用户输入到 DSL snapshot

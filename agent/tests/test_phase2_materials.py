@@ -8,7 +8,117 @@ from __future__ import annotations
 import io
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+@pytest.mark.asyncio
+async def test_upload_persists_owned_material(auth_api_client, tmp_path):
+    """Uploads create an unbound SourceMaterial owned by the authenticated user."""
+    from config import get_settings
+    from db.models import SourceMaterial
+    from sqlalchemy import select
+
+    registration = await auth_api_client.client.post(
+        "/api/auth/register",
+        json={
+            "email": "material-owner@example.com",
+            "nickname": "material-owner",
+            "password": "learning2026",
+        },
+    )
+    assert registration.status_code == 201
+    registration_data = registration.json()
+    user_id = UUID(registration_data["user"]["id"])
+    headers = {"Authorization": f"Bearer {registration_data['access_token']}"}
+
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    with patch("api.materials.get_settings", return_value=settings):
+        response = await auth_api_client.client.post(
+            "/api/materials/upload",
+            files={"file": ("lecture.txt", b"TCP and HTTP", "text/plain")},
+            headers=headers,
+        )
+
+    assert response.status_code == 201
+    material_id = response.json()["id"]
+    async with auth_api_client.session_factory() as session:
+        material = await session.scalar(
+            select(SourceMaterial).where(SourceMaterial.id == UUID(material_id))
+        )
+
+    assert material is not None
+    assert material.project_id is None
+    assert material.owner_id == user_id
+    assert material.storage_path is not None
+    assert Path(material.storage_path).is_file()
+
+
+@pytest.mark.asyncio
+async def test_upload_removes_file_when_metadata_persistence_fails(tmp_path):
+    """A failed database flush does not leave an untracked uploaded file behind."""
+    from fastapi import UploadFile
+    from sqlalchemy.exc import SQLAlchemyError
+    from api.materials import upload_material
+    from config import get_settings
+
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+    session = MagicMock()
+    session.flush = AsyncMock(side_effect=SQLAlchemyError("database unavailable"))
+    file = UploadFile(filename="lecture.txt", file=io.BytesIO(b"TCP and HTTP"))
+
+    with patch("api.materials.get_settings", return_value=settings):
+        with pytest.raises(SQLAlchemyError, match="database unavailable"):
+            await upload_material(
+                current_user=SimpleNamespace(id=UUID("9cc4f03c-ef67-4cff-a0fd-8e43c7717743")),
+                file=file,
+                session=session,
+            )
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_parse_persists_content_and_result(auth_api_client, tmp_path):
+    """Parsing saves the extracted text and structured result on the material."""
+    from config import get_settings
+    from db.models import SourceMaterial
+    from sqlalchemy import select
+
+    registration = await auth_api_client.client.post(
+        "/api/auth/register",
+        json={
+            "email": "material-parser@example.com",
+            "nickname": "material-parser",
+            "password": "learning2026",
+        },
+    )
+    assert registration.status_code == 201
+    headers = {"Authorization": f"Bearer {registration.json()['access_token']}"}
+    settings = get_settings().model_copy(update={"upload_dir": tmp_path})
+
+    with patch("api.materials.get_settings", return_value=settings):
+        upload = await auth_api_client.client.post(
+            "/api/materials/upload",
+            files={"file": ("lecture.txt", b"TCP and HTTP", "text/plain")},
+            headers=headers,
+        )
+        assert upload.status_code == 201
+        material_id = upload.json()["id"]
+        parse = await auth_api_client.client.post(
+            f"/api/materials/{material_id}/parse",
+            headers=headers,
+        )
+
+    assert parse.status_code == 200
+    async with auth_api_client.session_factory() as session:
+        material = await session.scalar(
+            select(SourceMaterial).where(SourceMaterial.id == UUID(material_id))
+        )
+    assert material is not None
+    assert material.content_text == "TCP and HTTP"
+    assert material.parsed_result == parse.json()["parsed_result"]
 
 
 # ============================================================================
