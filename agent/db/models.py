@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -121,6 +122,9 @@ class AuthSession(Base):
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        Index("idx_projects_status", "status", text("updated_at DESC")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -166,6 +170,8 @@ class Frame(Base):
     __tablename__ = "frames"
     __table_args__ = (
         UniqueConstraint("project_id", "version", "frame_id"),
+        Index("idx_frames_project_order", "project_id", "version", "order_index"),
+        Index("idx_frames_frame_id", "project_id", "frame_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -211,6 +217,7 @@ class ParameterModel(Base):
     __tablename__ = "parameters"
     __table_args__ = (
         UniqueConstraint("project_id", "key"),
+        Index("idx_params_project", "project_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -245,6 +252,9 @@ class ParameterModel(Base):
 
 class QualityReportModel(Base):
     __tablename__ = "quality_reports"
+    __table_args__ = (
+        Index("idx_quality_project", "project_id", text("created_at DESC")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -269,6 +279,9 @@ class QualityReportModel(Base):
 
 class ExportJobModel(Base):
     __tablename__ = "export_jobs"
+    __table_args__ = (
+        Index("idx_export_status", "status", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -297,7 +310,11 @@ class ExportJobModel(Base):
 
 class Feedback(Base):
     __tablename__ = "feedback"
-    __table_args__ = (CheckConstraint("rating BETWEEN 1 AND 5"),)
+    __table_args__ = (
+        CheckConstraint("rating BETWEEN 1 AND 5"),
+        Index("idx_feedback_project", "project_id"),
+        Index("idx_feedback_frame", "frame_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -324,6 +341,9 @@ class Feedback(Base):
 
 class SourceMaterial(Base):
     __tablename__ = "source_materials"
+    __table_args__ = (
+        Index("idx_materials_project", "project_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -362,6 +382,7 @@ class ProjectVersion(Base):
     __tablename__ = "project_versions"
     __table_args__ = (
         UniqueConstraint("project_id", "version"),
+        Index("idx_versions_project", "project_id", text("version DESC")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

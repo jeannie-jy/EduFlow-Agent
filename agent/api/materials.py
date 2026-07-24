@@ -55,7 +55,7 @@ def _normalize_original_filename(filename: str | None) -> str:
     return cleaned
 
 
-def _resolve_material_storage_path(storage_path: str | None) -> Path:
+def resolve_material_storage_path(storage_path: str | None) -> Path:
     """Resolve a persisted path only when it remains inside the upload root."""
     if storage_path is None:
         raise HTTPException(status_code=404, detail="Material not found")
@@ -204,6 +204,30 @@ async def get_owned_material(
     return material
 
 
+async def get_owned_project_material(
+    session: AsyncSession,
+    material_id: str,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> SourceMaterial:
+    """Return a material only when it belongs to both user and project."""
+    try:
+        material_uuid = uuid.UUID(material_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    material = await session.scalar(
+        select(SourceMaterial).where(
+            SourceMaterial.id == material_uuid,
+            SourceMaterial.owner_id == user_id,
+            SourceMaterial.project_id == project_id,
+        )
+    )
+    if material is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+    return material
+
+
 @router.post("/{material_id}/parse")
 async def parse_material(
     material_id: str,
@@ -212,7 +236,7 @@ async def parse_material(
 ) -> dict:
     """解析上传的课件文件，提取结构化内容。"""
     material = await get_owned_material(session, material_id, current_user.id)
-    file_path = _resolve_material_storage_path(material.storage_path)
+    file_path = resolve_material_storage_path(material.storage_path)
 
     try:
         parsed = parse_material_file(file_path)
@@ -245,7 +269,7 @@ async def preview_material(
 ) -> dict:
     """预览文件解析结果（只读，不触发重新解析）。"""
     material = await get_owned_material(session, material_id, current_user.id)
-    file_path = _resolve_material_storage_path(material.storage_path)
+    file_path = resolve_material_storage_path(material.storage_path)
 
     suffix = file_path.suffix.lower()
 

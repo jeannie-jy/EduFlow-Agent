@@ -157,6 +157,7 @@ async def register(
         result = await register_user(session, payload, _user_agent(request))
     except EmailAlreadyRegistered:
         raise email_registered()
+    await session.commit()
     set_refresh_cookie(response, result.refresh_token)
     return _auth_response(result)
 
@@ -181,6 +182,7 @@ async def login(
                 await record_login_failure(redis, client_ip, normalized_email)
                 raise invalid_credentials()
             await clear_login_failures(redis, client_ip, normalized_email)
+            await session.commit()
     except (AuthRateLimited, AuthRateLimitUnavailable) as error:
         _raise_rate_limit_error(error)
     set_refresh_cookie(response, result.refresh_token)
@@ -211,6 +213,7 @@ async def refresh(
         result = await rotate_refresh_token(session, raw_token, _user_agent(request))
     except InvalidRefreshToken:
         return _invalid_refresh_response()
+    await session.commit()
     set_refresh_cookie(response, result.refresh_token)
     return _auth_response(result)
 

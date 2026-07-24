@@ -112,8 +112,8 @@ def register_error_handlers(app) -> None:
             message = str(detail)
 
         logger.warning(
-            "HTTP error | status=%d code=%s path=%s message=%s",
-            exc.status_code, code, request.url.path, message[:200],
+            "HTTP error | status=%d code=%s path=%s",
+            exc.status_code, code, request.url.path,
         )
 
         return _build_error_body(
@@ -153,8 +153,8 @@ def register_error_handlers(app) -> None:
             message = f"参数校验失败: {first_loc} — {first_msg}"
 
         logger.warning(
-            "Validation error | path=%s errors=%d first=%s",
-            request.url.path, len(exc.errors()), message[:200],
+            "Validation error | path=%s errors=%d",
+            request.url.path, len(exc.errors()),
         )
 
         return _build_error_body(
@@ -172,9 +172,12 @@ def register_error_handlers(app) -> None:
 
         生产环境不应暴露 traceback，仅记录日志。
         """
-        logger.exception(
-            "Unhandled exception | path=%s method=%s type=%s",
-            request.url.path, request.method, type(exc).__name__,
+        logger.error(
+            "Unhandled exception | path=%s method=%s type=%s message=%s",
+            request.url.path,
+            request.method,
+            type(exc).__name__,
+            "unhandled request error",
         )
 
         return _build_error_body(

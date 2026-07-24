@@ -474,6 +474,10 @@ async def auth_api_client(
 
     app.dependency_overrides[get_session] = get_test_session
     app.dependency_overrides[get_readonly_session] = get_test_readonly_session
+    # SSE authentication and ownership intentionally manage their own
+    # short-lived sessions rather than using request-yield dependencies.
+    monkeypatch.setattr("api.deps.async_session_factory", session_factory)
+    monkeypatch.setattr("api.generate.async_session_factory", session_factory)
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="https://testserver") as client:
         yield AuthApiClient(client=client, session_factory=session_factory)

@@ -64,6 +64,9 @@ jobs:
       - name: Upgrade database
         run: python -m alembic upgrade head
 
+      - name: Verify Alembic metadata has no drift
+        run: python -m alembic check
+
       - name: Run unit and API tests
         run: python -m pytest tests/ -v --tb=short -m "not postgres and not redis"
 

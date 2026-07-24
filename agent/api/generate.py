@@ -9,14 +9,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from db.database import get_session
+from db.database import async_session_factory, get_session
 from services.generate_service import run_generation_stream, resume_generation_stream, run_regenerate_stream
 from schema.project import GenerateRequest, RegenerateRequest, RejectPlanRequest, ApprovePlanResponse
-from .deps import CurrentUser
+from .deps import CurrentUser, StreamCurrentUserId
+from .materials import (
+    get_owned_project_material,
+    parse_material_file,
+    resolve_material_storage_path,
+)
 from .ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
@@ -60,34 +65,40 @@ async def start_generation(
 async def generation_stream(
     project_id: str,
     request: Request,
-    current_user: CurrentUser,
-    session: AsyncSession = Depends(get_session),
+    current_user_id: StreamCurrentUserId,
 ):
     """SSE 流式推送生成进度。"""
-    project = await get_owned_project(session, project_id, current_user.id)
+    async with async_session_factory() as session:
+        project = await get_owned_project(session, project_id, current_user_id)
 
-    input_content = ""
-    constraints = {}
-    action = "full"
-    if project.dsl_snapshot:
-        input_content = project.dsl_snapshot.get("input_content", project.title)
-        constraints = project.dsl_snapshot.get("constraints", {})
-        action = project.dsl_snapshot.get("_pending_action", "full")
+        input_content = ""
+        constraints = {}
+        action = "full"
+        if project.dsl_snapshot:
+            input_content = project.dsl_snapshot.get("input_content", project.title)
+            constraints = project.dsl_snapshot.get("constraints", {})
+            action = project.dsl_snapshot.get("_pending_action", "full")
 
-    # file_upload 素材接线：载入已上传素材的解析文本供 Planner 使用
-    materials: list[dict] = []
-    material_ids = constraints.get("material_ids", []) if isinstance(constraints, dict) else []
-    if material_ids:
-        from api.materials import parse_material_file
-        for mid in material_ids:
+        # File paths are only trusted after a single owner-and-project-scoped lookup.
+        materials: list[dict] = []
+        material_ids = (
+            constraints.get("material_ids", []) if isinstance(constraints, dict) else []
+        )
+        for material_id in material_ids:
+            material = await get_owned_project_material(
+                session, str(material_id), current_user_id, project.id
+            )
+            file_path = resolve_material_storage_path(material.storage_path)
             try:
-                parsed = parse_material_file(str(mid))
-            except Exception as exc:
-                logger.warning("素材解析失败 material=%s: %s", mid, exc)
+                parsed = parse_material_file(file_path)
+            except (OSError, UnicodeError, ValueError):
+                logger.warning("素材解析失败 material=%s", material.id)
                 parsed = None
-            if parsed and parsed.get("raw_text"):
+            if parsed is None:
+                raise HTTPException(status_code=404, detail="Material not found")
+            if parsed.get("raw_text"):
                 materials.append({
-                    "material_id": str(mid),
+                    "material_id": str(material.id),
                     "content_text": parsed["raw_text"],
                     "topics": parsed.get("topics", []),
                 })
@@ -113,10 +124,9 @@ async def generation_stream(
 async def generation_resume_stream(
     project_id: str,
     request: Request,
-    current_user: CurrentUser,
+    current_user_id: StreamCurrentUserId,
     decision: str = "approve",
     feedback: str = "",
-    session: AsyncSession = Depends(get_session),
 ):
     """从 HITL 中断点恢复生成流程的 SSE 流。
 
@@ -124,7 +134,8 @@ async def generation_resume_stream(
         decision: approve | reject
         feedback: 拒绝时的修改意见
     """
-    await get_owned_project(session, project_id, current_user.id)
+    async with async_session_factory() as session:
+        await get_owned_project(session, project_id, current_user_id)
 
     resume_value = (
         {"action": "reject", "feedback": feedback}
@@ -168,11 +179,11 @@ async def regenerate_frames(
 async def regenerate_stream(
     project_id: str,
     request: Request,
-    current_user: CurrentUser,
-    session: AsyncSession = Depends(get_session),
+    current_user_id: StreamCurrentUserId,
 ):
     """局部重生成的 SSE 进度流（跳过 Planner+Knowledge，直接到 Coder）。"""
-    await get_owned_project(session, project_id, current_user.id)
+    async with async_session_factory() as session:
+        await get_owned_project(session, project_id, current_user_id)
 
     async def event_generator():
         async for sse_chunk in run_regenerate_stream(

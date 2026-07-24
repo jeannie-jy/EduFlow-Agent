@@ -189,6 +189,74 @@ async def test_register_rolls_back_on_unhandled_service_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("flow", ["register", "login", "refresh"])
+async def test_credential_issuing_routes_do_not_emit_credentials_when_commit_fails(
+    auth_api_client,
+    flow: str,
+) -> None:
+    """A real HTTP response must not expose credentials before persistence succeeds."""
+    from db.database import get_session
+    from main import app
+
+    client = auth_api_client.client
+    refresh_token: str | None = None
+    if flow != "register":
+        await _register(client)
+        refresh_token = client.cookies.get("eduflow_refresh")
+        assert refresh_token
+
+    class CommitFailingSession:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        async def commit(self) -> None:
+            raise RuntimeError(
+                "simulated commit failure password=learning2026 "
+                "refresh_token_hash=not-for-response"
+            )
+
+        def __getattr__(self, name: str):
+            return getattr(self._session, name)
+
+    async def get_commit_failing_session():
+        async with auth_api_client.session_factory() as session:
+            try:
+                yield CommitFailingSession(session)
+            finally:
+                await session.rollback()
+
+    original_dependency = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = get_commit_failing_session
+    try:
+        if flow == "register":
+            response = await client.post(
+                "/api/auth/register",
+                json={
+                    "email": "commit-failure@example.com",
+                    "nickname": "Commit failure",
+                    "password": "learning2026",
+                },
+            )
+        elif flow == "login":
+            response = await client.post(
+                "/api/auth/login",
+                json={"email": "student@example.com", "password": "learning2026"},
+            )
+        else:
+            response = await client.post(
+                "/api/auth/refresh",
+                headers={"Cookie": f"eduflow_refresh={refresh_token}"},
+            )
+    finally:
+        app.dependency_overrides[get_session] = original_dependency
+
+    assert response.status_code == 500
+    assert response.headers.get("set-cookie") is None
+    assert "access_token" not in response.text
+    assert "eduflow_refresh" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_login_sets_refresh_cookie_and_preserves_invalid_credentials_privacy(
     auth_api_client,
 ) -> None:

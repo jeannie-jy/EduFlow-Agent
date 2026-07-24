@@ -31,8 +31,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             status_code = 500
             logger.error(
-                "request failed | method=%s path=%s request_id=%s error=%s",
-                request.method, request.url.path, request_id, exc,
+                "request failed | method=%s path=%s request_id=%s error_type=%s message=%s",
+                request.method,
+                request.url.path,
+                request_id,
+                type(exc).__name__,
+                "request processing failed",
             )
             raise
 
