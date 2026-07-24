@@ -318,6 +318,296 @@ button, a, [role="button"] { cursor: pointer; }
   border-bottom-color: var(--border);
 }
 
+.dijkstra-demo {
+  display: grid;
+  gap: 1.25rem;
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, var(--card) 94%, var(--background));
+  padding: clamp(1rem, 2vw, 1.75rem);
+}
+
+.dijkstra-demo__header,
+.dijkstra-demo__explanation,
+.demo-timeline__header,
+.demo-parameter-panel__field > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.demo-eyebrow {
+  margin: 0;
+  color: var(--primary);
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dijkstra-demo h2,
+.dijkstra-demo h3,
+.dijkstra-demo p {
+  margin-top: 0;
+}
+
+.dijkstra-demo h2 {
+  margin-bottom: 0;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: clamp(1.25rem, 2vw, 1.75rem);
+}
+
+.dijkstra-demo__mode {
+  margin-bottom: 0;
+  color: var(--interactive);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.dijkstra-demo__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(13rem, 0.85fr);
+  gap: 1rem;
+}
+
+.dijkstra-demo__graph {
+  min-height: 25rem;
+  overflow: hidden;
+}
+
+.demo-status-table,
+.demo-parameter-panel {
+  padding: 1rem;
+}
+
+.demo-status-table {
+  align-self: stretch;
+}
+
+.demo-status-table__heading h3,
+.demo-parameter-panel h3 {
+  margin: 0.25rem 0 0.8rem;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: 1rem;
+}
+
+.demo-status-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.demo-status-table th,
+.demo-status-table td {
+  border-top: 1px solid var(--border);
+  padding: 0.55rem 0.25rem;
+  text-align: left;
+}
+
+.demo-status-table tbody tr[aria-current="step"] {
+  color: var(--interactive);
+}
+
+.demo-status-table__distance {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.demo-parameter-panel {
+  grid-column: 2;
+}
+
+.demo-parameter-panel__field + .demo-parameter-panel__field {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.demo-parameter-panel label,
+.demo-parameter-panel output {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.demo-parameter-panel output {
+  color: var(--primary);
+}
+
+.demo-parameter-panel input {
+  width: 100%;
+  accent-color: var(--interactive);
+}
+
+.demo-parameter-panel__field p {
+  margin: 0.35rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.dijkstra-demo__explanation {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.dijkstra-demo__narration-copy {
+  max-width: 48rem;
+  margin-bottom: 0;
+  line-height: 1.6;
+}
+
+.dijkstra-demo__result {
+  margin: 0.5rem 0 0;
+  color: var(--success);
+  font-weight: 700;
+}
+
+.dijkstra-demo__controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.demo-timeline {
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.demo-timeline__count {
+  margin-bottom: 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-timeline__track {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(4.25rem, 1fr));
+  min-width: 59.5rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.demo-timeline__item {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.demo-timeline__item:not(:last-child)::after {
+  position: absolute;
+  top: 0.55rem;
+  left: calc(50% + 0.55rem);
+  width: calc(100% - 1.1rem);
+  border-top: 1px solid var(--border);
+  content: "";
+}
+
+.demo-timeline__item button {
+  z-index: 1;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 1px solid var(--muted-foreground);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
+.demo-timeline__item p {
+  margin-bottom: 0;
+  font-size: 0.66rem;
+  line-height: 1.2;
+}
+
+.demo-timeline__item.is-complete button,
+.demo-timeline__item.is-current button {
+  border-color: var(--interactive);
+}
+
+.demo-timeline__item.is-complete button {
+  background: var(--interactive);
+  color: var(--card);
+}
+
+.demo-timeline__item.is-current {
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.demo-timeline__item.is-current button {
+  background: var(--interactive);
+  color: var(--card);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--interactive) 16%, transparent);
+}
+
+.dijkstra-demo--compact .dijkstra-demo__stage {
+  grid-template-columns: minmax(0, 1.45fr) minmax(11.5rem, 0.75fr);
+}
+
+.dijkstra-demo--compact .dijkstra-demo__graph {
+  min-height: 19rem;
+}
+
+.dijkstra-demo .react-flow__edge.animated .react-flow__edge-path {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dijkstra-demo .simulation-flow-node,
+  .dijkstra-demo .simulation-flow-edge .react-flow__edge-path {
+    transition-duration: 220ms;
+    transition-timing-function: var(--ease-enter);
+  }
+
+  .demo-status-table__distance.is-changed {
+    animation: demo-cell-flash 520ms ease-out both;
+  }
+
+  .demo-timeline__item.is-current button {
+    animation: demo-timeline-settle 260ms var(--ease-enter) both;
+  }
+}
+
+@keyframes demo-cell-flash {
+  from { background: color-mix(in oklch, var(--interactive) 26%, transparent); }
+  to { background: transparent; }
+}
+
+@keyframes demo-timeline-settle {
+  from { transform: scale(0.72); }
+  to { transform: scale(1); }
+}
+
+@media (max-width: 760px) {
+  .dijkstra-demo__stage,
+  .dijkstra-demo--compact .dijkstra-demo__stage {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-parameter-panel {
+    grid-column: auto;
+  }
+
+  .dijkstra-demo__explanation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dijkstra-demo__controls {
+    justify-content: flex-start;
+  }
+}
+
 .plan-flow-line {
   background: linear-gradient(90deg, var(--primary), color-mix(in oklch, var(--primary) 35%, var(--border)));
 }
