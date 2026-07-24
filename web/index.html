@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EduFlow</title>
-    <script>(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),ok=["light","dark"];document.documentElement.dataset.theme=ok.includes(v||"")?v:"light"}catch{document.documentElement.dataset.theme="light"}})();</script>
+    <script>(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),p=["light","dark","system"].includes(v||"")?v:"system",d=matchMedia("(prefers-color-scheme: dark)").matches,t=p==="system"?(d?"dark":"light"):p;document.documentElement.dataset.theme=t}catch{document.documentElement.dataset.theme="light"}})();</script>
   </head>
   <body>
     <div id="root"></div>

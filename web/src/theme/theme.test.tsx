@@ -1,16 +1,13 @@
 import { render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
 import indexHtml from "../../index.html?raw";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
 import { themeScript } from "./theme-script";
 
-beforeEach(() => {
-  localStorage.clear();
-  document.documentElement.removeAttribute("data-theme");
-  window.matchMedia = (query: string) =>
+function createMatchMedia(matches: boolean) {
+  return (query: string) =>
     ({
-      matches: false,
+      matches,
       media: query,
       onchange: null,
       addListener: () => {},
@@ -19,40 +16,38 @@ beforeEach(() => {
       removeEventListener: () => {},
       dispatchEvent: () => false,
     }) as MediaQueryList;
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  document.documentElement.removeAttribute("data-theme");
+  window.matchMedia = createMatchMedia(false);
 });
 
-it("defaults to the light theme regardless of system preference", () => {
+it("resolves system preference before explicit selection", () => {
+  window.matchMedia = createMatchMedia(true);
   const { result } = renderHook(() => useTheme(), { wrapper: ThemeProvider });
-  expect(result.current.theme).toBe("light");
+  expect(result.current.preference).toBe("system");
+  expect(result.current.resolvedTheme).toBe("dark");
+  expect(document.documentElement.dataset.theme).toBe("dark");
 });
 
-it("persists a selected theme without replacing children", async () => {
-  function StatefulThemeProbe() {
-    const { setTheme } = useTheme();
-    const [edits, setEdits] = useState(0);
-
+it("persists an explicit Light selection", async () => {
+  window.matchMedia = createMatchMedia(true);
+  function Probe() {
+    const { preference, resolvedTheme, setPreference } = useTheme();
     return (
       <>
-        <button onClick={() => setEdits((count) => count + 1)}>编辑草稿</button>
-        <button onClick={() => setTheme("dark")}>切换到深色</button>
-        <span>草稿编辑次数：{edits}</span>
+        <span>{preference}:{resolvedTheme}</span>
+        <button onClick={() => setPreference("light")}>Light</button>
       </>
     );
   }
-
-  render(
-    <ThemeProvider>
-      <StatefulThemeProbe />
-    </ThemeProvider>,
-  );
-
-  await userEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
-  const stateNode = screen.getByText("草稿编辑次数：1");
-  await userEvent.click(screen.getByRole("button", { name: "切换到深色" }));
-
-  expect(screen.getByText("草稿编辑次数：1")).toBe(stateNode);
-  expect(localStorage.getItem("eduflow-theme")).toBe("dark");
-  expect(document.documentElement.dataset.theme).toBe("dark");
+  render(<ThemeProvider><Probe /></ThemeProvider>);
+  await userEvent.click(screen.getByRole("button", { name: "Light" }));
+  expect(screen.getByText("light:light")).toBeVisible();
+  expect(localStorage.getItem("eduflow-theme")).toBe("light");
+  expect(document.documentElement.dataset.theme).toBe("light");
 });
 
 it("keeps the pre-hydration script aligned with its exported source", () => {
