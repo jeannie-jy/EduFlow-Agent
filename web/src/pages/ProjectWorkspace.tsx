@@ -30,6 +30,10 @@ import {
   Sparkles,
   RefreshCw,
   Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  RotateCcw,
   Pencil,
   Save,
   Lock,
@@ -487,28 +491,129 @@ function PlanTabContent({ projectId, project, onDone }: {
 }
 
 // ============================================================================
-// Tab: 推演（原 Player）
+// Tab: 推演 — 可视化舞台 + 播放控制
 // ============================================================================
+
+const PLAY_SPEEDS = [
+  { label: "0.5×", ms: 3000 },
+  { label: "1×", ms: 2000 },
+  { label: "2×", ms: 1000 },
+  { label: "4×", ms: 500 },
+];
+
+type PlayState = "idle" | "playing" | "paused";
+
+function usePlayback(onFrame: (i: number) => void) {
+  const [state, setState] = useState<PlayState>("idle");
+  const [speedIdx, setSpeedIdx] = useState(1);
+  const timerRef = useRef<ReturnType<typeof setInterval>>();
+
+  const stop = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = undefined; }
+    setState("idle");
+  }, []);
+
+  const play = useCallback(() => {
+    setState("playing");
+  }, []);
+
+  const pause = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = undefined; }
+    setState("paused");
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (state === "playing") pause(); else play();
+  }, [state, play, pause]);
+
+  // auto-advance
+  useEffect(() => {
+    if (state !== "playing") return;
+    timerRef.current = setInterval(() => {
+      onFrame(-1); // sentinel: advance by 1 (handled in caller)
+    }, PLAY_SPEEDS[speedIdx]?.ms ?? 2000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [state, speedIdx, onFrame]);
+
+  return { state, speedIdx, setSpeedIdx, stop, play, pause, toggle };
+}
+
+/** 当 visual_objects 为空时，用 state_snapshot 渲染降级表格 */
+function StateSnapshotFallback({ snapshot }: { snapshot: Record<string, unknown> }) {
+  const entries = Object.entries(snapshot).filter(
+    ([, v]) => v != null && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="w-full max-w-lg rounded-lg border bg-card text-sm overflow-hidden">
+      <div className="bg-muted/50 px-3 py-1.5 text-xs font-semibold text-muted-foreground">算法状态</div>
+      <div className="divide-y">
+        {entries.map(([key, value]) => (
+          <div key={key} className="flex items-start gap-3 px-3 py-2">
+            <span className="text-xs font-mono text-primary shrink-0 min-w-[80px] pt-0.5">{key}</span>
+            <span className="text-xs text-muted-foreground break-all font-mono">
+              {typeof value === "object" ? JSON.stringify(value) : String(value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function PlayTabContent({ projectId, project }: {
   projectId: string;
   project: ProjectDetailResponse | null;
 }) {
   const [frames, setFrames] = useState<FrameData[]>([]);
-  const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [stageKey, setStageKey] = useState(0); // triggers enter animation on frame change
 
   useEffect(() => {
     if (!projectId) return;
-    listFrames(projectId).then((fd) => {
-      setFrames(fd.frames ?? []);
-    }).catch(() => {});
+    listFrames(projectId).then((fd) => setFrames(fd.frames ?? [])).catch(() => {});
   }, [projectId]);
 
+  // 帧数据源：DSL snapshot 优先
   const dsl = project?.dsl as Record<string, unknown> | undefined;
-  const dslFrames = (dsl?.frames as Record<string, unknown>[]) ?? frames;
+  const dslFrames = (dsl?.frames as Record<string, unknown>[]) ?? [];
   const displayFrames = dslFrames.length > 0 ? dslFrames : frames;
-  const currentFrame = displayFrames[selectedFrameIdx] as Record<string, unknown> | undefined;
+
+  const advance = useCallback((target: number) => {
+    setSelectedIdx((prev) => {
+      const next = target === -1 ? prev + 1 : target;
+      return Math.max(0, Math.min(displayFrames.length - 1, next));
+    });
+    setStageKey((k) => k + 1);
+  }, [displayFrames.length]);
+
+  const playback = usePlayback(advance);
+
+  // 播到末尾自动停
+  useEffect(() => {
+    if (selectedIdx >= displayFrames.length - 1 && playback.state === "playing") {
+      playback.stop();
+    }
+  }, [selectedIdx, displayFrames.length, playback]);
+
+  // 键盘快捷键
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === " ") { e.preventDefault(); playback.toggle(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); advance(selectedIdx - 1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); advance(selectedIdx + 1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [playback, advance, selectedIdx]);
+
+  const currentFrame = displayFrames[selectedIdx] as Record<string, unknown> | undefined;
   const visualObjects = (currentFrame?.visual_objects as Record<string, unknown>[]) ?? [];
+  const narration = currentFrame?.narration as string | undefined;
+  const title = currentFrame?.title as string | undefined;
+  const frameId = currentFrame?.frame_id as string | undefined;
 
   if (displayFrames.length === 0) {
     return (
@@ -523,107 +628,143 @@ function PlayTabContent({ projectId, project }: {
   return (
     <div className="flex flex-1 min-h-0">
       {/* 左侧帧列表 */}
-      <aside className="w-56 shrink-0 border-r overflow-y-auto bg-muted/30">
-        <div className="p-3 border-b">
-          <span className="text-xs font-semibold text-muted-foreground uppercase">{displayFrames.length} 帧</span>
+      <aside className="w-52 shrink-0 border-r overflow-y-auto bg-muted/30">
+        <div className="sticky top-0 z-10 bg-muted/30 border-b px-3 py-2 flex items-center justify-between">
+          <span className="text-xs font-semibold text-muted-foreground">{displayFrames.length} 帧</span>
+          {playback.state === "playing" && (
+            <span className="size-1.5 rounded-full bg-green-500 animate-pulse" />
+          )}
         </div>
         {displayFrames.map((frame: any, idx: number) => (
           <button
             key={frame.frame_id ?? idx}
-            onClick={() => setSelectedFrameIdx(idx)}
-            className={`w-full text-left px-3 py-2 text-sm transition-colors border-b border-border/50 ${
-              selectedFrameIdx === idx
-                ? "bg-primary/10 text-primary font-medium"
-                : "hover:bg-muted"
+            onClick={() => { playback.stop(); advance(idx); }}
+            className={`w-full text-left px-3 py-2.5 text-sm transition-colors border-b border-border/30 ${
+              selectedIdx === idx
+                ? "bg-primary/10 text-primary font-medium border-l-2 border-l-primary"
+                : "border-l-2 border-l-transparent hover:bg-muted"
             }`}
           >
-            <span className="text-xs font-mono text-muted-foreground">{frame.frame_id ?? `f_${idx + 1}`}</span>
-            <p className="text-sm font-medium truncate mt-0.5">{frame.title ?? "未命名"}</p>
+            <span className="text-[10px] font-mono text-muted-foreground">{frame.frame_id ?? `f_${idx + 1}`}</span>
+            <p className="text-xs font-medium truncate mt-0.5 leading-tight">{frame.title ?? "未命名"}</p>
+            {frame.narration && (
+              <p className="text-[11px] text-muted-foreground truncate mt-0.5 leading-tight">
+                {frame.narration}
+              </p>
+            )}
           </button>
         ))}
       </aside>
 
-      {/* 右侧帧内容 */}
-      <main className="flex-1 overflow-y-auto p-6">
-        {currentFrame && (
-          <div className="mx-auto max-w-3xl space-y-6">
-            {/* 帧标题 + 导航 */}
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-mono text-muted-foreground">
-                  {currentFrame.frame_id as string ?? `f_${selectedFrameIdx + 1}`} / {displayFrames.length}
-                </span>
-                <h3 className="text-lg font-bold mt-1">{currentFrame.title as string ?? "未命名帧"}</h3>
+      {/* 右侧：舞台 + 讲解 + 控制 */}
+      <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto">
+        <div className="flex-1 flex flex-col items-center justify-center p-6">
+          {/* 舞台卡片 */}
+          <div className="w-full max-w-3xl rounded-xl border bg-card shadow-sm overflow-hidden">
+            {/* 舞台区域 */}
+            <div key={stageKey} className="relative simulation-stage min-h-[220px]">
+              <div className="flex items-center justify-center p-8 min-h-[220px]">
+                {visualObjects.length > 0 ? (
+                  <div className="flex flex-wrap items-center justify-center gap-5">
+                    {visualObjects.map((vo, idx) => (
+                      <div key={(vo.id as string) ?? idx} className="simulation-stage__object">
+                        <VisualObjectRenderer
+                          object={vo as unknown as import("@/components/workbench/simulation-model").DSLVisualObject}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : currentFrame?.state_snapshot && Object.keys(currentFrame.state_snapshot as object).length > 0 ? (
+                  <StateSnapshotFallback snapshot={currentFrame.state_snapshot as Record<string, unknown>} />
+                ) : (
+                  <div className="text-center text-muted-foreground/30">
+                    <FileText size={40} className="mx-auto mb-2 opacity-20" />
+                    <p className="text-sm">待生成可视化内容</p>
+                  </div>
+                )}
               </div>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline" size="sm"
-                  disabled={selectedFrameIdx <= 0}
-                  onClick={() => setSelectedFrameIdx((i) => i - 1)}
-                >
-                  上一帧
-                </Button>
-                <Button
-                  variant="outline" size="sm"
-                  disabled={selectedFrameIdx >= displayFrames.length - 1}
-                  onClick={() => setSelectedFrameIdx((i) => i + 1)}
-                >
-                  下一帧
-                </Button>
+
+              {/* 帧计数器 */}
+              <div className="absolute top-2.5 right-3">
+                <span className="rounded-md bg-background/60 backdrop-blur px-2 py-0.5 text-xs font-mono text-muted-foreground">
+                  {selectedIdx + 1} / {displayFrames.length}
+                </span>
               </div>
             </div>
 
-            {/* 讲解文本 */}
-            {currentFrame.narration && (
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {currentFrame.narration as string}
-                </p>
-              </div>
-            )}
-
-            {/* 视觉对象渲染 */}
-            {visualObjects.length > 0 && (
-              <div className="rounded-xl border p-6">
-                <h4 className="text-sm font-semibold mb-4">可视化元素</h4>
-                <div className="flex flex-wrap gap-4">
-                  {visualObjects.map((vo, idx) => (
-                    <VisualObjectRenderer
-                      key={(vo.id as string) ?? idx}
-                      object={vo as unknown as import("@/components/workbench/simulation-model").DSLVisualObject}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 状态快照 */}
-            {currentFrame.state_snapshot && Object.keys(currentFrame.state_snapshot as object).length > 0 && (
-              <div className="rounded-xl border p-6">
-                <h4 className="text-sm font-semibold mb-3">状态快照</h4>
-                <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs font-mono">
-                  {JSON.stringify(currentFrame.state_snapshot, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {/* 动画列表 */}
-            {((currentFrame.animations as unknown[])?.length ?? 0) > 0 && (
-              <div className="rounded-xl border p-6">
-                <h4 className="text-sm font-semibold mb-3">
-                  动画序列 ({(currentFrame.animations as unknown[])?.length})
-                </h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {(currentFrame.animations as Record<string, unknown>[])?.map((anim, idx) => (
-                    <span key={idx} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-mono">
-                      {anim.type as string ?? "?"} → {anim.target as string ?? "?"}
-                    </span>
-                  ))}
+            {/* 讲解（与舞台同卡，紧贴） */}
+            {(narration || title) && (
+              <div className="border-t bg-muted/30 px-5 py-3.5">
+                <div className="flex gap-2.5">
+                  <Sparkles size={15} className="mt-0.5 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    {title && (
+                      <span className="text-xs font-semibold text-foreground">{title}</span>
+                    )}
+                    {narration && (
+                      <p className="text-sm leading-relaxed text-muted-foreground mt-0.5">
+                        {narration}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
           </div>
-        )}
+
+          {/* 播放控制栏 */}
+          <div className="mt-4 flex items-center gap-3 w-full max-w-3xl">
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline" size="sm"
+                disabled={selectedIdx <= 0}
+                onClick={() => advance(selectedIdx - 1)}
+              >
+                <SkipBack size={15} /> 上一帧
+              </Button>
+              <Button
+                size="sm"
+                onClick={playback.toggle}
+                className="gap-1.5 min-w-[5rem]"
+              >
+                {playback.state === "playing" ? (
+                  <><Pause size={15} /> 暂停</>
+                ) : (
+                  <><Play size={15} /> 播放</>
+                )}
+              </Button>
+              <Button
+                variant="outline" size="sm"
+                disabled={selectedIdx >= displayFrames.length - 1}
+                onClick={() => advance(selectedIdx + 1)}
+              >
+                下一帧 <SkipForward size={15} />
+              </Button>
+            </div>
+
+            <div className="flex-1 mx-2">
+              <Progress value={((selectedIdx + 1) / displayFrames.length) * 100} className="h-1.5" />
+            </div>
+
+            <div className="flex items-center gap-0.5">
+              {PLAY_SPEEDS.map((s, i) => (
+                <Button
+                  key={s.label}
+                  variant={playback.speedIdx === i ? "default" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => playback.setSpeedIdx(i)}
+                >
+                  {s.label}
+                </Button>
+              ))}
+            </div>
+
+            <Button variant="ghost" size="sm" onClick={() => { playback.stop(); advance(0); }}>
+              <RotateCcw size={14} />
+            </Button>
+          </div>
+        </div>
       </main>
     </div>
   );
