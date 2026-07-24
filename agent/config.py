@@ -7,9 +7,20 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_AUTH_JWT_SECRET_PLACEHOLDERS = frozenset(
+    {
+        "replace-with-at-least-64-random-characters",
+        "your-jwt-secret",
+        "your-secret-key",
+        "change-me",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -43,15 +54,37 @@ class Settings(BaseSettings):
 
     # ── Authentication ───────────────────────────────────
     auth_jwt_secret: SecretStr = Field(alias="AUTH_JWT_SECRET")
-    auth_jwt_algorithm: str = "HS256"
+    auth_jwt_algorithm: Literal["HS256"] = "HS256"
     auth_jwt_issuer: str = "eduflow-agent"
     auth_jwt_audience: str = "eduflow-web"
-    auth_access_token_seconds: int = 900
-    auth_refresh_token_days: int = 30
+    auth_access_token_seconds: int = Field(default=900, gt=0)
+    auth_refresh_token_days: int = Field(default=30, gt=0)
     auth_refresh_cookie_name: str = "eduflow_refresh"
     auth_cookie_secure: bool = True
-    auth_cookie_samesite: str = "lax"
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     cors_allowed_origins: list[str] = ["http://localhost:5173"]
+
+    @field_validator("auth_jwt_secret")
+    @classmethod
+    def validate_auth_jwt_secret(cls, value: SecretStr) -> SecretStr:
+        """Reject weak or documentation-only JWT secrets."""
+        secret = value.get_secret_value()
+        if not secret.strip():
+            raise ValueError("AUTH_JWT_SECRET must not be blank")
+        if secret.casefold() in _AUTH_JWT_SECRET_PLACEHOLDERS:
+            raise ValueError("AUTH_JWT_SECRET must not use a placeholder value")
+        if len(secret) < 64:
+            raise ValueError("AUTH_JWT_SECRET must be at least 64 characters")
+        return value
+
+    @model_validator(mode="after")
+    def validate_auth_cookie_security(self) -> Settings:
+        """Keep the SameSite=None cookie setting safe for modern browsers."""
+        if self.auth_cookie_samesite == "none" and not self.auth_cookie_secure:
+            raise ValueError(
+                "AUTH_COOKIE_SAMESITE='none' requires AUTH_COOKIE_SECURE=true"
+            )
+        return self
 
     @property
     def database_url(self) -> str:
