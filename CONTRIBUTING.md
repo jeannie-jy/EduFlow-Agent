@@ -4,10 +4,10 @@
 
 | 角色 | 负责人 | 主要产出 |
 |------|--------|---------|
-| 架构 | 仲嘉辉 | 系统设计、技术选型、任务拆分 |
-| 需求 | 屠育玮 | 需求文档、用户故事、前端设计文档 |
-| 前端 | 崔杰 | Web 交互界面、可视化渲染 |
-| 后端 | 王婧瑜 | Agent 实现、API、数据库 |
+| 架构 | [@jiahuizhong205](https://github.com/jiahuizhong205) | 系统设计、技术选型、任务拆分 |
+| 需求 | [@fishtailtu](https://github.com/fishtailtu) | 需求文档、用户故事、前端设计文档 |
+| 前端 | [@smwy-cj](https://github.com/smwy-cj) | Web 交互界面、可视化渲染 |
+| 后端 | [@jeannie-jy](https://github.com/jeannie-jy) | Agent 实现、API、数据库 |
 
 模式：**专人主责 + 全员测评**。每人对自己的模块负责，代码提交前另一人交叉测试。
 
