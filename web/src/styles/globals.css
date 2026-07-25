@@ -3,6 +3,15 @@
 
 @custom-variant dark (&:is([data-theme="dark"] *));
 
+/* ── 隐藏滚动条（保留滚动能力）────────────────────────────── */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 @theme inline {
   --font-sans: "Inter Variable", Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   --color-background: var(--background);

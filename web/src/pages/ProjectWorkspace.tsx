@@ -388,7 +388,7 @@ function PlanTabContent({ projectId, project, onDone }: {
 
       {phase === "idle" && (
         <div className="rounded-xl border p-8 text-center">
-          <Sparkles size={48} className="mx-auto mb-4 text-indigo-400" />
+          <Sparkles size={48} className="mx-auto mb-4 text-primary" />
           <h3 className="font-semibold mb-2">准备生成教学计划</h3>
           <p className="text-sm text-muted-foreground mb-6">AI 将分析知识点，制定教学目标、大纲和推演策略</p>
           <Button onClick={handleStart} className="gap-2">
@@ -660,9 +660,9 @@ function PlayTabContent({ projectId, project }: {
   }
 
   return (
-    <div className="flex flex-1 min-h-0">
+    <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* 左侧帧列表 */}
-      <aside className="w-52 shrink-0 border-r overflow-y-auto bg-muted/30">
+      <aside className="w-52 shrink-0 border-r overflow-y-auto bg-muted/30 scrollbar-none">
         <div className="sticky top-0 z-10 bg-muted/30 border-b px-3 py-2 flex items-center justify-between">
           <span className="text-xs font-semibold text-muted-foreground">{displayFrames.length} 帧</span>
           {playback.state === "playing" && (
@@ -691,8 +691,8 @@ function PlayTabContent({ projectId, project }: {
       </aside>
 
       {/* 右侧：舞台 + 讲解 + 控制 */}
-      <main className="flex-1 flex flex-col min-h-0 min-w-0">
-        <div className="flex-1 flex flex-col items-center justify-center p-6">
+      <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
+        <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-hidden">
           {/* 舞台卡片 */}
           <div className="w-full max-w-3xl max-h-full rounded-xl border bg-card shadow-sm flex flex-col overflow-hidden">
             {/* 帧标题（固定不滚） */}
