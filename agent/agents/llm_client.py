@@ -185,7 +185,13 @@ async def call_llm_structured(
             logger.error("Structured LLM call returned empty choices")
             raise RuntimeError("LLM returned empty response")
 
-        raw_text = response.choices[0].message.content or ""
+        choice = response.choices[0]
+        raw_text = choice.message.content or ""
+
+        # 如果 content 为空但存在 tool_calls，回退到解析 tool_calls 参数
+        if not raw_text.strip() and choice.message.tool_calls:
+            raw_text = choice.message.tool_calls[0].function.arguments
+
         result = _extract_and_parse_json(raw_text)
 
         if result is not None:
@@ -194,7 +200,7 @@ async def call_llm_structured(
 
         # 检查是否因截断导致解析失败
         is_truncated = (
-            response.choices[0].finish_reason == "length"
+            choice.finish_reason == "length"
             or _looks_truncated(raw_text)
         )
         if not is_truncated:
