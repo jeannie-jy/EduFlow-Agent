@@ -168,14 +168,17 @@ async def call_llm_structured(
     raw_text = ""
     result = None
 
-    # 逐次加倍 max_tokens 直到成功解析或达到上限
+    # 逐次加倍 max_tokens 直到成功解析或达到上限（最多 4 次尝试：初始 + 3 次加倍）
     current_max_tokens = max_tokens
-    while current_max_tokens <= 65536:
+    prev_max_tokens = 0
+    import httpx as _httpx
+    for attempt in range(4):
         response = await client.chat.completions.create(
             model=model or settings.llm_model,
             messages=messages,
             temperature=temperature,
             max_tokens=current_max_tokens,
+            timeout=_httpx.Timeout(120.0),
         )
 
         if not response.choices:
@@ -197,10 +200,13 @@ async def call_llm_structured(
         if not is_truncated:
             break  # 不是截断问题，重试也没用
 
+        prev_max_tokens = current_max_tokens
         current_max_tokens = min(current_max_tokens * 2, 65536)
+        if current_max_tokens == prev_max_tokens:
+            break  # token 已达上限，无法继续加倍
         logger.warning(
-            "LLM 输出截断 (finish_reason=%s)，max_tokens=%d 重试",
-            response.choices[0].finish_reason, current_max_tokens,
+            "LLM 输出截断 (finish_reason=%s)，max_tokens=%d 重试 (attempt %d)",
+            response.choices[0].finish_reason, current_max_tokens, attempt + 1,
         )
 
     # 解析失败 — 输出诊断

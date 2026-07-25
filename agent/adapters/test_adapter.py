@@ -19,7 +19,7 @@ from pathlib import Path
 # 确保可以 import adapters
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from adapters.manim_adapter import convert_dsl_to_manim, _HAS_LATEX
+from adapters.manim_adapter import convert_dsl_to_manim, _HAS_LATEX, _find_ffmpeg, _has_cjk
 from adapters.manim_validator import validate_script, has_errors
 
 # ═══════════════════════════════════════════════════════════════
@@ -158,12 +158,12 @@ def test_validator(main_py: str) -> list[dict]:
 
 
 def test_no_mathtex_cjk(main_py: str) -> None:
-    """MathTex 不含中文。"""
+    """MathTex 不含 CJK 字符（与 validator CJK 检测范围一致）。"""
     if "MathTex" in main_py:
         for m in __import__("re").finditer(r"MathTex\(([^)]+)\)", main_py):
             for ch in m.group(1):
-                if "一" <= ch <= "鿿":
-                    raise AssertionError(f"MathTex 含中文: {m.group(1)[:80]}")
+                if _has_cjk(ch):
+                    raise AssertionError(f"MathTex 含 CJK: {m.group(1)[:80]}")
 
 
 def test_no_pseudocode(main_py: str) -> None:
@@ -206,10 +206,8 @@ def test_render(dsl: dict | None = None, timeout: int = 120) -> str | None:
 
     env = os.environ.copy()
     # 注入 ffmpeg PATH
-    ffmpeg_dir = os.path.expandvars(
-        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin"
-    )
-    if os.path.isdir(ffmpeg_dir):
+    ffmpeg_dir = _find_ffmpeg()
+    if ffmpeg_dir:
         env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
 
     print(f"  渲染中: {script_path}")
@@ -316,12 +314,10 @@ def _run_code_tests(main_py: str) -> int:
 
     for name, func, *args in checks:
         try:
-            func(*args)
-            # 特殊处理 test_validator 输出
+            result = func(*args)
+            # 特殊处理 test_validator 输出：复用第一次调用的结果打印 warn
             if func is test_validator:
-                # 打印 warn（如果有）
-                issues = func(*args)
-                warns = [i for i in issues if i["severity"] == "warn"]
+                warns = [i for i in result if i["severity"] == "warn"]
                 for w in warns:
                     print(f"  [WARN] [{w['rule']}] L{w['line']}: {w['detail']}")
             print(f"  [OK] {name}")

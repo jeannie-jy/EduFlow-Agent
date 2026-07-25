@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -536,6 +537,26 @@ def convert_dsl_to_manim(dsl: dict[str, Any]) -> dict[str, str]:
 
 
 # ── Helpers ─────────────────────────────────────────────────
+
+
+def _find_ffmpeg() -> str:
+    """查找 FFmpeg 可执行文件所在目录。
+
+    优先级：settings.ffmpeg_path > PATH 中的 ffmpeg > 空字符串（回退到 PATH）。
+    """
+    ffmpeg_dir = ""
+    try:
+        from config import get_settings
+        settings = get_settings()
+        if settings.ffmpeg_path and os.path.isdir(os.path.expandvars(settings.ffmpeg_path)):
+            ffmpeg_dir = os.path.expandvars(settings.ffmpeg_path)
+    except Exception:
+        pass
+    if not ffmpeg_dir:
+        found = shutil.which("ffmpeg")
+        if found:
+            ffmpeg_dir = str(Path(found).parent)
+    return ffmpeg_dir
 
 
 def _has_cjk(s: str) -> bool:

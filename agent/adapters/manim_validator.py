@@ -65,18 +65,17 @@ def _check_syntax(script: str) -> list[dict]:
 
 def _check_mathtex_cjk(script: str) -> list[dict]:
     """MathTex 中包含中日韩字符 → LaTeX 编译会失败。"""
+    from adapters.manim_adapter import _has_cjk
     issues = []
     for m in re.finditer(r"MathTex\(([^)]+)\)", script):
         arg = m.group(1)
-        for ch in arg:
-            if "一" <= ch <= "鿿" or "぀" <= ch <= "ヿ":
-                lineno = script[:m.start()].count("\n") + 1
-                issues.append({
-                    "rule": "mathtex-cjk", "severity": "error",
-                    "line": lineno,
-                    "detail": f"MathTex 含中文: {arg[:60]}",
-                })
-                break
+        if any(_has_cjk(ch) for ch in arg):
+            lineno = script[:m.start()].count("\n") + 1
+            issues.append({
+                "rule": "mathtex-cjk", "severity": "error",
+                "line": lineno,
+                "detail": f"MathTex 含 CJK: {arg[:60]}",
+            })
     return issues
 
 

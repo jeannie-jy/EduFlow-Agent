@@ -30,18 +30,8 @@ def _extract_python_code(raw: str) -> str:
 
 def _strip_font_size_from_code(code: str) -> str:
     """仅从 Code() 调用中移除 font_size 参数。"""
-    lines = code.split("\n")
-    result: list[str] = []
-    depth = 0
-    for line in lines:
-        if "Code(" in line and depth == 0:
-            depth = line.count("(") - line.count(")")
-            line = re.sub(r",?\s*font_size\s*=\s*\d+\s*", "", line)
-        elif depth > 0:
-            depth += line.count("(") - line.count(")")
-            line = re.sub(r",?\s*font_size\s*=\s*\d+\s*", "", line)
-        result.append(line)
-    return "\n".join(result)
+    # 全局正则替换：移除 font_size=N 和逗号，比括号深度跟踪更可靠
+    return re.sub(r",?\s*font_size\s*=\s*\d+\s*", "", code)
 
 
 def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | None) -> str:

@@ -10,6 +10,12 @@
 # macOS:   brew install ffmpeg
 # Linux:   apt install ffmpeg
 
+# 创建虚拟环境（推荐）
+python -m venv .venv
+source .venv/Scripts/activate   # Windows Git Bash / PowerShell
+# .venv\Scripts\activate        # Windows CMD
+# source .venv/bin/activate     # Linux / macOS
+
 # 安装 Python 依赖
 pip install -r requirements.txt
 # Windows 注意: pycairo 可能需要手动下载 wheel
@@ -74,8 +80,9 @@ agent/
 │
 ├── adapters/                 # DSL → Manim 转换器
 │   ├── manim_adapter.py      # 确定性转换（14 种 Mobject + 16 种 Animation 映射）
-│   ├── manim_llm_adapter.py  # LLM 驱动的 Manim 代码生成（教学语义 → 可视化脚本）
-│   └── manim_validator.py    # Manim 脚本质量检测（6 项规则）
+│   ├── manim_llm_adapter.py  # LLM 驱动的 Manim 代码生成（教学语义 → 可视化脚本，当前默认）
+│   ├── manim_validator.py    # Manim 脚本质量检测（6 项规则：语法/CJK/lexer/API/转义/print）
+│   └── test_adapter.py       # 自测脚本（代码生成 + 语法校验 + 渲染验证）
 │
 ├── plugins/                  # 领域插件系统
 │   ├── domain_plugin.py      # DomainPlugin Protocol + 注册表
@@ -173,6 +180,7 @@ agent/
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `AGENT_MAX_RETRIES` | 3 | Agent 重试次数 |
 | `QUALITY_SCORE_THRESHOLD` | 0.6 | Quality 阈值（低于触发 Reflection） |
+| `FFMPEG_PATH` | (空) | FFmpeg 安装目录，留空则自动从 PATH 查找 |
 | `MAX_REFLECTION_CYCLES` | 3 | Reflection 最大循环次数 |
 
 ## 测试

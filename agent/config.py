@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     # ── 导出 ──────────────────────────────────────────────
     export_dir: Path = Path("data/exports")
     manim_timeout_seconds: int = 600
+    ffmpeg_path: str = ""  # FFmpeg 目录路径，留空则自动从 PATH 查找
 
 
 @lru_cache

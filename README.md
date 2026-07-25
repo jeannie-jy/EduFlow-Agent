@@ -11,20 +11,26 @@
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-orange.svg)](https://langchain-ai.github.io/langgraph/)
-[![Version](https://img.shields.io/badge/version-0.5.0-informational.svg)]()
+[![Version](https://img.shields.io/badge/version-0.6.0-informational.svg)]()
 
 ---
 
 ## 当前状态
 
-> **v0.5.0 — 基本功能闭环**
+> **v0.6.0 — LLM 驱动 Manim 生成 + 视频导出增强**
 >
-> 5 个 Agent 协作 + HITL 审批 + DSL 推演 + 视频导出的核心链路已跑通，系统可用。
+> 5 个 Agent 协作 + HITL 审批 + DSL 推演 + LLM 优先视频导出的核心链路已跑通，系统可用。
 >
-> **下一阶段（v0.6+）** 将聚焦于：
+> **本次更新 (v0.6.0)：**
+> - 🤖 **LLM 驱动 Manim 代码生成**：教学语义 → LLM 自主设计可视化布局/配色/动画，替代纯规则映射
+> - ✅ **Manim 脚本质量检测**：6 项静态规则（语法/CJK/lexer/API兼容/转义/调试残留）+ 自动修复 + 失败重试
+> - 🎬 **视频导出增强**：双模式渲染（Redis Worker + 进程内 fallback）、FFmpeg 分片合并容错、实时进度轮询
+> - 🔧 **导出管线健壮性**：FFmpeg 路径配置化、竞态保护、事件循环隔离
+> - 🎨 **前端交互修复**：JSON 编辑实时反馈、键盘快捷键优化、AbortController 泄漏修复
+>
+> **下一阶段（v0.7+）** 将聚焦于：
 > - 🎨 **前端美化**：优化 UI/UX 设计，提升视觉表现与交互体验
-> - 🎬 **视频导出增强**：完善 Manim 视频导出功能、实现更稳定的渲染管线
-> - 🔍 **推演功能优化**：修正推演逻辑，实现真正推演功能（目标超越gemini）
+> - 🔍 **推演功能优化**：修正推演逻辑，实现真正推演功能（目标超越 gemini）
 > - ⚡ **流程优化**：缩短生成耗时、改进中断恢复体验
 
 ---
@@ -47,14 +53,14 @@ EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语�
 
 | 层次 | 技术 | 说明 |
 |------|------|------|
-| **LLM** | DeepSeek-Chat (主) | API 调用（兼容 OpenAI 接口），可切换备用模型 |
+| **LLM** | DeepSeek-v4-pro (主) | API 调用（兼容 OpenAI 接口），可切换备用模型 |
 | **Embedding** | text-embedding-3-small (1536维) | 知识库语义检索，可平替通义千问 text-embedding-v4 |
 | **Agent 编排** | LangGraph | 5 节点 StateGraph + HITL interrupt + Postgres Checkpointer |
 | **后端** | Python 3.11+ / FastAPI | 异步 REST API + SSE 流式推送 + Alembic 数据库迁移 |
 | **前端** | React 18 + TypeScript + Vite 8 | React Flow 图渲染 + Tailwind CSS 4 + Base UI |
 | **数据库** | PostgreSQL 16 + pgvector + Redis 7 | 向量检索 + 任务队列 + 缓存 |
 | **存储** | MinIO (S3 兼容) | 上传文件 + 渲染产物 |
-| **视频导出** | Manim CE + FFmpeg (Docker) | 确定性 DSL → Manim 脚本转换，Redis Worker 异步渲染 |
+| **视频导出** | Manim CE + FFmpeg | LLM 驱动代码生成（默认） + 确定性规则回退 + Validator 质量检测 |
 
 ## 快速开始
 
@@ -162,8 +168,11 @@ python -m scripts.seed_embeddings
 ```
 EduFlow-Agent/
 ├── agent/                          # Python 后端
-│   ├── adapters/                   # DSL → Manim 确定性转换器
-│   │   └── manim_adapter.py
+│   ├── adapters/                   # DSL → Manim 转换器
+│   │   ├── manim_adapter.py         # 确定性转换（14 种 Mobject + 16 种 Animation 映射）
+│   │   ├── manim_llm_adapter.py     # LLM 驱动的 Manim 代码生成（教学语义 → 可视化脚本）
+│   │   ├── manim_validator.py       # Manim 脚本质量检测（6 项规则）
+│   │   └── test_adapter.py          # Adapter 自测（代码生成 + 语法校验 + 渲染验证）
 │   ├── agents/                     # LangGraph Agent 编排
 │   │   ├── state.py                # AgentState 类型定义
 │   │   ├── graph.py                # 5 节点 StateGraph 构建 + checkpointer 管理
@@ -325,6 +334,7 @@ npm run verify                       # 完整验证（类型 + 测试 + 构建�
 | `EMBEDDING_API_KEY` | Embedding API Key | - |
 | `DATABASE_URL` | 数据库连接字符串 | `postgresql+asyncpg://agent:changeme@localhost:5432/eduflow` |
 | `REDIS_URL` | Redis 连接字符串 | `redis://localhost:6379` |
+| `FFMPEG_PATH` | FFmpeg 安装目录（留空自动查找） | (空) |
 | `AGENT_LOG_LEVEL` | Agent 日志级别 | `INFO` |
 
 ### 数据库迁移
@@ -339,15 +349,6 @@ alembic upgrade head
 ```
 
 ---
-
-## 团队与分工
-
-| 角色 | 负责人 | 职责 |
-|------|--------|------|
-| **架构** | 仲嘉辉 | 系统架构设计、技术选型、Multi-Agent 方案 |
-| **需求** | 屠育玮 | 需求分析、用户故事、市场调研 |
-| **前端** | 崔杰 | Web 交互界面、可视化渲染、动画系统 |
-| **后端** | 王婧瑜 | FastAPI、Agent 实现、API 服务、数据库 |
 
 ## License
 

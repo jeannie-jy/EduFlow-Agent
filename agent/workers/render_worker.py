@@ -66,6 +66,9 @@ def process_task(r: redis.Redis, task: dict) -> None:
 
     logger.info("开始渲染 | job=%s | topic=%s", job_id, dsl.get("topic", "unknown"))
 
+    # 标记任务已被消费（防止 fallback 重复处理）
+    r.setex(f"manim:job:{job_id}:claimed", 600, "1")
+
     # 更新状态到 Redis（前端通过 export API 轮询）
     _update_status(r, job_id, "rendering", progress=0)
 
@@ -76,6 +79,8 @@ def process_task(r: redis.Redis, task: dict) -> None:
 
         # 1. DSL → Manim 脚本（LLM 生成）
         import asyncio
+        # 确保独立事件循环（worker 在独立线程/进程中运行）
+        asyncio.set_event_loop(asyncio.new_event_loop())
         from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
         from adapters.manim_validator import validate_script, has_errors
         files = asyncio.run(convert_dsl_to_manim_llm(dsl, dsl.get("teaching_plan")))
@@ -123,10 +128,9 @@ def process_task(r: redis.Redis, task: dict) -> None:
         _update_status(r, job_id, "rendering", progress=50)
 
         env = os.environ.copy()
-        ffmpeg_dir = os.path.expandvars(
-            r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin"
-        )
-        if os.path.isdir(ffmpeg_dir):
+        from adapters.manim_adapter import _find_ffmpeg
+        ffmpeg_dir = _find_ffmpeg()
+        if ffmpeg_dir:
             env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
 
         result = subprocess.run(

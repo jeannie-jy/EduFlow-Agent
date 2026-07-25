@@ -135,6 +135,10 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
 
     try:
         # 1. DSL → Manim 脚本（LLM 生成，在新 event loop 中运行）
+        # 注意：asyncio.run() 在线程池中创建新事件循环是临时方案，
+        # 未来应重构为纯异步以避免事件循环嵌套问题。
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
         from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
         from adapters.manim_validator import validate_script, has_errors
 
@@ -212,58 +216,13 @@ async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
         await _update_db_export_status(job_id, "failed", error_log="Redis 不可用，无法处理导出")
         return
 
-    if r.get(f"manim:job:{job_id}"):
+    # 检查 Worker 是否已消费（优先检查 claimed 标记）
+    if r.get(f"manim:job:{job_id}:claimed") or r.get(f"manim:job:{job_id}"):
         return
 
     settings = get_settings()
     loop = asyncio.get_running_loop()
     loop.run_in_executor(_pool, _do_export_sync, job_id, dsl, config, settings.redis_url)
-
-
-async def _render_test_scene(
-    r, job_id: str, export_dir: Path, quality_flag: str, fps: int
-) -> dict | None:
-    """渲染极简测试场景作为预览视频（<10 秒）。"""
-    import shutil as _shutil
-
-    test_scene_path = Path(__file__).resolve().parent.parent / "adapters" / "test_scene.py"
-    if not test_scene_path.exists():
-        logger.warning("测试场景脚本不存在: %s", test_scene_path)
-        return None
-
-    env = os.environ.copy()
-    ffmpeg_dir = os.path.expandvars(
-        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin"
-    )
-    if os.path.isdir(ffmpeg_dir):
-        env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
-
-    result = subprocess.run(
-        [sys.executable, "-m", "manim", str(test_scene_path), "TestPreview",
-         quality_flag, f"--fps={fps}", "--format=mp4"],
-        capture_output=True, text=True, timeout=60,
-        cwd=str(export_dir),
-        env=env,
-    )
-
-    if result.returncode != 0:
-        logger.warning("测试场景渲染失败: %s", result.stderr[:300])
-        return None
-
-    # 搜索输出 MP4（Manim 默认输出到 cwd/media/videos/...）
-    for base in [export_dir, Path.cwd(), export_dir / "media"]:
-        if not base.exists():
-            continue
-        for mp4 in base.rglob("TestPreview.mp4"):
-            if "partial_movie_files" not in str(mp4):
-                dest = export_dir / "preview.mp4"
-                _shutil.copy2(mp4, dest)
-                logger.info("测试场景 MP4: %s → %s", mp4, dest)
-                return {"type": "mp4", "filename": "preview.mp4",
-                        "size_bytes": dest.stat().st_size}
-
-    logger.warning("测试场景渲染完成但未找到 MP4")
-    return None
 
 
 def _render_manim_sync(
@@ -274,10 +233,9 @@ def _render_manim_sync(
     import shutil as _shutil
 
     env = os.environ.copy()
-    ffmpeg_dir = os.path.expandvars(
-        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin"
-    )
-    if os.path.isdir(ffmpeg_dir):
+    from adapters.manim_adapter import _find_ffmpeg
+    ffmpeg_dir = _find_ffmpeg()
+    if ffmpeg_dir:
         env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
 
     media_abs = str(Path(media_dir).resolve())
@@ -306,7 +264,7 @@ def _render_manim_sync(
                     "size_bytes": dest.stat().st_size}
 
     # Manim 未产出最终 MP4，尝试手动合并 partial_movie_files
-    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if os.path.isdir(ffmpeg_dir) else "ffmpeg"
+    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
     merged = _merge_partial_movies(export_dir, ffmpeg_bin)
     if merged:
         return merged
@@ -345,7 +303,7 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
         except Exception as exc:
             logger.warning("手动合并部分视频失败: %s", exc)
             concat_list.unlink(missing_ok=True)
-        return None
+        # 继续尝试下一个 partial_movie_files 目录
 
     return None
 
@@ -437,7 +395,7 @@ async def get_export_status(
                         job.status = "completed"
                         job.progress_pct = 100
                         job.artifacts = artifacts
-                        await session.flush()
+                        await session.commit()
 
             return result
 

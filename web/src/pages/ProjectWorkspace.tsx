@@ -256,6 +256,7 @@ function PlanTabContent({ projectId, project, onDone }: {
 
     try {
       await startGeneration(projectId, "plan_only");
+      abortRef.current?.abort();
       abortRef.current = new AbortController();
 
       streamGeneration(projectId, {
@@ -312,6 +313,7 @@ function PlanTabContent({ projectId, project, onDone }: {
       setPhase("connecting");
       setErrorMsg(null);
       resetTimeout();
+      abortRef.current?.abort();
       abortRef.current = new AbortController();
       streamFromUrl(res.stream_url, {
         signal: abortRef.current.signal,
@@ -597,17 +599,23 @@ function PlayTabContent({ projectId, project }: {
     }
   }, [selectedIdx, displayFrames.length, playback]);
 
-  // 键盘快捷键
+  // 键盘快捷键（使用 ref 避免每帧重新注册监听器）
+  const playbackRef = useRef(playback);
+  playbackRef.current = playback;
+  const advanceRef = useRef(advance);
+  advanceRef.current = advance;
+  const selectedIdxRef = useRef(selectedIdx);
+  selectedIdxRef.current = selectedIdx;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === " ") { e.preventDefault(); playback.toggle(); }
-      if (e.key === "ArrowLeft") { e.preventDefault(); advance(selectedIdx - 1); }
-      if (e.key === "ArrowRight") { e.preventDefault(); advance(selectedIdx + 1); }
+      if (e.key === " ") { e.preventDefault(); playbackRef.current.toggle(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); advanceRef.current(selectedIdxRef.current - 1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); advanceRef.current(selectedIdxRef.current + 1); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [playback, advance, selectedIdx]);
+  }, []);
 
   const currentFrame = displayFrames[selectedIdx] as Record<string, unknown> | undefined;
   const visualObjects = (currentFrame?.visual_objects as Record<string, unknown>[]) ?? [];
@@ -784,6 +792,19 @@ function EditTabContent({ projectId }: { projectId: string }) {
   const [error, setError] = useState("");
   const [showVersions, setShowVersions] = useState(false);
   const [versions, setVersions] = useState<VersionItem[]>([]);
+  // JSON 编辑 raw state（避免编辑中 JSON 不合法时输入被"吃掉"）
+  const [visObjText, setVisObjText] = useState("");
+  const [stateSnapText, setStateSnapText] = useState("");
+  const [visObjError, setVisObjError] = useState("");
+  const [stateSnapError, setStateSnapError] = useState("");
+
+  // 切换帧时同步 raw text
+  const syncRawTexts = (frame: FrameData) => {
+    setVisObjText(JSON.stringify(frame.visual_objects, null, 2));
+    setStateSnapText(JSON.stringify(frame.state_snapshot, null, 2));
+    setVisObjError("");
+    setStateSnapError("");
+  };
 
   useEffect(() => {
     if (!projectId) return;
@@ -791,7 +812,7 @@ function EditTabContent({ projectId }: { projectId: string }) {
     listFrames(projectId)
       .then((res) => {
         setFrames(res.frames);
-        if (res.frames.length > 0) setSelected(res.frames[0]);
+        if (res.frames.length > 0) { setSelected(res.frames[0]); syncRawTexts(res.frames[0]); }
       })
       .catch((err) => {
         if (err instanceof NetworkError) setError("无法连接到服务器");
@@ -913,7 +934,7 @@ function EditTabContent({ projectId }: { projectId: string }) {
         {frames.map((f) => (
           <button
             key={f.frame_id}
-            onClick={() => setSelected(f)}
+            onClick={() => { setSelected(f); syncRawTexts(f); }}
             className={`w-full text-left px-3 py-2 text-sm transition-colors ${
               selected?.frame_id === f.frame_id
                 ? "bg-primary/10 text-primary font-medium"
@@ -953,18 +974,28 @@ function EditTabContent({ projectId }: { projectId: string }) {
               <Label className="text-xs">视觉对象 (JSON)</Label>
               <Textarea
                 rows={6} className="font-mono text-xs"
-                value={JSON.stringify(selected.visual_objects, null, 2)}
-                onChange={(e) => { try { setSelected({ ...selected, visual_objects: JSON.parse(e.target.value) }); } catch {} }}
+                value={visObjText}
+                onChange={(e) => {
+                  setVisObjText(e.target.value);
+                  try { setSelected({ ...selected, visual_objects: JSON.parse(e.target.value) }); setVisObjError(""); }
+                  catch { setVisObjError("JSON 格式错误"); }
+                }}
               />
+              {visObjError && <p className="text-xs text-amber-500">{visObjError}</p>}
             </div>
 
             <div className="space-y-1.5">
               <Label className="text-xs">状态快照 (JSON)</Label>
               <Textarea
                 rows={6} className="font-mono text-xs"
-                value={JSON.stringify(selected.state_snapshot, null, 2)}
-                onChange={(e) => { try { setSelected({ ...selected, state_snapshot: JSON.parse(e.target.value) }); } catch {} }}
+                value={stateSnapText}
+                onChange={(e) => {
+                  setStateSnapText(e.target.value);
+                  try { setSelected({ ...selected, state_snapshot: JSON.parse(e.target.value) }); setStateSnapError(""); }
+                  catch { setStateSnapError("JSON 格式错误"); }
+                }}
               />
+              {stateSnapError && <p className="text-xs text-amber-500">{stateSnapError}</p>}
             </div>
 
             <div className="flex items-center gap-3 pt-2">
@@ -998,7 +1029,7 @@ const STATUS_LABELS: Record<string, string> = {
 function ExportTabContent({ projectId }: { projectId: string }) {
   const [quality, setQuality] = useState("h");
   const [fps, setFps] = useState("30");
-  const [includeSubtitles, setIncludeSubtitles] = useState("true");
+  const [includeSubtitles, setIncludeSubtitles] = useState(true);
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<ExportJobResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -1026,7 +1057,7 @@ function ExportTabContent({ projectId }: { projectId: string }) {
       const res = await createExportJob(projectId, {
         quality: quality as "l" | "m" | "h" | "k",
         fps: parseInt(fps, 10),
-        include_subtitles: includeSubtitles === "true",
+        include_subtitles: includeSubtitles,
       });
       setJobId(res.job_id);
       startPolling(res.job_id);
@@ -1063,7 +1094,7 @@ function ExportTabContent({ projectId }: { projectId: string }) {
           </div>
           <div className="flex items-center justify-between">
             <Label className="text-xs">包含字幕</Label>
-            <Switch checked={includeSubtitles === "true"} onCheckedChange={(v) => setIncludeSubtitles(v ? "true" : "false")} />
+            <Switch checked={includeSubtitles} onCheckedChange={(v) => setIncludeSubtitles(v)} />
           </div>
           {error && <p className="text-sm text-red-500 flex items-center gap-1"><AlertTriangle size={14} />{error}</p>}
           <Button onClick={handleCreate} disabled={submitting} className="w-full gap-2">

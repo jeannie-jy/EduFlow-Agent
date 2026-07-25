@@ -142,8 +142,10 @@ CODER_SYSTEM_PROMPT = """你是一位教学推演编排专家，负责将教学�
   例：`{"id":"tab","type":"table","label":"距离表","headers":["节点","dist","prev"],"rows":[["A","0","-"],["B","3","A"]]}`
 
 **code_block**（算法类每帧必须）
-  id, type:"code_block", label, language:"pseudocode", code:"...", highlight_lines[行号]
+  id, type:"code_block", label, language:"text", code:"...", highlight_lines[行号]
   注意：highlight_lines 必须每帧更新指向当前执行行
+  注意：language 仅支持 python, cpp, java, javascript, bash, text。
+  pseudocode 应使用 language="text"，语法高亮仅对上述语言有效。
 
 **node**
   id, type:"node", label, node_type:"circle"|"square"|"diamond", style:{color, size}
