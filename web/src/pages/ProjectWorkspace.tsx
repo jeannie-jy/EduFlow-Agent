@@ -691,12 +691,12 @@ function PlayTabContent({ projectId, project }: {
       </aside>
 
       {/* 右侧：舞台 + 讲解 + 控制 */}
-      <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto">
+      <main className="flex-1 flex flex-col min-h-0 min-w-0">
         <div className="flex-1 flex flex-col items-center justify-center p-6">
           {/* 舞台卡片 */}
-          <div className="w-full max-w-3xl rounded-xl border bg-card shadow-sm overflow-hidden">
-            {/* 帧标题 */}
-            <div className="flex items-center justify-between px-5 py-3 border-b bg-muted/30">
+          <div className="w-full max-w-3xl max-h-full rounded-xl border bg-card shadow-sm flex flex-col overflow-hidden">
+            {/* 帧标题（固定不滚） */}
+            <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b bg-muted/30">
               <div>
                 <span className="text-xs font-mono text-muted-foreground">{currentFrameId}</span>
                 <h3 className="text-base font-bold mt-0.5">{currentFrameTitle}</h3>
@@ -706,63 +706,66 @@ function PlayTabContent({ projectId, project }: {
               </span>
             </div>
 
-            {/* 舞台区域 */}
-            <div key={stageKey} className="relative simulation-stage min-h-[220px]">
-              <div className="flex items-center justify-center p-8 min-h-[220px]">
-                {visualObjects.length > 0 ? (
-                  <div className="flex flex-wrap items-center justify-center gap-5">
-                    {visualObjects.map((vo) => (
-                      <div key={vo.id} className="simulation-stage__object">
-                        <VisualObjectRenderer object={vo} />
-                      </div>
+            {/* 卡片可滚动内容区 */}
+            <div className="flex-1 overflow-y-auto">
+              {/* 舞台区域 */}
+              <div key={stageKey} className="relative simulation-stage min-h-[220px]">
+                <div className="flex items-center justify-center p-8 min-h-[220px]">
+                  {visualObjects.length > 0 ? (
+                    <div className="flex flex-wrap items-center justify-center gap-5">
+                      {visualObjects.map((vo) => (
+                        <div key={vo.id} className="simulation-stage__object">
+                          <VisualObjectRenderer object={vo} />
+                        </div>
+                      ))}
+                    </div>
+                  ) : stateSnapshot && Object.keys(stateSnapshot).length > 0 ? (
+                    <StateSnapshotFallback snapshot={stateSnapshot} />
+                  ) : (
+                    <div className="text-center text-muted-foreground/30">
+                      <FileText size={40} className="mx-auto mb-2 opacity-20" />
+                      <p className="text-sm">待生成可视化内容</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 讲解文本 */}
+              {currentFrameNarration && (
+                <div className="border-t bg-muted/30 px-5 py-3.5">
+                  <div className="flex gap-2.5">
+                    <Sparkles size={15} className="mt-0.5 shrink-0 text-primary" />
+                    <p className="text-sm leading-relaxed text-muted-foreground">{currentFrameNarration}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* 状态快照详情 */}
+              {stateSnapshot && Object.keys(stateSnapshot).length > 0 && visualObjects.length === 0 && (
+                <div className="border-t px-5 py-3.5">
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">状态快照</h4>
+                  <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs font-mono">
+                    {JSON.stringify(stateSnapshot, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* 动画列表 */}
+              {animations.length > 0 && (
+                <div className="border-t px-5 py-3.5">
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">
+                    动画序列 ({animations.length})
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {animations.map((anim, idx) => (
+                      <span key={idx} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-mono">
+                        {getString(anim.type, "?")} → {getString(anim.target, "?")}
+                      </span>
                     ))}
                   </div>
-                ) : stateSnapshot && Object.keys(stateSnapshot).length > 0 ? (
-                  <StateSnapshotFallback snapshot={stateSnapshot} />
-                ) : (
-                  <div className="text-center text-muted-foreground/30">
-                    <FileText size={40} className="mx-auto mb-2 opacity-20" />
-                    <p className="text-sm">待生成可视化内容</p>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-
-            {/* 讲解文本 */}
-            {currentFrameNarration && (
-              <div className="border-t bg-muted/30 px-5 py-3.5">
-                <div className="flex gap-2.5">
-                  <Sparkles size={15} className="mt-0.5 shrink-0 text-primary" />
-                  <p className="text-sm leading-relaxed text-muted-foreground">{currentFrameNarration}</p>
-                </div>
-              </div>
-            )}
-
-            {/* 状态快照详情 */}
-            {stateSnapshot && Object.keys(stateSnapshot).length > 0 && visualObjects.length === 0 && (
-              <div className="border-t px-5 py-3.5">
-                <h4 className="text-xs font-semibold text-muted-foreground mb-2">状态快照</h4>
-                <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs font-mono">
-                  {JSON.stringify(stateSnapshot, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {/* 动画列表 */}
-            {animations.length > 0 && (
-              <div className="border-t px-5 py-3.5">
-                <h4 className="text-xs font-semibold text-muted-foreground mb-2">
-                  动画序列 ({animations.length})
-                </h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {animations.map((anim, idx) => (
-                    <span key={idx} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-mono">
-                      {getString(anim.type, "?")} → {getString(anim.target, "?")}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* 播放控制栏 */}
