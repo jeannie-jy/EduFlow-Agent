@@ -66,6 +66,9 @@ def process_task(r: redis.Redis, task: dict) -> None:
 
     logger.info("开始渲染 | job=%s | topic=%s", job_id, dsl.get("topic", "unknown"))
 
+    # 标记任务已被消费（防止 fallback 重复处理）
+    r.setex(f"manim:job:{job_id}:claimed", 600, "1")
+
     # 更新状态到 Redis（前端通过 export API 轮询）
     _update_status(r, job_id, "rendering", progress=0)
 
@@ -74,9 +77,21 @@ def process_task(r: redis.Redis, task: dict) -> None:
         job_output_dir = OUTPUT_DIR / job_id
         job_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. DSL → Manim 脚本
-        from adapters.manim_adapter import convert_dsl_to_manim
-        files = convert_dsl_to_manim(dsl)
+        # 1. DSL → Manim 脚本（LLM 生成）
+        import asyncio
+        # 确保独立事件循环（worker 在独立线程/进程中运行）
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
+        from adapters.manim_validator import validate_script, has_errors
+        files = asyncio.run(convert_dsl_to_manim_llm(dsl, dsl.get("teaching_plan")))
+
+        issues = validate_script(files["main.py"])
+        if has_errors(issues):
+            detail = "; ".join(f"[{i['rule']}] {i['detail']}" for i in issues if i["severity"] == "error")
+            logger.warning("Manim 脚本校验发现问题: %s", detail)
+        elif issues:
+            for i in issues:
+                logger.info("Manim 脚本校验 warn: [%s] %s", i["rule"], i["detail"])
 
         script_dir = SCRIPTS_DIR / job_id
         script_dir.mkdir(parents=True, exist_ok=True)
@@ -112,12 +127,19 @@ def process_task(r: redis.Redis, task: dict) -> None:
 
         _update_status(r, job_id, "rendering", progress=50)
 
+        env = os.environ.copy()
+        from adapters.manim_adapter import _find_ffmpeg
+        ffmpeg_dir = _find_ffmpeg()
+        if ffmpeg_dir:
+            env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=MANIM_TIMEOUT,
             cwd=str(script_dir),
+            env=env,
         )
 
         _update_status(r, job_id, "rendering", progress=85)

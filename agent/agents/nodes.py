@@ -378,7 +378,60 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                         "title": {"type": "string"},
                         "learning_goal": {"type": "string"},
                         "narration": {"type": "string"},
-                        "visual_objects": {"type": "array"},
+                        "visual_objects": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "node", "edge", "array", "linked_list", "tree",
+                                            "graph", "table", "code_block", "memory_block",
+                                            "process", "timeline", "formula", "mindmap",
+                                        ],
+                                    },
+                                    "label": {"type": "string"},
+                                    # 数组
+                                    "cells": {"type": "array"},
+                                    # 表格
+                                    "headers": {"type": "array"},
+                                    "rows": {"type": "array"},
+                                    # 代码块
+                                    "language": {"type": "string"},
+                                    "code": {"type": "string"},
+                                    "highlight_lines": {"type": "array"},
+                                    # 公式
+                                    "latex": {"type": "string"},
+                                    # 节点
+                                    "node_type": {"type": "string"},
+                                    # 边
+                                    "source": {"type": "string"},
+                                    "target": {"type": "string"},
+                                    "weight": {"type": "number"},
+                                    "directed": {"type": "boolean"},
+                                    # 内存块
+                                    "blocks": {"type": "array"},
+                                    # 进程
+                                    "pid": {"type": "string"},
+                                    "state": {"type": "string"},
+                                    "attributes": {"type": "object"},
+                                    # 卡片
+                                    "title": {"type": "string"},
+                                    "content": {"type": "object"},
+                                    # 时间线
+                                    "events": {"type": "array"},
+                                    # 思维导图
+                                    "root": {"type": "string"},
+                                    "children": {"type": "array"},
+                                    # 通用
+                                    "position": {"type": "object"},
+                                    "style": {"type": "object"},
+                                },
+                                "required": ["id", "type"],
+                            },
+                        },
                         "state_snapshot": {"type": "object"},
                         "animations": {"type": "array"},
                         "interaction_hooks": {"type": "array"},

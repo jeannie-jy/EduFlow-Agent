@@ -58,7 +58,7 @@ if [[ "$MODE" =~ ^(all|backend)$ ]]; then
     echo "  -> API 文档: http://localhost:8000/docs"
 
     # 后台启动
-    python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level info &
+    python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude 'data/*' --log-level info &
     BACKEND_PID=$!
     echo "  -> 后端 PID: $BACKEND_PID"
 fi

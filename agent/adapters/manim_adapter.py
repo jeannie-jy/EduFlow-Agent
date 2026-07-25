@@ -2,18 +2,26 @@
 
 不依赖 LLM，纯规则映射。每种 VisualObject 和 Animation 有固定的 Manim 映射。
 
-参考: Manim Community Edition v0.18+
+参考: Manim Community Edition v0.20+
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── 运行时环境检测 ──────────────────────────────────────────
+
+_HAS_LATEX = shutil.which("latex") is not None or shutil.which("pdflatex") is not None
+if not _HAS_LATEX:
+    logger.info("LaTeX 未安装，MathTex 将回退为 Text")
 
 # ============================================================================
 # 类型映射表
@@ -67,7 +75,7 @@ MOBJECT_MAP: dict[str, dict[str, Any]] = {
     "code_block": {
         "class": "Code",
         "import": "from manim import Code",
-        "args": 'code=code_content, language="{language}"',
+        "args": 'code_string="...", language="{language}"',
         "needs_label": False,
     },
     "memory_block": {
@@ -241,7 +249,7 @@ class ManimScriptGenerator:
             if narration:
                 safe_narration = narration.replace('"', "'")[:200]
                 lines.append(f'        # Narration: "{safe_narration}"')
-                lines.append(f'        subtitle = Text(r"{safe_narration}", font_size=24, color=WHITE)')
+                lines.append(f'        subtitle = Text("{safe_narration}", font_size=24, color=WHITE)')
                 lines.append("        subtitle.to_edge(DOWN)")
                 lines.append("        self.play(FadeIn(subtitle), run_time=0.5)")
                 lines.append("        self.wait(2)")
@@ -303,8 +311,14 @@ class ManimScriptGenerator:
                 edge_class = mobject_info.get("class_undirected") if not directed else "Arrow"
                 code_lines.append(
                     f"        {var_name} = {edge_class}("
-                    f"start=LEFT, end=RIGHT, color='{color}')"
+                    f"start=2*LEFT, end=2*RIGHT, color='{color}', stroke_width=3)"
+                    f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
+                if label:
+                    code_lines.append(
+                        f"        {var_name}_label = Text('{label[:20]}', font_size=16)"
+                        f".next_to({var_name}, UP, buff=0.1)"
+                    )
 
             elif obj_type == "table":
                 rows_data = vo.get("rows", [])
@@ -316,19 +330,33 @@ class ManimScriptGenerator:
                 )
 
             elif obj_type == "formula":
-                latex = repr(vo.get("latex", "x"))  # repr 自动转义内部引号
-                code_lines.append(
-                    f"        {var_name} = MathTex({latex})"
-                    f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
-                )
+                latex_raw = vo.get("latex", "x")
+                # math 包或 any → Text 避免 LaTeX 依赖
+                use_text = not _HAS_LATEX or _has_cjk(latex_raw) or not _looks_like_math(latex_raw)
+                if use_text:
+                    safe = _strip_latex(latex_raw).replace('"', "'")[:200]
+                    # 不用 r-string，_strip_latex 已处理 LaTeX 转 Unicode
+                    code_lines.append(
+                        f'        {var_name} = Text("{safe}", font_size=24, color=WHITE)'
+                        f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
+                    )
+                else:
+                    latex = repr(latex_raw)
+                    code_lines.append(
+                        f"        {var_name} = MathTex({latex})"
+                        f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
+                    )
 
             elif obj_type == "code_block":
-                code = repr(vo.get("code", "# code"))  # repr 转义内部三引号
+                code = repr(vo.get("code", "# code"))
                 language = vo.get("language", "python")
+                # 非标准语言名降级为 text（避免 Pygments ClassNotFound）
+                if language not in ("python", "cpp", "java", "javascript", "bash", "text"):
+                    language = "text"
                 code_lines.append(
-                    f"        {var_name} = Code(code={code}, "
-                    f"language='{language}', font_size=18)"
-                    f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
+                    f"        {var_name} = Code(code_string={code}, "
+                    f"language='{language}', tab_width=4, add_line_numbers=False)"
+                    f".scale(0.5).move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
 
             elif obj_type == "process":
@@ -506,3 +534,124 @@ def convert_dsl_to_manim(dsl: dict[str, Any]) -> dict[str, str]:
         "render_config.json": json.dumps(config, ensure_ascii=False, indent=2),
         "subtitles.srt": subtitles,
     }
+
+
+# ── Helpers ─────────────────────────────────────────────────
+
+
+def _find_ffmpeg() -> str:
+    """查找 FFmpeg 可执行文件所在目录。
+
+    优先级：settings.ffmpeg_path > PATH 中的 ffmpeg > 空字符串（回退到 PATH）。
+    """
+    ffmpeg_dir = ""
+    try:
+        from config import get_settings
+        settings = get_settings()
+        if settings.ffmpeg_path and os.path.isdir(os.path.expandvars(settings.ffmpeg_path)):
+            ffmpeg_dir = os.path.expandvars(settings.ffmpeg_path)
+    except Exception:
+        pass
+    if not ffmpeg_dir:
+        found = shutil.which("ffmpeg")
+        if found:
+            ffmpeg_dir = str(Path(found).parent)
+    return ffmpeg_dir
+
+
+def _has_cjk(s: str) -> bool:
+    """检查字符串是否包含中日韩字符。"""
+    for ch in s:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF
+            or 0x3400 <= cp <= 0x4DBF
+            or 0x3000 <= cp <= 0x303F
+            or 0xFF00 <= cp <= 0xFFEF
+            or 0x3040 <= cp <= 0x30FF
+            or 0xAC00 <= cp <= 0xD7AF
+        ):
+            return True
+    return False
+
+
+def _strip_latex(s: str) -> str:
+    """移除常见的 LaTeX 命令，保留纯文本，用于 Text 回退显示。
+
+    覆盖 \\text{}, \\mathrm{}, \\textbf{}, \\textit{} 等包装命令，
+    以及 \\quad, \\qquad, \\frac, \\cdot, \\times 等数学命令。
+    """
+    import re
+
+    # 1) 包装命令：保留内部文字
+    s = re.sub(r"\\text\{(.*?)\}", r"\1", s)
+    s = re.sub(r"\\mathrm\{(.*?)\}", r"\1", s)
+    s = re.sub(r"\\textbf\{(.*?)\}", r"\1", s)
+    s = re.sub(r"\\textit\{(.*?)\}", r"\1", s)
+    s = re.sub(r"\\mathbf\{(.*?)\}", r"\1", s)
+    s = re.sub(r"\\mathtt\{(.*?)\}", r"\1", s)
+
+    # 2) \\frac{a}{b} → (a)/(b)
+    s = re.sub(r"\\frac\{(.*?)\}\{(.*?)\}", r"(\1)/(\2)", s)
+
+    # 3) 空格命令 → 普通空格
+    s = s.replace("\\quad", "  ")
+    s = s.replace("\\qquad", "    ")
+    s = s.replace("\\,", " ")
+
+    # 4) LaTeX 函数名 → 纯文本
+    functions = [
+        "log", "lg", "ln", "lim", "max", "min", "sin", "cos", "tan",
+        "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+        "sinh", "cosh", "tanh", "exp", "det", "gcd", "lcm",
+        "sup", "inf", "dim", "ker", "deg", "hom",
+    ]
+    for fn in functions:
+        s = s.replace(f"\\{fn}", fn)
+
+    # 5) 希腊字母 → Unicode
+    greek = {
+        "\\alpha": "α", "\\beta": "β", "\\gamma": "γ", "\\delta": "δ",
+        "\\epsilon": "ε", "\\zeta": "ζ", "\\eta": "η", "\\theta": "θ",
+        "\\iota": "ι", "\\kappa": "κ", "\\lambda": "λ", "\\mu": "μ",
+        "\\nu": "ν", "\\xi": "ξ", "\\pi": "π", "\\rho": "ρ",
+        "\\sigma": "σ", "\\tau": "τ", "\\upsilon": "υ", "\\phi": "φ",
+        "\\chi": "χ", "\\psi": "ψ", "\\omega": "ω",
+        "\\Gamma": "Γ", "\\Delta": "Δ", "\\Theta": "Θ",
+        "\\Lambda": "Λ", "\\Xi": "Ξ", "\\Pi": "Π",
+        "\\Sigma": "Σ", "\\Upsilon": "Υ", "\\Phi": "Φ",
+        "\\Psi": "Ψ", "\\Omega": "Ω",
+    }
+    for cmd, uc in greek.items():
+        s = s.replace(cmd, uc)
+
+    # 6) 常见数学符号 → Unicode
+    symbols = {
+        "\\cdot": "·", "\\times": "×", "\\pm": "±", "\\mp": "∓",
+        "\\div": "÷", "\\ast": "*", "\\star": "⋆",
+        "\\approx": "≈", "\\equiv": "≡", "\\neq": "≠",
+        "\\leq": "≤", "\\geq": "≥", "\\ll": "≪", "\\gg": "≫",
+        "\\infty": "∞", "\\partial": "∂", "\\nabla": "∇",
+        "\\int": "∫", "\\sum": "∑", "\\prod": "∏",
+        "\\to": "→", "\\rightarrow": "→", "\\Rightarrow": "⇒",
+        "\\leftarrow": "←", "\\Leftarrow": "⇐",
+        "\\leftrightarrow": "↔", "\\mapsto": "↦",
+        "\\land": "∧", "\\lor": "∨", "\\neg": "¬",
+        "\\forall": "∀", "\\exists": "∃", "\\in": "∈", "\\notin": "∉",
+        "\\subset": "⊂", "\\supset": "⊃", "\\subseteq": "⊆",
+        "\\cup": "∪", "\\cap": "∩", "\\emptyset": "∅",
+        "\\angle": "∠", "\\triangle": "△",
+        "\\ldots": "…", "\\cdots": "⋯", "\\vdots": "⋮", "\\ddots": "⋱",
+    }
+    for cmd, uc in symbols.items():
+        s = s.replace(cmd, uc)
+
+    return s
+
+
+def _looks_like_math(s: str) -> bool:
+    """检查字符串是否像数学公式（含有 LaTeX 命令或数学符号）。"""
+    return any(
+        ch in s
+        for ch in ("^", "_", "{", "\\", "=", "+", "-", "*", "/", "∑", "∫", "∂")
+    )
