@@ -183,7 +183,7 @@ class ExportManimRequest(BaseModel):
     """Manim 导出请求。"""
     quality: Literal["l", "m", "h", "k"] = "h"
     format: str = "mp4"
-    fps: int = 30
+    fps: int = Field(default=30, ge=1, le=120, description="视频帧率")
     include_subtitles: bool = True
     include_tts: bool = False
 

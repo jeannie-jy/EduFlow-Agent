@@ -26,8 +26,9 @@ httpx>=0.28.0
 redis>=5.2.0
 
 # ── Video Rendering ───────────────────────────────────────
-manim>=0.20.0
-pycairo>=1.26.0
+# CI 环境不需要 Manim 视频渲染依赖，本地开发请用 requirements.txt
+# manim>=0.20.0
+# pycairo>=1.26.0
 
 # ── Document Parsing ──────────────────────────────────────
 PyMuPDF>=1.24.0

@@ -86,6 +86,22 @@ async def list_projects(
     items_result = await session.execute(items_query)
     projects = items_result.scalars().all()
 
+    # 批量统计每个项目的帧数（分批查询避免 SQL IN 子句过大）
+    from db.models import Frame
+    project_ids = [p.id for p in projects]
+    frame_counts: dict[uuid.UUID, int] = {}
+    if project_ids:
+        batch_size = 200
+        for i in range(0, len(project_ids), batch_size):
+            batch = project_ids[i:i + batch_size]
+            count_query = (
+                select(Frame.project_id, func.count(Frame.id))
+                .where(Frame.project_id.in_(batch), Frame.version == 1)
+                .group_by(Frame.project_id)
+            )
+            count_result = await session.execute(count_query)
+            frame_counts.update({row[0]: row[1] for row in count_result.all()})
+
     return {
         "items": [
             {
@@ -94,7 +110,7 @@ async def list_projects(
                 "topic": p.topic,
                 "difficulty": p.difficulty,
                 "status": p.status,
-                "frame_count": 0,  # 需要额外 count 查询
+                "frame_count": frame_counts.get(p.id, 0),
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
             for p in projects
