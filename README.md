@@ -4,6 +4,10 @@
 >
 > 输入 CS 知识点，Agent 自主规划教学策略，生成可交互的逐帧推演序列。支持参数调节、教师编辑、质量评审、视频导出。
 
+<p align="center">
+  <img src="docs/宣传页.png" alt="EduFlow 宣传页" width="800" />
+</p>
+
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![Node.js](https://img.shields.io/badge/node-20+-green.svg)](https://nodejs.org/)
@@ -12,12 +16,6 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-orange.svg)](https://langchain-ai.github.io/langgraph/)
 [![Version](https://img.shields.io/badge/version-0.6.0-informational.svg)]()
-
----
-
-<p align="center">
-  <img src="docs/宣传页.png" alt="EduFlow 宣传页" width="800" />
-</p>
 
 ---
 
