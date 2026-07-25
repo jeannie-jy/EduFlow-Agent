@@ -336,16 +336,12 @@ class TestCallLLMStructured:
 
     @pytest.mark.asyncio
     async def test_uses_tool_choice_forced(self, mock_llm_client):
-        """应使用 tool_choice 强制 function calling。"""
+        """应将 output_schema 注入 system prompt（不使用 function calling）。"""
         mock_response = MagicMock()
         choice = MagicMock()
         message = MagicMock()
-        message.content = None
-        tc = MagicMock()
-        tc.id = "call_001"
-        tc.function.name = "output_structured_result"
-        tc.function.arguments = json.dumps({"ok": True})
-        message.tool_calls = [tc]
+        message.content = json.dumps({"ok": True})
+        message.tool_calls = None
         choice.message = message
         mock_response.choices = [choice]
         mock_response.usage = MagicMock()
@@ -363,10 +359,14 @@ class TestCallLLMStructured:
 
         call_kwargs = mock_llm_client.chat.completions.create.call_args
         if call_kwargs and call_kwargs[1]:
+            # 新版不传 tools/tool_choice，output_schema 注入到 system prompt 的 messages 中
+            tools = call_kwargs[1].get("tools")
             tool_choice = call_kwargs[1].get("tool_choice")
-            assert tool_choice is not None
-            assert tool_choice["type"] == "function"
-            assert tool_choice["function"]["name"] == "output_structured_result"
+            assert tools is None, "不应使用 tools/function calling"
+            assert tool_choice is None, "不应使用 tool_choice"
+            # 验证 schema 出现在 messages 的 system prompt 中
+            system_content = call_kwargs[1]["messages"][0]["content"]
+            assert "ok" in system_content
 
     @pytest.mark.asyncio
     async def test_empty_choices_raises(self, mock_llm_client):
@@ -384,12 +384,14 @@ class TestCallLLMStructured:
 
     @pytest.mark.asyncio
     async def test_no_tool_calls_raises(self, mock_llm_client):
-        """无 tool_calls 应抛出 RuntimeError（content filter 或 API 错误）。"""
+        """非 JSON 内容且无 tool_calls 时，应在重试后抛出 RuntimeError。"""
         mock_response = MagicMock()
         choice = MagicMock()
         message = MagicMock()
         message.content = "I cannot do that"
         message.tool_calls = None
+        # 需要设置 finish_reason 避免 MagicMock 被当作 "length"
+        choice.finish_reason = "stop"
         choice.message = message
         mock_response.choices = [choice]
         mock_response.usage = MagicMock()
@@ -399,7 +401,7 @@ class TestCallLLMStructured:
 
         mock_llm_client.chat.completions.create.return_value = mock_response
 
-        with pytest.raises(RuntimeError, match="no tool_calls"):
+        with pytest.raises(RuntimeError, match="Failed to parse"):
             await call_llm_structured(
                 system_prompt="助手",
                 user_message="测试",

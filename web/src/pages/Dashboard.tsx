@@ -16,9 +16,12 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import {
   listProjects,
+  deleteProject,
   type ProjectListItem,
   ApiError,
   NetworkError,
@@ -138,7 +141,11 @@ export function Dashboard() {
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onDelete={(id) => setProjects((prev) => prev.filter((p) => p.id !== id))}
+              />
             ))}
           </div>
 
@@ -178,29 +185,51 @@ export function Dashboard() {
 // 项目卡片
 // ============================================================================
 
-function ProjectCard({ project }: { project: ProjectListItem }) {
+function ProjectCard({ project, onDelete }: { project: ProjectListItem; onDelete: (id: string) => void }) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm(`确定要删除「${project.title}」吗？此操作不可恢复。`)) return;
+    setDeleting(true);
+    try {
+      await deleteProject(project.id);
+      onDelete(project.id);
+    } catch {
+      setDeleting(false);
+    }
+  };
+
   return (
-    <Link
-      to={`/app/project/${project.id}`}
-      className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-indigo-200"
-    >
-      <div className="flex items-start justify-between mb-3">
-        <h3 className="font-semibold text-slate-900 truncate flex-1 mr-2">
-          {project.title}
-        </h3>
-        <Badge variant={statusVariants[project.status] ?? "secondary"}>
-          {statusLabels[project.status] ?? project.status}
-        </Badge>
-      </div>
-      <div className="flex items-center gap-4 text-xs text-slate-400">
-        {project.topic && <span>{project.topic}</span>}
-        <span>{project.difficulty === "intermediate" ? "中级" : project.difficulty}</span>
-        <span>{project.frame_count} 帧</span>
-      </div>
-      <div className="mt-3 text-xs text-slate-400">
-        {project.updated_at ? new Date(project.updated_at).toLocaleDateString("zh-CN") : ""}
-      </div>
-    </Link>
+    <div className="group relative rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md hover:border-indigo-200">
+      <Link to={`/app/project/${project.id}`} className="block p-5">
+        <div className="flex items-start justify-between mb-3">
+          <h3 className="font-semibold text-slate-900 truncate flex-1 mr-2">
+            {project.title}
+          </h3>
+          <Badge variant={statusVariants[project.status] ?? "secondary"}>
+            {statusLabels[project.status] ?? project.status}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-4 text-xs text-slate-400">
+          {project.topic && <span>{project.topic}</span>}
+          <span>{project.difficulty === "intermediate" ? "中级" : project.difficulty}</span>
+          <span>{project.frame_count} 帧</span>
+        </div>
+        <div className="mt-3 text-xs text-slate-400">
+          {project.updated_at ? new Date(project.updated_at).toLocaleDateString("zh-CN") : ""}
+        </div>
+      </Link>
+      <button
+        onClick={handleDelete}
+        disabled={deleting}
+        className="absolute bottom-3 right-3 p-1.5 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-100"
+        title="删除项目"
+      >
+        {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+      </button>
+    </div>
   );
 }
 

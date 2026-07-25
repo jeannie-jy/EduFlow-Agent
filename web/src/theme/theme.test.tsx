@@ -72,8 +72,10 @@ it("ships the required Light and Dark semantic tokens", () => {
 it("removes transform motion while retaining reduced-motion feedback", () => {
   expect(globalsCss).toContain("@keyframes reduced-motion-appear");
   expect(globalsCss).toContain("animation-name: reduced-motion-appear !important;");
-  expect(globalsCss).toContain(".animate-move,\n  .animate-swap");
+  expect(globalsCss).toContain(".animate-move,");
+  expect(globalsCss).toContain(".animate-swap");
   expect(globalsCss).toContain("animation: none !important;");
+  expect(globalsCss).toContain("transform: none !important;");
   expect(globalsCss).toContain("[data-slot=\"button\"]:active:not([aria-haspopup])");
   expect(globalsCss).toContain("transition-property: color, background-color, border-color, box-shadow, opacity !important;");
 });

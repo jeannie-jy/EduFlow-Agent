@@ -3,6 +3,15 @@
 
 @custom-variant dark (&:is([data-theme="dark"] *));
 
+/* ── 隐藏滚动条（保留滚动能力）────────────────────────────── */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 @theme inline {
   --font-sans: "Inter Variable", Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   --color-background: var(--background);
@@ -1149,6 +1158,21 @@ button, a, [role="button"] { cursor: pointer; }
 }
 .animate-relax-edge {
   animation: anim-relax-edge 0.5s ease-out;
+}
+
+/* ── 推演舞台 ────────────────────────────────────────────── */
+.simulation-stage {
+  --stage-bg: color-mix(in oklch, var(--background) 96%, var(--foreground) 4%);
+  background: var(--stage-bg);
+}
+
+.simulation-stage__object {
+  animation: stage-enter 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes stage-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes reduced-motion-appear {

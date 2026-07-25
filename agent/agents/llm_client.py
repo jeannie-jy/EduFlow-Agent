@@ -100,6 +100,8 @@ async def call_llm(
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
+        # DeepSeek 新版 API 默认开启 thinking mode，与 tool_choice 不兼容
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
     response = await client.chat.completions.create(**kwargs)
 
@@ -144,99 +146,83 @@ async def call_llm_structured(
 ) -> dict[str, Any]:
     """调用 LLM 并以结构化 JSON 格式输出。
 
-    使用 function calling，内置截断修复和格式纠错。
+    绕过 function calling，直接在 content 中输出 JSON——
+    DeepSeek 的 function calling 中文长文本场景格式不稳定。
     """
     settings = get_settings()
     client = _get_llm_client()
 
-    # 将 schema 注入 user_message，指导 LLM 输出格式
-    schema_hint = (
-        "\n\n请严格按照以下 JSON Schema 输出结果。"
-        "注意：字符串内的双引号必须转义，不允许尾随逗号。\n"
-        + json.dumps(output_schema, ensure_ascii=False, indent=2)
+    schema_json = json.dumps(output_schema, ensure_ascii=False, indent=2)
+
+    system_full = (
+        system_prompt
+        + "\n\n## 输出格式要求\n"
+        + "你必须**只输出**一个合法的 JSON 对象，不要包含 markdown 代码块标记，不要有任何额外文字。\n"
+        + "严格按照以下 JSON Schema：\n"
+        + schema_json
     )
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message + schema_hint},
+        {"role": "system", "content": system_full},
+        {"role": "user", "content": user_message},
     ]
 
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "output_structured_result",
-            "description": "以 JSON 格式输出结构化结果",
-            "parameters": output_schema,
-        },
-    }]
+    raw_text = ""
+    result = None
 
-    response = await client.chat.completions.create(
-        model=model or settings.llm_model,
-        messages=messages,
-        tools=tools,
-        tool_choice={"type": "function", "function": {"name": "output_structured_result"}},
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-    if not response.choices:
-        logger.error("Structured LLM call returned empty choices")
-        raise RuntimeError("LLM returned empty response (no choices)")
-
-    choice = response.choices[0]
-    message = choice.message
-
-    if not message.tool_calls:
-        logger.error(
-            "Structured LLM call has no tool_calls. content=%s",
-            str(message.content)[:200],
-        )
-        raise RuntimeError("LLM returned no tool_calls — likely content filter or API error")
-
-    raw_args = message.tool_calls[0].function.arguments
-    result = _extract_and_parse_json(raw_args)
-
-    # 检测截断：逐次加倍 max_tokens 重试，直到成功或达到上限
+    # 逐次加倍 max_tokens 直到成功解析或达到上限（最多 4 次尝试：初始 + 3 次加倍）
     current_max_tokens = max_tokens
-    while current_max_tokens < 65536:
+    prev_max_tokens = 0
+    import httpx as _httpx
+    for attempt in range(4):
+        response = await client.chat.completions.create(
+            model=model or settings.llm_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=current_max_tokens,
+            timeout=_httpx.Timeout(120.0),
+        )
+
+        if not response.choices:
+            logger.error("Structured LLM call returned empty choices")
+            raise RuntimeError("LLM returned empty response")
+
+        choice = response.choices[0]
+        raw_text = choice.message.content or ""
+
+        # 如果 content 为空但存在 tool_calls，回退到解析 tool_calls 参数
+        if not raw_text.strip() and choice.message.tool_calls:
+            raw_text = choice.message.tool_calls[0].function.arguments
+
+        result = _extract_and_parse_json(raw_text)
+
+        if result is not None:
+            _log_usage(response)
+            return result
+
+        # 检查是否因截断导致解析失败
         is_truncated = (
-            response.choices[0].finish_reason == "length"
-            or (result is None and _looks_truncated(raw_args))
+            choice.finish_reason == "length"
+            or _looks_truncated(raw_text)
         )
         if not is_truncated:
-            break
+            break  # 不是截断问题，重试也没用
 
+        prev_max_tokens = current_max_tokens
         current_max_tokens = min(current_max_tokens * 2, 65536)
+        if current_max_tokens == prev_max_tokens:
+            break  # token 已达上限，无法继续加倍
         logger.warning(
-            "LLM 输出被截断 (finish_reason=%s)，用 max_tokens=%d 重试",
-            response.choices[0].finish_reason, current_max_tokens,
-        )
-        try:
-            response = await client.chat.completions.create(
-                model=model or settings.llm_model,
-                messages=messages,
-                tools=tools,
-                tool_choice={"type": "function", "function": {"name": "output_structured_result"}},
-                temperature=temperature,
-                max_tokens=current_max_tokens,
-            )
-            if response.choices and response.choices[0].message.tool_calls:
-                raw_args = response.choices[0].message.tool_calls[0].function.arguments
-                result = _extract_and_parse_json(raw_args)
-                logger.info("截断重试完成, max_tokens=%d, 解析%s",
-                            current_max_tokens, "成功" if result else "仍失败")
-        except Exception as exc:
-            logger.warning("截断重试失败 (max_tokens=%d): %s", current_max_tokens, exc)
-            break
-
-    if result is None:
-        logger.error("function calling JSON 解析失败，原始内容: %s", raw_args[:500])
-        raise RuntimeError(
-            f"Failed to parse structured LLM output: {raw_args[:200]}"
+            "LLM 输出截断 (finish_reason=%s)，max_tokens=%d 重试 (attempt %d)",
+            response.choices[0].finish_reason, current_max_tokens, attempt + 1,
         )
 
-    _log_usage(response)
-    return result
+    # 解析失败 — 输出诊断
+    _diagnose_json_error(raw_text)
+    logger.error("JSON 解析失败，原始内容(前 1000 字符): %s", raw_text[:1000])
+    raise RuntimeError(
+        f"Failed to parse structured LLM output: {raw_text[:200]}"
+    )
 
 
 def _extract_and_parse_json(text: str) -> dict[str, Any] | None:
@@ -251,6 +237,8 @@ def _extract_and_parse_json(text: str) -> dict[str, Any] | None:
 
     text = text.strip()
 
+    # 0. 清理 BOM 和空字符
+    text = text.replace("﻿", "").replace("\x00", "")
     # 1. 提取 markdown code block 内容
     m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if m:
@@ -262,31 +250,39 @@ def _extract_and_parse_json(text: str) -> dict[str, Any] | None:
     if start != -1 and end != -1 and end > start:
         text = text[start:end + 1]
 
-    # 3. 直接解析
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # 4. 截断修复：检测是否在字符串中间被截断
-    repaired = _fix_truncated_json(text)
-    if repaired != text:
+    def _try_parse(s: str) -> dict[str, Any] | None:
         try:
-            return json.loads(repaired)
-        except json.JSONDecodeError:
-            pass
+            return json.loads(s)
+        except json.JSONDecodeError as e:
+            logger.debug("JSON parse error at pos %d: %s", e.pos, str(e)[:120])
+            return None
 
-    # 5. 最后手段：修复常见格式问题
-    repaired = text
-    repaired = re.sub(r",\s*(\}|\])", r"\1", repaired)  # 尾随逗号
-    repaired = re.sub(r",\s*,", ",", repaired)           # 连续逗号
-    repaired = _fix_truncated_json(repaired)              # 截断修复
+    # 3. 直接解析
+    result = _try_parse(text)
+    if result is not None:
+        return result
 
-    try:
-        return json.loads(repaired)
-    except json.JSONDecodeError:
-        pass
+    # 4. 尾随逗号修复
+    repaired = re.sub(r",\s*(\}|\])", r"\1", text)
+    repaired = re.sub(r",\s*,", ",", repaired)
+    result = _try_parse(repaired)
+    if result is not None:
+        return result
 
+    # 5. 截断修复
+    fixed = _fix_truncated_json(repaired)
+    if fixed != repaired:
+        result = _try_parse(fixed)
+        if result is not None:
+            return result
+
+    # 6. 字符串内未转义换行修复：JSON 字符串值中不应有裸换行
+    fixed = _fix_unescaped_newlines(repaired)
+    result = _try_parse(fixed)
+    if result is not None:
+        return result
+
+    # 7. 最后手段：demjson3 / 暴力修复
     return None
 
 
@@ -302,6 +298,34 @@ def _looks_truncated(text: str) -> bool:
     if text[-1] in ',:"' or text[-1].isalpha():
         return True
     return False
+
+
+def _fix_unescaped_newlines(text: str) -> str:
+    """修复 JSON 字符串值中的裸换行符。
+
+    LLM 有时会在 narration 等长文本中输出实际换行，这在 JSON 中不合法。
+    """
+    result = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            result.append(ch)
+            continue
+        if ch == "\\":
+            escape = True
+            result.append(ch)
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string and ch in "\n\r\t":
+            result.append({"\\n": "\\n", "\\r": "\\r", "\\t": "\\t"}[ch])
+            continue
+        result.append(ch)
+    return "".join(result)
 
 
 def _fix_truncated_json(text: str) -> str:
@@ -345,6 +369,41 @@ def _fix_truncated_json(text: str) -> str:
         text += "}" * open_braces
 
     return text
+
+
+def _diagnose_json_error(text: str) -> None:
+    """诊断 JSON 解析错误，输出错误位置附近的上下文。"""
+    import re
+
+    # 提取有效 JSON 部分
+    cleaned = text.strip()
+    m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", cleaned, re.DOTALL)
+    if m:
+        cleaned = m.group(1).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start:end + 1]
+
+    try:
+        json.loads(cleaned)
+        return  # 能解析，不需要诊断
+    except json.JSONDecodeError as e:
+        pos = e.pos
+        lineno = e.lineno
+        colno = e.colno
+        logger.error(
+            "JSON 解析错误: %s | line=%d col=%d pos=%d",
+            e.msg, lineno, colno, pos,
+        )
+        # 输出错误位置前后各 100 字符
+        ctx_start = max(0, pos - 100)
+        ctx_end = min(len(cleaned), pos + 100)
+        logger.error(
+            "JSON 错误上下文 [%d:%d]: ...%s[>>>HERE<<<]%s...",
+            ctx_start, ctx_end,
+            cleaned[ctx_start:pos], cleaned[pos:ctx_end],
+        )
 
 
 def _log_usage(response) -> None:

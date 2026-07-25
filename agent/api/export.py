@@ -8,11 +8,13 @@ GET    /api/export/{job_id}/download/{filename} 下载产物
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import logging
 import subprocess
 import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -117,29 +119,40 @@ async def create_export_job(
     }
 
 
-async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
-    """后台导出 fallback：Worker 不可用时直接调用 manim_adapter 渲染。
+# ponytail: global pool, per-job pools if concurrent exports become a bottleneck
+_pool = ThreadPoolExecutor(max_workers=2)
 
-    先等 3s 给 Worker 机会消费；若 Worker 已处理则不做任何事。
-    """
-    await asyncio.sleep(3)
 
-    r = await _get_redis()
-    if r is None:
-        await _update_db_export_status(job_id, "failed", error_log="Redis 不可用，无法处理导出")
-        return
+def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> None:
+    """同步导出逻辑，在独立线程中运行，避免阻塞 FastAPI 事件循环。"""
+    import redis as redis_lib
+    import shutil as _shutil
 
-    # Worker 已处理？
-    if r.get(f"manim:job:{job_id}"):
-        return
+    r = redis_lib.from_url(redis_url, decode_responses=True)
 
     _update_redis_status(r, job_id, "rendering", progress=5)
-    logger.info("fallback 导出开始: job=%s", job_id)
+    logger.info("导出开始: job=%s", job_id)
 
     try:
-        # 1. DSL → Manim 脚本
-        from adapters.manim_adapter import convert_dsl_to_manim
-        files = convert_dsl_to_manim(dsl)
+        # 1. DSL → Manim 脚本（LLM 生成，在新 event loop 中运行）
+        # 注意：asyncio.run() 在线程池中创建新事件循环是临时方案，
+        # 未来应重构为纯异步以避免事件循环嵌套问题。
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
+        from adapters.manim_validator import validate_script, has_errors
+
+        files = asyncio.run(convert_dsl_to_manim_llm(dsl, dsl.get("teaching_plan")))
+
+        issues = validate_script(files["main.py"])
+        if has_errors(issues):
+            detail = "; ".join(
+                f"[{i['rule']}] {i['detail']}" for i in issues if i["severity"] == "error"
+            )
+            logger.warning("Manim 脚本校验发现问题: %s", detail)
+        elif issues:
+            for i in issues:
+                logger.info("Manim 脚本校验 warn: [%s] %s", i["rule"], i["detail"])
 
         # 2. 写入临时目录
         export_dir = Path(get_settings().export_dir) / job_id
@@ -149,8 +162,6 @@ async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
         (scripts_dir / "render_config.json").write_text(files["render_config.json"], encoding="utf-8")
         (scripts_dir / "subtitles.srt").write_text(files["subtitles.srt"], encoding="utf-8")
 
-        # 复制脚本产物到 job 根目录（download 端点从根目录查找）
-        import shutil as _shutil
         for src_name in ["main.py", "render_config.json", "subtitles.srt"]:
             src = scripts_dir / src_name
             if src.exists():
@@ -158,59 +169,143 @@ async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
 
         _update_redis_status(r, job_id, "rendering", progress=30)
 
-        # 3. 尝试渲染（manim CLI 不可用时只返回脚本）
+        # 3. 渲染视频
         quality = config.get("quality", "h")
         fps = config.get("fps", 30)
         quality_flags = {"l": "-ql", "m": "-qm", "h": "-qh", "k": "-qk"}
         artifacts: list[dict] = []
+        mp4_output_dir = export_dir / "videos"
 
-        try:
-            manim_path = _shutil.which("manim")
-            if manim_path is None:
-                raise FileNotFoundError("manim not found")
+        _update_redis_status(r, job_id, "rendering", progress=50)
 
-            _update_redis_status(r, job_id, "rendering", progress=50)
+        real_mp4 = _render_manim_sync(
+            str(scripts_dir / "main.py"), export_dir, scripts_dir,
+            quality_flags.get(quality, "-qh"), fps, str(mp4_output_dir),
+        )
 
-            mp4_output_dir = export_dir / "videos"
-            result = subprocess.run(
-                [sys.executable, "-m", "manim", str(scripts_dir / "main.py"),
-                 quality_flags.get(quality, "-qh"), f"--fps={fps}",
-                 "--format=mp4", f"--media_dir={mp4_output_dir}"],
-                capture_output=True, text=True, timeout=300,
-                cwd=str(export_dir),
-            )
-
-            if result.returncode == 0:
-                mp4_dir = mp4_output_dir / "videos" / "main"
-                if mp4_dir.exists():
-                    for mp4 in mp4_dir.rglob("*.mp4"):
-                        artifacts.append({"type": "mp4", "filename": mp4.name,
-                                          "size_bytes": mp4.stat().st_size})
-                        _shutil.copy2(mp4, export_dir / mp4.name)
-            else:
-                logger.warning("Manim 渲染失败 (returncode=%d): %s",
-                               result.returncode, result.stderr[:500])
-        except FileNotFoundError:
-            logger.info("manim 未安装，仅导出脚本")
-        except Exception as exc:
-            logger.warning("Manim 渲染异常: %s", exc)
-
-        _update_redis_status(r, job_id, "rendering", progress=85)
-
-        # 脚本文件始终作为产物
-        artifacts.append({"type": "manim_source", "filename": "main.py",
-                          "size_bytes": (scripts_dir / "main.py").stat().st_size})
+        artifacts.append({
+            "type": "manim_source", "filename": "main.py",
+            "size_bytes": (scripts_dir / "main.py").stat().st_size,
+        })
         srt = scripts_dir / "subtitles.srt"
         if srt.exists():
-            artifacts.append({"type": "subtitle", "filename": "subtitles.srt",
-                              "size_bytes": srt.stat().st_size})
+            artifacts.append({
+                "type": "subtitle", "filename": "subtitles.srt",
+                "size_bytes": srt.stat().st_size,
+            })
 
-        _update_redis_status(r, job_id, "completed", progress=100, artifacts=artifacts)
-        logger.info("fallback 导出完成: job=%s | artifacts=%d", job_id, len(artifacts))
+        if real_mp4:
+            artifacts.insert(0, real_mp4)
+            _update_redis_status(r, job_id, "completed", progress=100, artifacts=artifacts)
+            logger.info("导出完成: job=%s | artifacts=%d", job_id, len(artifacts))
+        else:
+            _update_redis_status(r, job_id, "failed", error="渲染完成但未找到 MP4 产物，请检查 Manim 脚本")
+            logger.warning("渲染未产出 MP4: job=%s", job_id)
 
     except Exception as exc:
-        logger.exception("fallback 导出失败: job=%s", job_id)
+        logger.exception("导出失败: job=%s", job_id)
         _update_redis_status(r, job_id, "failed", error=str(exc)[:500])
+
+
+async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
+    """后台导出 fallback：等 3s 给 Worker 机会，未消费则在独立线程中处理。"""
+    await asyncio.sleep(3)
+
+    r = await _get_redis()
+    if r is None:
+        await _update_db_export_status(job_id, "failed", error_log="Redis 不可用，无法处理导出")
+        return
+
+    # 检查 Worker 是否已消费（优先检查 claimed 标记）
+    if r.get(f"manim:job:{job_id}:claimed") or r.get(f"manim:job:{job_id}"):
+        return
+
+    settings = get_settings()
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_pool, _do_export_sync, job_id, dsl, config, settings.redis_url)
+
+
+def _render_manim_sync(
+    script_path: str, export_dir: Path, scripts_dir: Path,
+    quality_flag: str, fps: int, media_dir: str,
+) -> dict | None:
+    """渲染 DSL 生成的 Manim 脚本（同步版本）。"""
+    import shutil as _shutil
+
+    env = os.environ.copy()
+    from adapters.manim_adapter import _find_ffmpeg
+    ffmpeg_dir = _find_ffmpeg()
+    if ffmpeg_dir:
+        env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
+
+    media_abs = str(Path(media_dir).resolve())
+    result = subprocess.run(
+        [sys.executable, "-m", "manim", str(Path(script_path).resolve()),
+         quality_flag, f"--fps={fps}", "--format=mp4", f"--media_dir={media_abs}"],
+        capture_output=True, text=True, timeout=600,
+        cwd=str(export_dir),
+        env=env,
+    )
+
+    if result.returncode != 0:
+        logger.warning("Manim 渲染失败 (returncode=%d): %s",
+                       result.returncode, result.stderr[:300])
+        return None
+
+    for base in [Path(media_abs), export_dir, scripts_dir]:
+        if not base.exists():
+            continue
+        for mp4 in base.rglob("*.mp4"):
+            if "partial_movie_files" in str(mp4) or mp4.name == "preview.mp4":
+                continue
+            dest = export_dir / mp4.name
+            _shutil.copy2(mp4, dest)
+            return {"type": "mp4", "filename": mp4.name,
+                    "size_bytes": dest.stat().st_size}
+
+    # Manim 未产出最终 MP4，尝试手动合并 partial_movie_files
+    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
+    merged = _merge_partial_movies(export_dir, ffmpeg_bin)
+    if merged:
+        return merged
+    logger.warning("DSL 渲染完成但未找到 MP4 产物")
+    return None
+
+
+def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
+    """合并 Manim 生成的 partial_movie_files 为最终 MP4。"""
+    partial_dirs = list(export_dir.rglob("partial_movie_files"))
+    if not partial_dirs:
+        return None
+
+    for pd_dir in partial_dirs:
+        mp4s = sorted(pd_dir.rglob("*.mp4"))
+        if not mp4s:
+            continue
+        concat_list = export_dir / "_concat_list.txt"
+        with open(concat_list, "w", encoding="utf-8") as f:
+            for mp4 in mp4s:
+                f.write(f"file '{mp4}'\n")
+
+        output = export_dir / "output.mp4"
+        try:
+            result = subprocess.run(
+                [ffmpeg_bin, "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                 "-c", "copy", str(output), "-y"],
+                capture_output=True, text=True, timeout=120,
+            )
+            concat_list.unlink(missing_ok=True)
+            if result.returncode == 0 and output.exists():
+                logger.info("手动合并部分视频: %d 分片 → %s (%.1f MB)",
+                           len(mp4s), output.name, output.stat().st_size / 1e6)
+                return {"type": "mp4", "filename": output.name,
+                        "size_bytes": output.stat().st_size}
+        except Exception as exc:
+            logger.warning("手动合并部分视频失败: %s", exc)
+            concat_list.unlink(missing_ok=True)
+        # 继续尝试下一个 partial_movie_files 目录
+
+    return None
 
 
 def _update_redis_status(
@@ -300,7 +395,7 @@ async def get_export_status(
                         job.status = "completed"
                         job.progress_pct = 100
                         job.artifacts = artifacts
-                        await session.flush()
+                        await session.commit()
 
             return result
 
