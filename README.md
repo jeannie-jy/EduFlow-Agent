@@ -15,6 +15,12 @@
 
 ---
 
+<p align="center">
+  <img src="docs/宣传页.png" alt="EduFlow 宣传页" width="800" />
+</p>
+
+---
+
 ## 当前状态
 
 > **v0.7.0 — 前端重设计 + 安全加固 + 开发体验优化**
