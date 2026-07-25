@@ -2,10 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' http://localhost:*;" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EduFlow</title>
-    <script>(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),ok=["light","dark"];document.documentElement.dataset.theme=ok.includes(v||"")?v:"light"}catch{document.documentElement.dataset.theme="light"}})();</script>
+    <script>(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),p=["light","dark","system"].includes(v||"")?v:"system",d=matchMedia("(prefers-color-scheme: dark)").matches,t=p==="system"?(d?"dark":"light"):p;document.documentElement.dataset.theme=t}catch{document.documentElement.dataset.theme="light"}})();</script>
   </head>
   <body>
     <div id="root"></div>

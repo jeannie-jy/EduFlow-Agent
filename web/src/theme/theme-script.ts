@@ -1,1 +1,1 @@
-export const themeScript = `(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),ok=["light","dark"];document.documentElement.dataset.theme=ok.includes(v||"")?v:"light"}catch{document.documentElement.dataset.theme="light"}})();`;
+export const themeScript = `(()=>{try{const k="eduflow-theme",v=localStorage.getItem(k),p=["light","dark","system"].includes(v||"")?v:"system",d=matchMedia("(prefers-color-scheme: dark)").matches,t=p==="system"?(d?"dark":"light"):p;document.documentElement.dataset.theme=t}catch{document.documentElement.dataset.theme="light"}})();`;

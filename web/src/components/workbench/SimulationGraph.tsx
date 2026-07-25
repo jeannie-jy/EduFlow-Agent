@@ -18,6 +18,7 @@ import {
   getEdgeIdBetween,
   graphEdges,
   graphNodes,
+  type GraphEdgeSpec,
   type GraphNodeId,
   type SimulationFrame,
 } from "./simulation-model";
@@ -63,16 +64,25 @@ const nodeTypes = { simulation: SimulationNode };
 
 type SimulationGraphProps = {
   frame: SimulationFrame;
+  edges?: GraphEdgeSpec[];
+  compact?: boolean;
+  panActivationKeyCode?: string | null;
 };
 
-export function SimulationGraph({ frame }: SimulationGraphProps) {
-  const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 639px)").matches);
+export function SimulationGraph({
+  frame,
+  edges: edgeSpecs = graphEdges,
+  compact: compactOverride,
+  panActivationKeyCode,
+}: SimulationGraphProps) {
+  const [viewportCompact, setViewportCompact] = useState(() => window.matchMedia("(max-width: 639px)").matches);
+  const compact = compactOverride ?? viewportCompact;
   const [flow, setFlow] = useState<ReactFlowInstance<SimulationFlowNode, Edge> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 639px)");
-    const handleChange = () => setCompact(query.matches);
+    const handleChange = () => setViewportCompact(query.matches);
     query.addEventListener("change", handleChange);
     return () => query.removeEventListener("change", handleChange);
   }, []);
@@ -144,9 +154,9 @@ export function SimulationGraph({ frame }: SimulationGraphProps) {
     [compact, frame],
   );
 
-  const edges = useMemo<Edge[]>(
+  const flowEdges = useMemo<Edge[]>(
     () =>
-      graphEdges.map((edge) => {
+      edgeSpecs.map((edge) => {
         const changed = frame.changedEdges.includes(edge.id);
         const inspected = frame.inspectedEdges.includes(edge.id);
         const inTree = treeEdges.has(edge.id);
@@ -174,13 +184,13 @@ export function SimulationGraph({ frame }: SimulationGraphProps) {
           labelBgBorderRadius: 5,
         };
       }),
-    [frame.changedEdges, frame.inspectedEdges, treeEdges],
+    [edgeSpecs, frame.changedEdges, frame.inspectedEdges, treeEdges],
   );
 
   return (
     <>
       <ul className="sr-only" aria-label="图边列表">
-        {graphEdges.map((edge) => (
+        {edgeSpecs.map((edge) => (
           <li key={edge.id} aria-label={`边 ${edge.source} 到 ${edge.target}，权重 ${edge.weight}`}>
             {edge.source} 到 {edge.target}，权重 {edge.weight}
           </li>
@@ -190,7 +200,7 @@ export function SimulationGraph({ frame }: SimulationGraphProps) {
         <ReactFlow
           aria-label="Dijkstra 六节点交互图"
           nodes={nodes}
-          edges={edges}
+          edges={flowEdges}
           nodeTypes={nodeTypes}
           onInit={setFlow}
           fitView
@@ -200,6 +210,7 @@ export function SimulationGraph({ frame }: SimulationGraphProps) {
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
+          panActivationKeyCode={panActivationKeyCode}
           panOnScroll
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}

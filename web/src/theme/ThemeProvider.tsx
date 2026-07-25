@@ -1,33 +1,42 @@
 import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type PropsWithChildren,
+  createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren,
 } from "react";
 import {
-  resolveInitialTheme,
-  THEME_STORAGE_KEY,
-  type ThemeId,
+  DARK_MEDIA_QUERY, resolveInitialPreference, resolveTheme,
+  THEME_STORAGE_KEY, type ThemeId, type ThemePreference,
 } from "./theme";
 
 type ThemeContextValue = {
-  theme: ThemeId;
-  setTheme: (theme: ThemeId) => void;
+  preference: ThemePreference;
+  resolvedTheme: ThemeId;
+  setPreference: (theme: ThemePreference) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: PropsWithChildren) {
-  const [theme, setTheme] = useState<ThemeId>(resolveInitialTheme);
+  const [preference, setPreference] = useState(resolveInitialPreference);
+  const [prefersDark, setPrefersDark] = useState(
+    () => window.matchMedia(DARK_MEDIA_QUERY).matches,
+  );
+  const resolvedTheme = resolveTheme(preference, prefersDark);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
+    const media = window.matchMedia(DARK_MEDIA_QUERY);
+    const update = (event: MediaQueryListEvent) => setPrefersDark(event.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
-  const value = useMemo(() => ({ theme, setTheme }), [theme]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+    localStorage.setItem(THEME_STORAGE_KEY, preference);
+  }, [preference, resolvedTheme]);
+
+  const value = useMemo(
+    () => ({ preference, resolvedTheme, setPreference }),
+    [preference, resolvedTheme],
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

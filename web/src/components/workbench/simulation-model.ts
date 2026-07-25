@@ -8,18 +8,20 @@ export type SimulationPhase = "configure" | "initialize" | "select" | "relax" | 
 // 播放状态机（对齐设计文档 7.1.2 节）
 // ============================================================================
 
-export enum PlayState {
+export const PlayState = {
   /** 空闲 — 初始状态，等待用户操作 */
-  IDLE = "idle",
+  IDLE: "idle",
   /** 播放中 — 自动逐帧推进 */
-  PLAYING = "playing",
+  PLAYING: "playing",
   /** 暂停 — 用户手动暂停 */
-  PAUSE = "pause",
+  PAUSE: "pause",
   /** 交互等待 — 到达有 interaction_hooks 的帧，等待用户操作 */
-  WAITING = "waiting",
+  WAITING: "waiting",
   /** 重算中 — 参数变更后正在重新计算状态 */
-  RECOMPUTE = "recompute",
-}
+  RECOMPUTE: "recompute",
+} as const;
+
+export type PlayState = (typeof PlayState)[keyof typeof PlayState];
 
 /** 状态转换规则 */
 export const PLAY_STATE_TRANSITIONS: Record<PlayState, PlayState[]> = {
@@ -38,24 +40,26 @@ export function canTransition(from: PlayState, to: PlayState): boolean {
 // 动画系统（对齐设计文档 7.1.4 节 + DSL Schema 16 种动画类型）
 // ============================================================================
 
-export enum AnimationType {
-  APPEAR = "appear",
-  DISAPPEAR = "disappear",
-  HIGHLIGHT = "highlight",
-  TRANSFORM = "transform",
-  MOVE = "move",
-  UPDATE_VALUE = "update_value",
-  COMPARE = "compare",
-  SWAP = "swap",
-  RELAX_EDGE = "relax_edge",
-  ENQUEUE = "enqueue",
-  DEQUEUE = "dequeue",
-  SPLIT = "split",
-  MERGE = "merge",
-  SCHEDULE = "schedule",
-  LOCK = "lock",
-  UNLOCK = "unlock",
-}
+export const AnimationType = {
+  APPEAR: "appear",
+  DISAPPEAR: "disappear",
+  HIGHLIGHT: "highlight",
+  TRANSFORM: "transform",
+  MOVE: "move",
+  UPDATE_VALUE: "update_value",
+  COMPARE: "compare",
+  SWAP: "swap",
+  RELAX_EDGE: "relax_edge",
+  ENQUEUE: "enqueue",
+  DEQUEUE: "dequeue",
+  SPLIT: "split",
+  MERGE: "merge",
+  SCHEDULE: "schedule",
+  LOCK: "lock",
+  UNLOCK: "unlock",
+} as const;
+
+export type AnimationType = (typeof AnimationType)[keyof typeof AnimationType];
 
 /** DSL 动画定义（与后端 schema/dsl.py Animation 对齐） */
 export interface DSLAnimation {
@@ -82,22 +86,25 @@ export interface AnimationContext {
 // 视觉对象类型（对齐设计文档 DSL 14 种 VisualObject）
 // ============================================================================
 
-export enum VisualObjectType {
-  NODE = "node",
-  EDGE = "edge",
-  ARRAY = "array",
-  LINKED_LIST = "linked_list",
-  TREE = "tree",
-  GRAPH = "graph",
-  TABLE = "table",
-  CODE_BLOCK = "code_block",
-  MEMORY_BLOCK = "memory_block",
-  PROCESS = "process",
-  TIMELINE = "timeline",
-  FORMULA = "formula",
-  CARD = "card",
-  MINDMAP = "mindmap",
-}
+export const VisualObjectType = {
+  NODE: "node",
+  EDGE: "edge",
+  ARRAY: "array",
+  LINKED_LIST: "linked_list",
+  TREE: "tree",
+  GRAPH: "graph",
+  TABLE: "table",
+  CODE_BLOCK: "code_block",
+  MEMORY_BLOCK: "memory_block",
+  PROCESS: "process",
+  TIMELINE: "timeline",
+  FORMULA: "formula",
+  CARD: "card",
+  MINDMAP: "mindmap",
+} as const;
+
+export type VisualObjectType =
+  (typeof VisualObjectType)[keyof typeof VisualObjectType];
 
 /** DSL 视觉对象定义（与后端 schema/dsl.py VisualObject 对齐） */
 export interface DSLVisualObject {
@@ -167,6 +174,15 @@ export type SimulationFrame = {
   interactionHooks?: { type: string; param: string; [key: string]: unknown }[];
 };
 
+export type DijkstraScenario = {
+  edges: GraphEdgeSpec[];
+  frames: SimulationFrame[];
+};
+
+export type DijkstraScenarioOptions = {
+  edgeOverrides?: Partial<Record<string, number>>;
+};
+
 export const graphNodes: GraphNodeSpec[] = [
   { id: "A", position: { x: 70, y: 250 } },
   { id: "B", position: { x: 340, y: 70 } },
@@ -209,18 +225,18 @@ const createPredecessors = (): Record<GraphNodeId, GraphNodeId | null> => ({
 const formatDistance = (distance: number) =>
   Number.isFinite(distance) ? String(distance) : "∞";
 
-const buildAdjacency = () => {
+const buildAdjacency = (edges: GraphEdgeSpec[]) => {
   const adjacency = new Map<GraphNodeId, Array<{ edge: GraphEdgeSpec; neighbor: GraphNodeId }>>();
   graphNodeIds.forEach((node) => adjacency.set(node, []));
-  graphEdges.forEach((edge) => {
+  edges.forEach((edge) => {
     adjacency.get(edge.source)?.push({ edge, neighbor: edge.target });
     adjacency.get(edge.target)?.push({ edge, neighbor: edge.source });
   });
   return adjacency;
 };
 
-export function buildDijkstraFrames(): SimulationFrame[] {
-  const adjacency = buildAdjacency();
+function buildFramesFromEdges(edges: GraphEdgeSpec[]): SimulationFrame[] {
+  const adjacency = buildAdjacency(edges);
   const distances = createDistances();
   const predecessors = createPredecessors();
   const settled = new Set<GraphNodeId>();
@@ -304,6 +320,21 @@ export function buildDijkstraFrames(): SimulationFrame[] {
   }
 
   return frames;
+}
+
+export function buildDijkstraScenario(
+  options: DijkstraScenarioOptions = {},
+): DijkstraScenario {
+  const edges = graphEdges.map((edge) => ({
+    ...edge,
+    weight: options.edgeOverrides?.[edge.id] ?? edge.weight,
+  }));
+
+  return { edges, frames: buildFramesFromEdges(edges) };
+}
+
+export function buildDijkstraFrames(): SimulationFrame[] {
+  return buildDijkstraScenario().frames;
 }
 
 export const simulationFrames = buildDijkstraFrames();

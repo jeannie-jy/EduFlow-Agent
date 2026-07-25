@@ -30,13 +30,22 @@ export const LinkedListObject = memo(function LinkedListObject({
   return (
     <div className={cn("inline-flex items-center gap-0", className)} aria-label={label || "链表"}>
       {nodes.map((node, idx) => {
-        const val = (node.value ?? node.label ?? node.data ?? `N${idx}`) as string;
-        const isHead = node.head ?? idx === 0;
-        const isTail = node.tail ?? idx === nodes.length - 1;
-        const color = (node.color as string) ?? "var(--graph-active)";
+        const val = node.value ?? node.label ?? node.data ?? `N${idx}`;
+        const isHead = Boolean(node.head ?? (idx === 0));
+        const isTail = Boolean(node.tail ?? (idx === nodes.length - 1));
+        const color =
+          typeof node.color === "string"
+            ? node.color
+            : "var(--graph-active)";
+        const key =
+          typeof node.id === "string" ||
+          typeof node.id === "number" ||
+          typeof node.id === "bigint"
+            ? node.id
+            : idx;
 
         return (
-          <div key={node.id as string ?? idx} className="flex items-center">
+          <div key={key} className="flex items-center">
             {/* 节点 */}
             <div
               className={cn(
@@ -47,7 +56,7 @@ export const LinkedListObject = memo(function LinkedListObject({
               style={{ borderColor: isHead || isTail ? undefined : color }}
             >
               <span className="tabular-nums">{String(val)}</span>
-              {node.next && (
+              {Boolean(node.next) && (
                 <span className="text-muted-foreground text-[10px]">→</span>
               )}
             </div>
