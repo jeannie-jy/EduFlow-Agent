@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDijkstraFrames } from "./simulation-model";
+import { buildDijkstraFrames, buildDijkstraScenario } from "./simulation-model";
 
 describe("Dijkstra simulation model", () => {
   it("produces fourteen coherent teaching frames", () => {
@@ -30,5 +30,20 @@ describe("Dijkstra simulation model", () => {
     expect(cRelaxFrame.narration).toContain("F 更新为 7");
     expect(cRelaxFrame.narration).toContain("D 保持 9");
     expect(cRelaxFrame.narration).toContain("E 保持 5");
+  });
+
+  it("recomputes frames and graph labels after changing B-D weight", () => {
+    const scenario = buildDijkstraScenario({ edgeOverrides: { "B-D": 3 } });
+    expect(scenario.edges.find((edge) => edge.id === "B-D")?.weight).toBe(3);
+    expect(scenario.frames.at(-1)?.distances.D).toBe(5);
+    expect(scenario.frames.at(-1)?.predecessors.D).toBe("B");
+  });
+
+  it("does not mutate the default scenario", () => {
+    const changed = buildDijkstraScenario({ edgeOverrides: { "B-D": 3 } });
+    const original = buildDijkstraScenario();
+    expect(changed.edges).not.toBe(original.edges);
+    expect(original.edges.find((edge) => edge.id === "B-D")?.weight).toBe(7);
+    expect(original.frames.at(-1)?.distances.D).toBe(9);
   });
 });

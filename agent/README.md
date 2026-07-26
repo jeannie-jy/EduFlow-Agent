@@ -10,16 +10,14 @@
 # macOS:   brew install ffmpeg
 # Linux:   apt install ffmpeg
 
-# 创建虚拟环境（推荐）
-python -m venv .venv
+# 创建虚拟环境（推荐 — 须用 Python 3.12，3.14 部分依赖无预编译 wheel）
+python3.12 -m venv .venv
 source .venv/Scripts/activate   # Windows Git Bash / PowerShell
 # .venv\Scripts\activate        # Windows CMD
 # source .venv/bin/activate     # Linux / macOS
 
 # 安装 Python 依赖
 pip install -r requirements.txt
-# Windows 注意: pycairo 可能需要手动下载 wheel
-# https://github.com/cgohlke/pycairo-build/releases
 
 # 配置环境变量（确保仓库根目录有 .env）
 cp ../.env.example ../.env
@@ -199,7 +197,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-测试统计: 373 个测试，覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程。
+测试统计: 373 个测试（15 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程。
 
 ## 数据流
 

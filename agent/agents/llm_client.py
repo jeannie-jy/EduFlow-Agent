@@ -100,6 +100,8 @@ async def call_llm(
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
+        # DeepSeek 新版 API 默认开启 thinking mode，与 tool_choice 不兼容
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
     response = await client.chat.completions.create(**kwargs)
 

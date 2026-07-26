@@ -4,8 +4,12 @@
 >
 > 输入 CS 知识点，Agent 自主规划教学策略，生成可交互的逐帧推演序列。支持参数调节、教师编辑、质量评审、视频导出。
 
+<p align="center">
+  <img src="docs/宣传页.png" alt="EduFlow 宣传页" width="800" />
+</p>
+
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![Node.js](https://img.shields.io/badge/node-20+-green.svg)](https://nodejs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-teal.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
@@ -17,18 +21,23 @@
 
 ## 当前状态
 
-> **v0.6.0 — LLM 驱动 Manim 生成 + 视频导出增强**
+> **v0.7.0 — 前端重设计 + 安全加固 + 开发体验优化**
 >
 > 5 个 Agent 协作 + HITL 审批 + DSL 推演 + LLM 优先视频导出的核心链路已跑通，系统可用。
 >
-> **本次更新 (v0.6.0)：**
+> **本次更新 (v0.7.0)：**
+> - 🎨 **前端全面重设计**：全新的 Landing 叙事页（产品原理 / 交互案例 / 使用场景 / 模板库）、Dijkstra 公开探索页 (`/explore/dijkstra`)、可中断的交互式 Demo 状态机
+> - 🎭 **纸张质感主题系统**：明暗双主题 + 设计 tokens（`--paper`/`--canvas`/`--graph-*`）+ prefers-reduced-motion 适配
+> - ♿ **无障碍增强**：焦点管理、ARIA 标注、键盘导航、滚动条隐藏
+> - 🔒 **安全加固**：`auth.ts` 全量 try-catch、Content-Security-Policy meta 标签、DeepSeek thinking mode 兼容修复
+> - 🧪 **测试覆盖扩展**：130 个前端测试（17 个文件）+ 373 个后端测试
+>
+> **上一版本 (v0.6.0)：**
 > - 🤖 **LLM 驱动 Manim 代码生成**：教学语义 → LLM 自主设计可视化布局/配色/动画，替代纯规则映射
 > - ✅ **Manim 脚本质量检测**：6 项静态规则（语法/CJK/lexer/API兼容/转义/调试残留）+ 自动修复 + 失败重试
 > - 🎬 **视频导出增强**：双模式渲染（Redis Worker + 进程内 fallback）、FFmpeg 分片合并容错、实时进度轮询
-> - 🔧 **导出管线健壮性**：FFmpeg 路径配置化、竞态保护、事件循环隔离
-> - 🎨 **前端交互修复**：JSON 编辑实时反馈、键盘快捷键优化、AbortController 泄漏修复
 >
-> **下一阶段（v0.7+）** 将聚焦于：
+> **下一阶段（v0.8+）** 将聚焦于：
 > - 🧩 **生成方式可选化**：教学计划审批通过后，可选择需要的产出形式（思维导图 + 知识卡片 / 完整逐帧推演 / 视频导出），按需生成而非全量输出
 > - 🎨 **前端美化**：优化 UI/UX 设计，提升视觉表现与交互体验
 > - 🔍 **推演功能优化**：修正推演逻辑，实现真正推演功能（目标超越 gemini）
@@ -58,8 +67,8 @@ EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语�
 | **LLM** | DeepSeek-v4-pro (主) | API 调用（兼容 OpenAI 接口），可切换备用模型 |
 | **Embedding** | text-embedding-3-small (1536维) | 知识库语义检索，可平替通义千问 text-embedding-v4 |
 | **Agent 编排** | LangGraph | 5 节点 StateGraph + HITL interrupt + Postgres Checkpointer |
-| **后端** | Python 3.11+ / FastAPI | 异步 REST API + SSE 流式推送 + Alembic 数据库迁移 |
-| **前端** | React 18 + TypeScript + Vite 8 | React Flow 图渲染 + Tailwind CSS 4 + Base UI |
+| **后端** | Python 3.12+ / FastAPI | 异步 REST API + SSE 流式推送 + Alembic 数据库迁移 |
+| **前端** | React 18 + TypeScript + Vite 8 | Tailwind CSS 4 + Base UI + 纸张质感主题系统 |
 | **数据库** | PostgreSQL 16 + pgvector + Redis 7 | 向量检索 + 任务队列 + 缓存 |
 | **存储** | MinIO (S3 兼容) | 上传文件 + 渲染产物 |
 | **视频导出** | Manim CE + FFmpeg | LLM 驱动代码生成（默认） + 确定性规则回退 + Validator 质量检测 |
@@ -70,7 +79,7 @@ EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语�
 
 - Docker Desktop 24+
 - Node.js 20+ / npm 10+（前端开发）
-- Python 3.11+（后端开发，Docker 模式不需要）
+- Python 3.12+（后端开发，Docker 模式不需要）
 - FFmpeg（视频导出依赖，Docker 模式不需要）
   - Windows: `winget install Gyan.FFmpeg`
   - macOS: `brew install ffmpeg`
@@ -142,6 +151,7 @@ docker compose up -d postgres redis minio
 # 3. 后端（终端 1）
 cd agent
 pip install -r requirements.txt
+# Python 3.12 推荐（3.14 部分包无预编译 wheel）
 # Windows 用户注意：pycairo 可能需要手动下载 wheel
 # 下载地址: https://github.com/cgohlke/pycairo-build/releases
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -165,146 +175,14 @@ cd agent
 python -m scripts.seed_embeddings
 ```
 
-## 项目结构
-
-```
-EduFlow-Agent/
-├── agent/                          # Python 后端
-│   ├── adapters/                   # DSL → Manim 转换器
-│   │   ├── manim_adapter.py         # 确定性转换（14 种 Mobject + 16 种 Animation 映射）
-│   │   ├── manim_llm_adapter.py     # LLM 驱动的 Manim 代码生成（教学语义 → 可视化脚本）
-│   │   ├── manim_validator.py       # Manim 脚本质量检测（6 项规则）
-│   │   └── test_adapter.py          # Adapter 自测（代码生成 + 语法校验 + 渲染验证）
-│   ├── agents/                     # LangGraph Agent 编排
-│   │   ├── state.py                # AgentState 类型定义
-│   │   ├── graph.py                # 5 节点 StateGraph 构建 + checkpointer 管理
-│   │   ├── nodes.py                # 5 个 Agent 节点实现（planner/knowledge/coder/quality/reflection）
-│   │   ├── prompts.py              # LLM Prompt 模板
-│   │   └── llm_client.py           # LLM / Embedding 客户端封装
-│   ├── alembic/                    # 数据库迁移（Alembic）
-│   ├── api/                        # FastAPI 路由（9 个模块 + 中间件）
-│   │   ├── router.py               # 路由聚合入口
-│   │   ├── projects.py             # 项目 CRUD
-│   │   ├── generate.py             # 生成流程 + SSE 流式端点
-│   │   ├── frames.py               # 帧编辑与锁定
-│   │   ├── parameters.py           # 参数管理与调节
-│   │   ├── knowledge.py            # 知识库检索
-│   │   ├── feedback.py             # 教师反馈收集
-│   │   ├── export.py               # 视频导出控制
-│   │   ├── materials.py            # 素材上传与解析
-│   │   ├── versions.py             # 项目版本管理
-│   │   ├── deps.py                 # 依赖注入（数据库会话、Project ID 解析）
-│   │   ├── middleware.py           # 请求日志与 request_id 追踪
-│   │   └── error_handlers.py       # 全局异常处理
-│   ├── db/                         # SQLAlchemy ORM
-│   │   ├── database.py             # 异步数据库引擎与会话工厂
-│   │   └── models.py               # 9 个 ORM 模型（Project/Frame/Parameter/Feedback/…）
-│   ├── plugins/                    # 领域插件系统
-│   │   ├── domain_plugin.py        # DomainPlugin 抽象协议
-│   │   └── cs_plugin.py            # CS 领域内置插件
-│   ├── schema/                     # Pydantic 数据模型
-│   │   ├── dsl.py                  # DSL Schema（VisualObject + Animation 等类型）
-│   │   └── project.py              # 项目 API Schema
-│   ├── services/                   # 业务服务层
-│   │   ├── generate_service.py     # 生成流程编排（流式 SSE + 同步 + HITL 恢复 + 局部重生成）
-│   │   ├── knowledge_service.py    # 知识库检索服务
-│   │   └── project_persistence.py  # DSL 快照与帧表持久化
-│   ├── tools/                      # Agent Tool 实现
-│   │   ├── validate_dsl.py         # DSL 校验工具
-│   │   ├── design_parameters.py    # 参数设计工具
-│   │   └── generate_asset.py       # 资源生成工具
-│   ├── workers/                    # 异步 Worker
-│   │   └── render_worker.py        # Manim 渲染 Worker（Redis 驱动）
-│   ├── scripts/                    # 运维脚本
-│   │   └── seed_embeddings.py      # 知识库 embedding 播种
-│   ├── tests/                      # 测试（376 个单元 / 集成测试，15 个文件）
-│   │   ├── conftest.py             # Mock LLM/Embedding 客户端 + 测试数据工厂
-│   │   ├── test_agent_nodes.py     # Agent 节点 + 图拓扑测试
-│   │   ├── test_generate_service.py # 生成流程 + SSE + HITL 测试
-│   │   ├── test_db_integration.py  # 数据库 CRUD + 约束 + 事务测试
-│   │   ├── test_api_integration.py # API 集成测试
-│   │   ├── test_schema.py          # DSL Schema 测试
-│   │   ├── test_schema_edge_cases.py # Schema 边界条件测试
-│   │   ├── test_phase2_*.py        # Phase 2 模块测试
-│   │   ├── test_phase3.py          # Phase 3 API 测试
-│   │   ├── test_prompt_injection.py # Prompt 注入防护测试
-│   │   └── test_llm_client.py      # LLM 客户端测试
-│   ├── main.py                     # FastAPI 应用入口 + 生命周期
-│   ├── config.py                   # 配置管理（pydantic-settings）
-│   ├── requirements.txt            # Python 依赖
-│   └── Dockerfile                  # Agent API 镜像
-├── web/                            # React 前端
-│   ├── src/
-│   │   ├── app/                    # 路由配置 + Provider
-│   │   ├── components/
-│   │   │   ├── brand/              # 品牌/图标组件
-│   │   │   ├── effects/            # 动效组件
-│   │   │   ├── layout/             # 布局组件（导航、页眉等）
-│   │   │   ├── ui/                 # 通用 UI 组件（Base UI 封装）
-│   │   │   └── workbench/          # 教学推演工作台核心组件
-│   │   │       ├── AiStatusStrip.tsx       # Agent 状态指示条
-│   │   │       ├── KnowledgeCard.tsx       # 知识图谱卡片
-│   │   │       ├── MindmapView.tsx         # 思维导图视图
-│   │   │       ├── PlanSequence.tsx        # 教学计划序列
-│   │   │       ├── SimulationGraph.tsx     # 帧推演 React Flow 图
-│   │   │       ├── SimulationPreview.tsx   # 推演预览
-│   │   │       ├── TeachingBrief.tsx       # 教学概览
-│   │   │       ├── simulation-model.ts     # 推演模型（状态机）
-│   │   │       └── visual-objects/         # 可视化对象渲染
-│   │   ├── features/
-│   │   │   ├── auth/               # 认证模块
-│   │   │   └── landing/            # 首页模块
-│   │   ├── hooks/                  # 自定义 React Hooks
-│   │   ├── lib/                    # 工具函数库
-│   │   ├── pages/                  # 页面组件（6 个路由页面）
-│   │   │   ├── Dashboard.tsx       # 项目仪表盘
-│   │   │   ├── NewProject.tsx      # 新建项目
-│   │   │   ├── ProjectWorkspace.tsx # 项目工作台（核心页面）
-│   │   │   ├── TemplateBrowser.tsx # 模板浏览器
-│   │   │   └── NotFound.tsx        # 404 页面
-│   │   ├── services/               # API 客户端层（10 个模块）
-│   │   │   ├── api-client.ts       # HTTP 客户端（拦截器、错误处理）
-│   │   │   ├── sse.ts              # SSE 连接管理
-│   │   │   ├── projects.ts         # 项目 API
-│   │   │   ├── generate.ts         # 生成流程 API
-│   │   │   ├── frames.ts           # 帧管理 API
-│   │   │   ├── parameters.ts       # 参数 API
-│   │   │   ├── knowledge.ts        # 知识库 API
-│   │   │   ├── export.ts           # 导出 API
-│   │   │   └── versions.ts         # 版本 API
-│   │   ├── styles/                 # 全局样式
-│   │   ├── test/                   # 前端测试（Vitest + MSW）
-│   │   │   └── mocks/              # MSW Mock Handlers
-│   │   └── theme/                  # 深色/浅色主题配置
-│   ├── index.html
-│   ├── vite.config.ts
-│   └── package.json
-├── db/                            # 数据库初始化
-│   └── init.sql                   # PostgreSQL 建表 SQL
-├── docs/                          # 文档
-│   ├── design/                    # 设计文档
-│   │   └── 智能教学推演系统设计文档.md
-│   ├── requirements/              # 需求文档
-│   │   └── 自主Agent教学推演系统_需求文档包_v1.md
-│   ├── 开发任务与接口规范.md        # 开发任务 + API 契约 + DSL Schema 速查
-│   └── GLOSSARY.md                # 中英术语对照
-├── docker-compose.yml             # 5 服务 Docker Compose 编排
-├── .env.example                   # 环境变量模板
-├── start.ps1                      # Windows 一键启动脚本
-├── start.sh                       # Linux/macOS 一键启动脚本
-├── DEPLOY.md                      # 部署指南
-├── CONTRIBUTING.md                # 贡献指南
-└── LICENSE                        # Apache 2.0
-```
-
 ## 文档索引
 
 | 文档 | 说明 |
 |------|------|
 | [需求文档](docs/requirements/自主Agent教学推演系统_需求文档包_v1.md) | 用户故事、用例、功能边界 |
 | [设计文档](docs/design/智能教学推演系统设计文档.md) | 完整技术方案（Multi-Agent + DSL + 双路径渲染） |
+| [前端设计规范](web/DESIGN.md) | 前端 UI/UX 设计参考 |
 | [开发任务与接口规范](docs/开发任务与接口规范.md) | Phase 1-3 任务拆分 + API 契约 + DSL Schema 速查 |
-| [部署指南](DEPLOY.md) | Docker Compose 部署 + 环境变量 + 故障排查 |
 | [术语表](docs/GLOSSARY.md) | 中英术语对照 |
 | [贡献指南](CONTRIBUTING.md) | 分支策略与协作规范 |
 
@@ -315,14 +193,15 @@ EduFlow-Agent/
 ```bash
 # 后端测试（agent/ 目录下）
 cd agent
-python -m pytest tests/ -v           # 运行全部 376 个测试
+python -m pytest tests/ -v           # 运行全部 373 个测试
 python -m pytest tests/ --cov=.      # 带覆盖率报告
 
 # 前端测试（web/ 目录下）
 cd web
-npm test                             # 运行 Vitest 测试套件
+npm test                             # 运行 Vitest（130 个测试，17 个文件）
 npm run typecheck                    # TypeScript 类型检查
 npm run verify                       # 完整验证（类型 + 测试 + 构建）
+	npm run build                        # 生产构建
 ```
 
 ### 环境变量

@@ -22,6 +22,13 @@ class ResizeObserverMock implements ResizeObserver {
 
 globalThis.ResizeObserver = ResizeObserverMock;
 
+beforeEach(() => {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: "visible",
+  });
+});
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) =>

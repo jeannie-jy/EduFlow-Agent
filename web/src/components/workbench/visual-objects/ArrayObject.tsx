@@ -18,6 +18,14 @@ export type ArrayObjectProps = {
   className?: string;
 };
 
+function getCellKey(value: unknown, fallback: string | number) {
+  return typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "bigint"
+    ? value
+    : fallback;
+}
+
 export const ArrayObject = memo(function ArrayObject({
   object,
   previousValues,
@@ -32,10 +40,17 @@ export const ArrayObject = memo(function ArrayObject({
         const value = cell.value ?? cell.label ?? cell.text ?? "";
         const prevValue = previousValues?.[String(idx)];
         const changed = prevValue !== undefined && prevValue !== value;
-        const cellColor = cell.color ?? cell.style?.color ?? style.color;
+        const nestedColor =
+          typeof cell.style === "object" &&
+          cell.style !== null &&
+          "color" in cell.style
+            ? cell.style.color
+            : undefined;
+        const color = cell.color ?? nestedColor ?? style.color;
+        const cellColor = typeof color === "string" ? color : undefined;
 
         return {
-          key: cell.id ?? String(idx),
+          key: getCellKey(cell.id, String(idx)),
           value,
           changed,
           cellColor,
@@ -83,7 +98,7 @@ export const ArrayObject = memo(function ArrayObject({
       <div className="flex border-t" role="presentation">
         {cells.map((cell, idx) => (
           <div
-            key={cell.id ?? idx}
+            key={getCellKey(cell.id, idx)}
             className="flex min-w-[2.5rem] items-center justify-center border-r px-1 py-0.5 text-[10px] text-muted-foreground last:border-r-0"
           >
             {idx}

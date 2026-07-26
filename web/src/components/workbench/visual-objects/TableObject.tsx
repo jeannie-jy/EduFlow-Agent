@@ -7,7 +7,7 @@
  * 对齐：设计文档 7.1.4 节。
  */
 
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import type { DSLVisualObject } from "../simulation-model";
 

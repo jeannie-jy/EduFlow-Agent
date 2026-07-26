@@ -7,7 +7,12 @@
  * 对齐：开发任务 F2.7 + 需求文档 10.1 节。
  */
 
-import { useCallback, useState } from "react";
+import {
+  useCallback,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -39,7 +44,7 @@ export type UploadedFile = {
 
 export type FileUploaderProps = {
   files: UploadedFile[];
-  onFilesChange: (files: UploadedFile[]) => void;
+  onFilesChange: Dispatch<SetStateAction<UploadedFile[]>>;
   onTopicSelect?: (topic: string) => void;
   disabled?: boolean;
   className?: string;

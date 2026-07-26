@@ -22,7 +22,7 @@ it("exposes navigation and changes theme", async () => {
   expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: /主题/ }));
   await userEvent.click(
-    await screen.findByRole("menuitemradio", { name: "深色" }),
+    await screen.findByRole("menuitemradio", { name: "Dark" }),
   );
   expect(document.documentElement.dataset.theme).toBe("dark");
 });

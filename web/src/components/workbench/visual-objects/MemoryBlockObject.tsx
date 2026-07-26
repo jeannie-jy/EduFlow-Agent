@@ -32,12 +32,18 @@ export const MemoryBlockObject = memo(function MemoryBlockObject({
       {blocks.map((block, idx) => {
         const addr = block.address ?? block.addr ?? `0x${(idx * 8).toString(16).padStart(4, "0")}`;
         const val = block.value ?? block.data ?? "";
-        const allocated = block.allocated ?? block.free === false ?? true;
+        const allocated = Boolean(block.allocated ?? (block.free === false));
         const size = block.size ?? 8;
+        const key =
+          typeof block.id === "string" ||
+          typeof block.id === "number" ||
+          typeof block.id === "bigint"
+            ? block.id
+            : idx;
 
         return (
           <div
-            key={block.id as string ?? idx}
+            key={key}
             className={cn(
               "flex items-center justify-between gap-3 border-b px-3 py-1.5 last:border-b-0",
               allocated ? "bg-muted/20" : "bg-destructive/5 text-destructive",
@@ -45,7 +51,7 @@ export const MemoryBlockObject = memo(function MemoryBlockObject({
           >
             <span className="text-muted-foreground">{String(addr)}</span>
             <span className="tabular-nums">{String(val)}</span>
-            <span className="text-[10px] text-muted-foreground">{size}B</span>
+            <span className="text-[10px] text-muted-foreground">{String(size)}B</span>
           </div>
         );
       })}

@@ -3,6 +3,7 @@ import { AppShell } from "@/components/layout/AppShell";
 
 // 公开页面
 import { LandingPage } from "@/features/landing/LandingPage";
+import { DijkstraExplorePage } from "@/features/explore/DijkstraExplorePage";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { RegisterPage } from "@/features/auth/RegisterPage";
 
@@ -37,6 +38,10 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/",
     element: <LandingPage />,
+  },
+  {
+    path: "/explore/dijkstra",
+    element: <DijkstraExplorePage />,
   },
   {
     path: "/login",
