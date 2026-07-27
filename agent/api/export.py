@@ -46,7 +46,13 @@ async def _get_redis():
         try:
             import redis as redis_lib
             settings = get_settings()
-            _redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
+            _redis_client = redis_lib.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_keepalive=True,
+                health_check_interval=30,
+            )
+            _redis_client.ping()
         except Exception:
             logger.warning("Redis 不可用")
             _redis_client = None
@@ -178,7 +184,7 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
 
         _update_redis_status(r, job_id, "rendering", progress=50)
 
-        real_mp4 = _render_manim_sync(
+        real_mp4, render_error = _render_manim_sync(
             str(scripts_dir / "main.py"), export_dir, scripts_dir,
             quality_flags.get(quality, "-qh"), fps, str(mp4_output_dir),
         )
@@ -199,8 +205,8 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
             _update_redis_status(r, job_id, "completed", progress=100, artifacts=artifacts)
             logger.info("导出完成: job=%s | artifacts=%d", job_id, len(artifacts))
         else:
-            _update_redis_status(r, job_id, "failed", error="渲染完成但未找到 MP4 产物，请检查 Manim 脚本")
-            logger.warning("渲染未产出 MP4: job=%s", job_id)
+            _update_redis_status(r, job_id, "failed", error=render_error or "未知渲染错误")
+            logger.warning("渲染未产出 MP4: job=%s | error=%s", job_id, render_error)
 
     except Exception as exc:
         logger.exception("导出失败: job=%s", job_id)
@@ -228,8 +234,14 @@ async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
 def _render_manim_sync(
     script_path: str, export_dir: Path, scripts_dir: Path,
     quality_flag: str, fps: int, media_dir: str,
-) -> dict | None:
-    """渲染 DSL 生成的 Manim 脚本（同步版本）。"""
+) -> tuple[dict | None, str | None]:
+    """渲染 DSL 生成的 Manim 脚本（同步版本）。
+
+    Returns:
+        (artifact_dict, error_message)
+        - 成功: ({type, filename, size_bytes}, None)
+        - 失败: (None, error_string)
+    """
     import shutil as _shutil
 
     env = os.environ.copy()
@@ -239,18 +251,26 @@ def _render_manim_sync(
         env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
 
     media_abs = str(Path(media_dir).resolve())
+    # Windows: 子进程放入独立进程组，不受父进程 Ctrl+C/reload 信号影响
+    popen_kwargs: dict = {}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
     result = subprocess.run(
         [sys.executable, "-m", "manim", str(Path(script_path).resolve()),
          quality_flag, f"--fps={fps}", "--format=mp4", f"--media_dir={media_abs}"],
-        capture_output=True, text=True, timeout=600,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=600,
         cwd=str(export_dir),
         env=env,
+        **popen_kwargs,
     )
 
     if result.returncode != 0:
-        logger.warning("Manim 渲染失败 (returncode=%d): %s",
-                       result.returncode, result.stderr[:300])
-        return None
+        stderr_tail = result.stderr[-500:] if len(result.stderr) > 500 else result.stderr
+        error_msg = f"Manim 执行失败 (exit={result.returncode}): {stderr_tail}"
+        logger.warning("Manim 渲染失败 (returncode=%d): stderr=%s",
+                       result.returncode, result.stderr[-300:])
+        return None, error_msg
 
     for base in [Path(media_abs), export_dir, scripts_dir]:
         if not base.exists():
@@ -261,15 +281,15 @@ def _render_manim_sync(
             dest = export_dir / mp4.name
             _shutil.copy2(mp4, dest)
             return {"type": "mp4", "filename": mp4.name,
-                    "size_bytes": dest.stat().st_size}
+                    "size_bytes": dest.stat().st_size}, None
 
     # Manim 未产出最终 MP4，尝试手动合并 partial_movie_files
     ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
     merged = _merge_partial_movies(export_dir, ffmpeg_bin)
     if merged:
-        return merged
-    logger.warning("DSL 渲染完成但未找到 MP4 产物")
-    return None
+        return merged, None
+    logger.warning("Manim 返回码为 0 但未找到 MP4 产物，请检查脚本")
+    return None, "Manim 返回码为 0 但未找到 MP4 产物，请检查 Manim 脚本"
 
 
 def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
@@ -362,7 +382,11 @@ async def get_export_status(
     # 1. 尝试从 Redis 获取实时进度
     r = await _get_redis()
     if r is not None:
-        redis_data = r.get(f"manim:job:{job_id}")
+        try:
+            redis_data = r.get(f"manim:job:{job_id}")
+        except Exception as exc:
+            logger.warning("Redis 查询失败，回退到 DB: %s", exc)
+            redis_data = None
         if redis_data:
             data = json.loads(redis_data)
             status = data.get("status", "queued")

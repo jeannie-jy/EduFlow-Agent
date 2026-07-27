@@ -97,7 +97,8 @@ class Settings(BaseSettings):
     ]
 
     # ── 导出 ──────────────────────────────────────────────
-    export_dir: Path = Path("data/exports")
+    # 默认放到用户目录下，避免放在项目内触发 uvicorn --reload 重启
+    export_dir: Path = Path.home() / ".eduflow" / "exports"
     manim_timeout_seconds: int = 600
     ffmpeg_path: str = ""  # FFmpeg 目录路径，留空则自动从 PATH 查找
 
