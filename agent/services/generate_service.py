@@ -37,7 +37,7 @@ async def run_generation_stream(
     """
     graph = await _get_graph()
     # plan_only 模式：启用 HITL 审批（Planner 后 interrupt 等待确认）
-    approval_mode = action == "plan_only"
+    approval_mode = action in ("plan_only", "modules")
     initial_state: AgentState = {
         "user_input": user_input,
         "project_id": project_id,
