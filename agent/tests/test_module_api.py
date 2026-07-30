@@ -188,16 +188,16 @@ class TestListModules:
         body = res.json()
         assert body["modules"] == []
 
-    async def test_list_modules_project_404(self, client):
+    async def test_list_modules_works_without_project(self, client):
+        """模块列表不依赖项目存在性，即使项目不存在也返回200。"""
         from db.database import get_session
         from main import app
 
-        # 使用valid UUID但session返回None来模拟项目不存在的404
         no_session = _make_session(with_project=False)
         no_session.get = AsyncMock(return_value=None)
         app.dependency_overrides[get_session] = lambda: no_session
         res = await client.get("/api/projects/00000000-0000-0000-0000-000000000099/generate/modules")
-        assert res.status_code == 404
+        assert res.status_code == 200  # 不再要求项目存在
         app.dependency_overrides.clear()
         app.dependency_overrides[get_session] = lambda: _make_session(with_project=True)
 

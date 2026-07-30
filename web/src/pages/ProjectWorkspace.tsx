@@ -301,6 +301,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
     setPhase("connecting");
     setErrorMsg(null);
     resetTimeout();
+    onStepChange("plan");
 
     try {
       await startGeneration(projectId, "modules", selected);
@@ -334,6 +335,8 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
           setProgress(100);
           setMessage("生成完成");
           if (event.quality_report) setQualityReport(event.quality_report as Record<string, unknown>);
+          if (event.module_outputs) setModuleOutputs(event.module_outputs as Record<string, unknown>);
+          onStepChange("results");
           onDone();
         },
         onError: (event) => {
@@ -401,6 +404,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
           setProgress(100);
           setMessage("模块生成完成");
           if (event.module_outputs) setModuleOutputs(event.module_outputs as Record<string, unknown>);
+          onStepChange("results");
           onDone();
         },
         onError: (event) => {
@@ -427,6 +431,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
       setPhase("planning");
       startedRef.current = false;
       setMessage("已返回修改，正在根据反馈重新规划...");
+      onStepChange("plan");
     } catch (err) {
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "提交失败");
@@ -435,7 +440,9 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <h2 className="text-lg font-bold mb-1">教学计划</h2>
+      <h2 className="text-lg font-bold mb-1">
+        {currentStep === "select" ? "选择模块" : currentStep === "plan" ? "教学计划" : "成果预览"}
+      </h2>
       <p className="text-sm text-muted-foreground mb-6">{project?.title}</p>
 
       {phase === "idle" && (
