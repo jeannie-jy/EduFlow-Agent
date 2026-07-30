@@ -276,6 +276,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   setTopic: (v: string) => void;
   onCreated?: (realId: string) => void;
 }) {
+  const realIdRef = useRef<string | null>(null);
   const [phase, setPhase] = useState<SSEPhase>("idle");
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
@@ -349,6 +350,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           difficulty: "intermediate",
         });
         effectiveProjectId = res.id;
+        realIdRef.current = res.id;
         onCreated?.(res.id);
       } catch (err) {
         setPhase("idle");
@@ -415,9 +417,10 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
 
   // ── 审批操作 ─────────────────────────────────────────────────
   const handleApprove = useCallback(async () => {
-    if (!projectId) return;
+    const pid = realIdRef.current || projectId;
+    if (!pid) return;
     try {
-      const res = await approvePlan(projectId, selectedModules.length > 0 ? selectedModules : undefined);
+      const res = await approvePlan(pid, selectedModules.length > 0 ? selectedModules : undefined);
       setPhase("reviewing");
       setErrorMsg(null);
       abortRef.current?.abort();
@@ -478,10 +481,10 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   }, [projectId, onDone, selectedModules]);
 
   const handleReject = useCallback(async (feedback: string) => {
-    if (!projectId) return;
+    const pid = realIdRef.current || projectId;
+    if (!pid) return;
     try {
-      // 注入拒绝决定让图消费中断点（结果通过 resume 流结束），随后回到 idle
-      const res = await rejectPlan(projectId, feedback);
+      const res = await rejectPlan(pid, feedback);
       streamFromUrl(res.stream_url, {
         onDone: () => {},
         onError: () => {},
