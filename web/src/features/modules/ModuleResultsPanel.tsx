@@ -19,8 +19,12 @@ import type { QuizQuestion } from "@/components/workbench/QuizPanel";
 import { KnowledgeCard } from "@/components/workbench/KnowledgeCard";
 import { MindmapView } from "@/components/workbench/MindmapView";
 import type { ProjectDetailResponse } from "@/services/projects";
+import { useState, useCallback } from "react";
+import { RefreshCw, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { regenerateModule } from "@/services/generate";
+import type { SSEModuleDoneEvent, SSEModuleErrorEvent } from "@/services/sse";
 
 // ============================================================================
 // 模块配置
@@ -45,7 +49,27 @@ export interface ModuleResultsPanelProps {
 
 export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPanelProps) {
   const moduleOutputs = (project?.module_outputs ?? {}) as Record<string, unknown>;
-  const entries = Object.entries(moduleOutputs).filter(([, v]) => v != null);
+  const [localOutputs, setLocalOutputs] = useState<Record<string, unknown>>(moduleOutputs);
+  const [isRegenerating, setIsRegenerating] = useState<Record<string, boolean>>({});
+  const [showEditor, setShowEditor] = useState(false);
+
+  const displayedOutputs = { ...moduleOutputs, ...localOutputs };
+  const entries = Object.entries(displayedOutputs).filter(([, v]) => v != null);
+
+  const handleRegenerate = useCallback((moduleId: string) => {
+    if (!project?.id || isRegenerating[moduleId]) return;
+    setIsRegenerating((p) => ({ ...p, [moduleId]: true }));
+
+    regenerateModule(project.id, moduleId, {
+      onModuleDone: (event: SSEModuleDoneEvent) => {
+        setLocalOutputs((prev) => ({ ...prev, [event.module_id]: event.output }));
+        setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
+      },
+      onModuleError: (event: SSEModuleErrorEvent) => {
+        setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
+      },
+    });
+  }, [project?.id, isRegenerating]);
 
   if (entries.length === 0) {
     return (
@@ -95,7 +119,25 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
               </span>
               <SectionIcon size={16} className="text-[var(--interactive)]" />
               <span className="text-sm font-semibold text-[var(--foreground)]">{config.title}</span>
-              <Badge variant="outline" className="ml-auto text-xs text-[var(--muted-foreground)]">
+              <div className="ml-auto flex items-center gap-2">
+                {/* 重新生成按钮 + 并发锁 */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 gap-1 text-xs"
+                  disabled={isRegenerating[key]}
+                  onClick={() => handleRegenerate(key)}
+                >
+                  <RefreshCw size={12} className={isRegenerating[key] ? "animate-spin" : ""} />
+                  {isRegenerating[key] ? "生成中" : "重生成"}
+                </Button>
+                {/* frames: 打开编辑器 */}
+                {key === "frames" && (
+                  <Button variant="ghost" size="sm" className="h-6 gap-1 text-xs" onClick={() => setShowEditor(true)}>
+                    <Pencil size={12} /> 编辑
+                  </Button>
+                )}
+              <Badge variant="outline" className="text-xs text-[var(--muted-foreground)]">
                 已生成
               </Badge>
             </div>
