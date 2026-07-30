@@ -153,12 +153,9 @@ export function ProjectWorkspace() {
   useEffect(() => {
     if (isNew) return;
     if (!project?.status) return;
-    if (project.status === "done" && project.module_outputs) {
+    if (project.status === "done") {
       setCurrentStep("results");
       setCompletedSteps(["select", "plan"]);
-    } else if (project.status === "done" && !project.module_outputs) {
-      setCurrentStep("plan");
-      setCompletedSteps(["select"]);
     }
   }, [project?.status, project?.module_outputs, isNew]);
 
@@ -250,6 +247,7 @@ export function ProjectWorkspace() {
             setTitle={setTitle}
             setTopic={setTopic}
             onCreated={(realId) => { realIdRef.current = realId; }}
+            refreshProject={refreshProject}
           />
         )}
       </div>
@@ -263,7 +261,7 @@ export function ProjectWorkspace() {
 
 type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "reviewing" | "done" | "error";
 
-function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone, isNew, title, topic, setTitle, setTopic, onCreated }: {
+function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone, isNew, title, topic, setTitle, setTopic, onCreated, refreshProject }: {
   projectId: string;
   project: ProjectDetailResponse | null;
   currentStep: StepId;
@@ -275,6 +273,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   setTitle: (v: string) => void;
   setTopic: (v: string) => void;
   onCreated?: (realId: string) => void;
+  refreshProject?: () => Promise<void>;
 }) {
   const realIdRef = useRef<string | null>(null);
   const [phase, setPhase] = useState<SSEPhase>("idle");
@@ -389,12 +388,13 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           setMessage(event.message);
           if (event.teaching_plan) setTeachingPlan(event.teaching_plan as Record<string, unknown>);
         },
-        onDone: (event) => {
+        onDone: async (event) => {
           setPhase("done");
           setProgress(100);
           setMessage("生成完成");
           if (event.quality_report) setQualityReport(event.quality_report as Record<string, unknown>);
           if (event.module_outputs) setModuleOutputs(event.module_outputs as Record<string, unknown>);
+          if (refreshProject) await refreshProject();
           onStepChange("results");
           onDone();
         },
@@ -465,6 +465,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           setProgress(100);
           setMessage("模块生成完成");
           if (event.module_outputs) setModuleOutputs(event.module_outputs as Record<string, unknown>);
+          if (refreshProject) await refreshProject();
           onStepChange("results");
           onDone();
         },
