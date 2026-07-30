@@ -300,13 +300,8 @@ async def list_available_modules(
     """获取可用于该项目生成的模块列表。
 
     从注册表中读取所有已注册的 ModuleGenerator，返回其元信息供前端渲染选择器。
+    不依赖项目状态，模块列表纯内存读取。
     """
-    from db.models import Project as ProjectModel
-
-    project = await session.get(ProjectModel, parse_project_id(project_id))
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-
     modules = []
     for gen in list_generators():
         modules.append(ModuleInfo(

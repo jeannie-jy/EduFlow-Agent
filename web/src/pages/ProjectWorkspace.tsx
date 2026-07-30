@@ -267,7 +267,16 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
     if (!projectId) return;
     listModules(projectId)
       .then((res) => setAvailableModules(res.modules))
-      .catch(() => {});
+      .catch(() => {
+        // 回退：硬编码模块列表（保证至少基本模块可用）
+        setAvailableModules([
+          { module_id: "mindmap", display_name: "思维导图", description: "知识概念导图", icon: "mindmap", category: "visual", priority: 1, estimated_seconds: 15 },
+          { module_id: "cards", display_name: "知识卡片", description: "概念知识卡片", icon: "cards", category: "visual", priority: 2, estimated_seconds: 20 },
+          { module_id: "frames", display_name: "交互推演", description: "逐帧交互演示", icon: "play", category: "interactive", priority: 3, estimated_seconds: 40 },
+          { module_id: "quiz", display_name: "小练习", description: "自动生成练习题", icon: "quiz", category: "interactive", priority: 4, estimated_seconds: 25 },
+          { module_id: "comparison", display_name: "算法对比", description: "多维度算法对比", icon: "comparison", category: "visual", priority: 5, estimated_seconds: 30 },
+        ]);
+      });
   }, [projectId]);
 
   // 连接超时检测：LLM 调用可能较慢，60 秒内无进展 → 报错
@@ -419,7 +428,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
       });
       setPhase("planning");
       startedRef.current = false;
-      setMessage("已返回修改，正在根据反馈重新规划..."，请调整主题描述后重新生成");
+      setMessage("已返回修改，正在根据反馈重新规划...");
     } catch (err) {
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "提交失败");
