@@ -278,8 +278,19 @@ function PlanTabContent({ projectId, project, onDone }: {
 
   // 模块选择状态（Phase A）
   const [availableModules, setAvailableModules] = useState<ModuleInfo[]>([]);
+  const [selectedModules, setSelectedModules] = useState<string[]>([
+    "mindmap", "cards", "frames", "quiz", "comparison", "misconception", "pathway", "sandbox",
+  ]);
   const [moduleStatuses, setModuleStatuses] = useState<Map<string, ModuleProgressItem>>(new Map());
   const [moduleOutputs, setModuleOutputs] = useState<Record<string, unknown>>({});
+
+  // 加载可用模块列表（idle 阶段）
+  useEffect(() => {
+    if (!projectId) return;
+    listModules(projectId)
+      .then((res) => setAvailableModules(res.modules))
+      .catch(() => {});
+  }, [projectId]);
 
   // 连接超时检测：LLM 调用可能较慢，60 秒内无进展 → 报错
   const resetTimeout = useCallback(() => {
@@ -495,13 +506,26 @@ function PlanTabContent({ projectId, project, onDone }: {
       <p className="text-sm text-muted-foreground mb-6">{project?.title}</p>
 
       {phase === "idle" && (
-        <div className="rounded-xl border p-8 text-center">
-          <Sparkles size={48} className="mx-auto mb-4 text-primary" />
-          <h3 className="font-semibold mb-2">准备生成教学计划</h3>
-          <p className="text-sm text-muted-foreground mb-6">AI 将分析知识点，制定教学目标、大纲和推演策略</p>
-          <Button onClick={() => handleStart(selectedModules)} className="gap-2">
-            <Sparkles size={18} /> 开始生成
-          </Button>
+        <div className="space-y-6">
+          <div className="rounded-xl border border-[var(--border)] p-6">
+            <h3 className="font-semibold mb-3">输入教学主题</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              描述你想讲解的 CS 知识点，AI 将制定教学计划并生成所选产物
+            </p>
+            <textarea
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-3 text-sm resize-none"
+              rows={3}
+              placeholder="例如：Dijkstra 最短路径算法的工作原理和正确性证明"
+            />
+          </div>
+          <div className="rounded-xl border border-[var(--border)] p-4">
+            <p className="text-sm font-medium text-[var(--foreground)] mb-3">选择产出形式</p>
+            <ModuleSelector
+              modules={availableModules}
+              onStart={handleStart}
+              defaultSelected={selectedModules}
+            />
+          </div>
         </div>
       )}
 
