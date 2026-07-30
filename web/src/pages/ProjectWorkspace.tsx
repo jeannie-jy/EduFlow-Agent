@@ -307,7 +307,7 @@ function PlanTabContent({ projectId, project, onDone }: {
     resetTimeout();
 
     try {
-      await startGeneration(projectId, "plan_only");
+      await startGeneration(projectId, "modules", selectedModules);
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
@@ -499,7 +499,7 @@ function PlanTabContent({ projectId, project, onDone }: {
           <Sparkles size={48} className="mx-auto mb-4 text-primary" />
           <h3 className="font-semibold mb-2">准备生成教学计划</h3>
           <p className="text-sm text-muted-foreground mb-6">AI 将分析知识点，制定教学目标、大纲和推演策略</p>
-          <Button onClick={handleStart} className="gap-2">
+          <Button onClick={() => handleStart(selectedModules)} className="gap-2">
             <Sparkles size={18} /> 开始生成
           </Button>
         </div>

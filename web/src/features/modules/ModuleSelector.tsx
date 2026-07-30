@@ -22,6 +22,8 @@ export interface ModuleSelectorProps {
   loading?: boolean;
   /** 可选：预设选中的模块 ID */
   defaultSelected?: string[];
+  /** 是否显示开始生成按钮（审批阶段复用时不显示） */
+  showStartButton?: boolean;
 }
 
 // ============================================================================
@@ -33,6 +35,7 @@ export function ModuleSelector({
   onStart,
   loading = false,
   defaultSelected,
+  showStartButton = true,
 }: ModuleSelectorProps) {
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(defaultSelected ?? ["frames"])
@@ -80,7 +83,8 @@ export function ModuleSelector({
         ))}
       </div>
 
-      {/* 提交按钮 */}
+      {/* 提交按钮（审批阶段复用时不显示） */}
+      {showStartButton && (
       <div className="flex items-center justify-between border-t border-gray-200 pt-4 dark:border-gray-700">
         <span className="text-sm text-gray-500 dark:text-gray-400">
           已选择 {selected.size} 个模块
@@ -103,6 +107,7 @@ export function ModuleSelector({
           )}
         </Button>
       </div>
+      )}
     </div>
   );
 }

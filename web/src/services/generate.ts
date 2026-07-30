@@ -15,6 +15,7 @@ import { connectSSE, type SSEOptions } from "./sse";
 
 export interface GenerateRequest {
   action?: "full" | "plan_only" | "modules";
+  modules?: string[];
 }
 
 export interface GenerateResponse {
@@ -33,6 +34,10 @@ export interface ModuleInfo {
 
 export interface ModuleSelectRequest {
   modules: string[];
+}
+
+export interface ApprovePlanRequest {
+  modules?: string[];
 }
 
 export interface RegenerateRequest {
@@ -107,8 +112,10 @@ export interface ApprovePlanResponse {
   available_modules?: ModuleInfo[];
 }
 
-export function approvePlan(projectId: string) {
-  return api.post<ApprovePlanResponse>(`/projects/${projectId}/generate/approve`);
+export function approvePlan(projectId: string, modules?: string[]) {
+  return api.post<ApprovePlanResponse>(`/projects/${projectId}/generate/approve`, {
+    modules: modules ?? null,
+  } as ApprovePlanRequest);
 }
 
 export function rejectPlan(projectId: string, feedback: string) {

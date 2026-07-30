@@ -23,6 +23,7 @@ from services.generate_service import run_generation_stream, resume_generation_s
 from services.module_dispatcher import dispatch_modules
 from generators.registry import get_generator, list_generators
 from schema.project import (
+    ApprovePlanRequest,
     ApprovePlanResponse,
     GenerateRequest,
     ModuleInfo,
@@ -63,6 +64,8 @@ async def start_generation(
     project.status = "planning"
     snap = dict(project.dsl_snapshot or {})
     snap["_pending_action"] = body.action
+    if body.modules:
+        snap["_pending_modules"] = body.modules
     project.dsl_snapshot = snap
 
     logger.info("生成启动: project=%s | action=%s", project_id, body.action)
@@ -218,6 +221,7 @@ async def regenerate_stream(
 @router.post("/{project_id}/generate/approve", status_code=200)
 async def approve_plan(
     project_id: str,
+    body: ApprovePlanRequest = ApprovePlanRequest(),
     session: AsyncSession = Depends(get_session),
 ) -> ApprovePlanResponse:
     """批准教学计划，清除 pending_approval 并继续生成流程。
@@ -234,28 +238,16 @@ async def approve_plan(
     if project.dsl_snapshot:
         snap = dict(project.dsl_snapshot)
         snap.pop("pending_approval", None)
+        # 反悔机制：如果用户调整了模块，覆盖此前选择
+        if body.modules is not None:
+            snap["_pending_modules"] = body.modules
         project.dsl_snapshot = snap
     project.status = "generating"
 
-    logger.info("教学计划已批准: project=%s", project_id)
-
-    # 构造可用模块列表（供前端 ModuleSelector 渲染）
-    module_infos = []
-    for gen in list_generators():
-        module_infos.append(ModuleInfo(
-            module_id=gen.module_id,
-            display_name=gen.display_name,
-            description=gen.description,
-            icon=gen.icon,
-            category=gen.category,
-            priority=gen.priority,
-            estimated_seconds=30,
-        ))
-    module_infos.sort(key=lambda m: m.priority)
+    logger.info("教学计划已批准: project=%s modules=%s", project_id, body.modules)
 
     return ApprovePlanResponse(
         stream_url=f"/api/projects/{project_id}/generate/resume/stream?decision=approve",
-        available_modules=module_infos,
     )
 
 

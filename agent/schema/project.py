@@ -152,6 +152,7 @@ class RecomputeRequest(BaseModel):
 class GenerateRequest(BaseModel):
     """启动生成请求。"""
     action: str = "full"     # full / plan_only / modules
+    modules: list[str] | None = None  # 用户选中的模块列表（前选流程）
 
 
 class GenerateResponse(BaseModel):
@@ -194,10 +195,14 @@ class RejectPlanRequest(BaseModel):
     feedback: str = Field(default="", description="用户修改意见")
 
 
+class ApprovePlanRequest(BaseModel):
+    """批准教学计划请求（含最终模块选择 — 支持反悔机制）。"""
+    modules: list[str] | None = None
+
+
 class ApprovePlanResponse(BaseModel):
     """批准教学计划响应。"""
     stream_url: str
-    available_modules: list[ModuleInfo] = Field(default_factory=list)
 
 
 # ============================================================================
