@@ -543,8 +543,8 @@ class TestHITLInterruptResume:
         assert not any(e["event"] == "waiting_approval" for e in events)
 
     @pytest.mark.asyncio
-    async def test_resume_reject_returns_immediately(self):
-        """reject resume 应立即返回 done（不带 DSL）。"""
+    async def test_resume_reject_triggers_replan(self):
+        """reject+feedback 应触发重规划流程（Phase F）。"""
         import uuid
         from services.generate_service import resume_generation_stream
 
@@ -554,5 +554,7 @@ class TestHITLInterruptResume:
         ):
             events.append(event)
 
-        assert len(events) == 1
-        assert events[0]["event"] == "done"
+        # 新行为：先发 progress（planning），然后尝试读 DB 失败 → error
+        assert len(events) >= 1
+        event_types = [e["event"] for e in events]
+        assert "progress" in event_types or "error" in event_types  # 不会直接 done

@@ -79,26 +79,16 @@ import type { DSLVisualObject } from "@/components/workbench/simulation-model";
 import { ModuleSelector } from "@/features/modules/ModuleSelector";
 import { ModuleProgress, type ModuleProgressItem } from "@/features/modules/ModuleProgress";
 import { ModuleResultsPanel } from "@/features/modules/ModuleResultsPanel";
+import { StepIndicator, type StepId } from "@/components/workbench/StepIndicator";
 
 // ============================================================================
-// Tab 类型
+// 步骤类型（替代 Tab）
 // ============================================================================
 
-type ProjectTab = "plan" | "play" | "edit" | "results" | "export";
-
-const TABS: { key: ProjectTab; label: string; icon: typeof Sparkles }[] = [
-  { key: "plan", label: "计划", icon: Sparkles },
-  { key: "play", label: "推演", icon: Play },
-  { key: "edit", label: "编辑", icon: Pencil },
-  { key: "results", label: "成果", icon: FileText },
-  { key: "export", label: "导出", icon: Film },
-];
-
-const STATUS_DEFAULT_TAB: Record<string, ProjectTab> = {
-  draft: "plan",
+const STATUS_DEFAULT_STEP: Record<string, StepId> = {
+  draft: "select",
   planning: "plan",
   generating: "plan",
-  reviewing: "play",
   done: "results",
 };
 
@@ -126,9 +116,11 @@ export function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const tabFromUrl = (searchParams.get("tab") ?? "") as ProjectTab;
+  const tabFromUrl = (searchParams.get("tab") ?? "") as string;
   const [project, setProject] = useState<ProjectDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [currentStep, setCurrentStep] = useState<StepId>("select");
+  const [completedSteps, setCompletedSteps] = useState<StepId[]>([]);
 
   // 加载 / 刷新项目
   const refreshProject = useCallback(async () => {
@@ -145,17 +137,17 @@ export function ProjectWorkspace() {
     refreshProject().finally(() => setLoading(false));
   }, [projectId, refreshProject]);
 
-  // 确定当前 Tab
-  const activeTab: ProjectTab = (() => {
-    if (TABS.some((t) => t.key === tabFromUrl)) return tabFromUrl;
-    if (project?.status === "done" && !project?.module_outputs) return "play";
-    if (project?.status) return STATUS_DEFAULT_TAB[project.status] ?? "plan";
-    return "plan";
-  })();
-
-  const setTab = (tab: ProjectTab) => {
-    setSearchParams({ tab });
-  };
+  // 确定初始步骤
+  useEffect(() => {
+    if (!project?.status) return;
+    if (project.status === "done" && project.module_outputs) {
+      setCurrentStep("results");
+      setCompletedSteps(["select", "plan"]);
+    } else if (project.status === "done" && !project.module_outputs) {
+      setCurrentStep("plan");
+      setCompletedSteps(["select"]);
+    }
+  }, [project?.status, project?.module_outputs]);
 
   if (loading) {
     return (
@@ -191,64 +183,48 @@ export function ProjectWorkspace() {
           )}
         </div>
 
-        {/* 右侧快速操作 */}
+        {/* 右侧快捷操作 */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {activeTab !== "edit" && (
-            <Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={() => setTab("edit")}>
-              <Pencil size={14} /> 编辑
-            </Button>
-          )}
-          {activeTab !== "export" && (
-            <Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={() => setTab("export")}>
+          {currentStep === "results" && (
+            <Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={() => setCurrentStep("results")}>
               <Download size={14} /> 导出
             </Button>
           )}
         </div>
       </header>
 
-      {/* Tab 导航 */}
-      <nav className="flex shrink-0 items-center gap-0 border-b px-4" aria-label="项目导航">
-        {TABS.map(({ key, label, icon: Icon }) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${
-              activeTab === key
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Icon size={14} />
-            {label}
-          </button>
-        ))}
-      </nav>
+      {/* 步骤指示器 */}
+      <StepIndicator current={currentStep} completed={completedSteps} />
 
       {/* 内容区 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {activeTab === "plan" && projectId && (
-          <PlanTabContent
-            projectId={projectId}
+        {projectId && currentStep === "results" && (
+          <ModuleResultsPanel
             project={project}
-            onDone={() => {
-              void refreshProject().then(() => setTab("results"));
+            onNavigateTab={(tab) => {
+              if (tab === "play" || tab === "export") {
+                // 保留旧 Tab 兼容：在 results 中内嵌显示
+              }
             }}
           />
         )}
-        {activeTab === "play" && projectId && (
-          <PlayTabContent projectId={projectId} project={project} />
-        )}
-        {activeTab === "edit" && projectId && (
-          <EditTabContent projectId={projectId} />
-        )}
-        {activeTab === "results" && projectId && (
-          <ModuleResultsPanel
+        {projectId && currentStep !== "results" && (
+          <PlanTabContent
+            projectId={projectId}
             project={project}
-            onNavigateTab={(tab) => setTab(tab as ProjectTab)}
+            currentStep={currentStep}
+            onStepChange={(step) => {
+              setCurrentStep(step);
+              if (step === "plan") setCompletedSteps((p) => [...new Set([...p, "select"])]);
+              if (step === "results") setCompletedSteps((p) => [...new Set([...p, "select", "plan"])]);
+            }}
+            onDone={() => {
+              void refreshProject().then(() => {
+                setCurrentStep("results");
+                setCompletedSteps(["select", "plan"]);
+              });
+            }}
           />
-        )}
-        {activeTab === "export" && projectId && (
-          <ExportTabContent projectId={projectId} />
         )}
       </div>
     </div>
@@ -261,9 +237,11 @@ export function ProjectWorkspace() {
 
 type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "reviewing" | "done" | "error";
 
-function PlanTabContent({ projectId, project, onDone }: {
+function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone }: {
   projectId: string;
   project: ProjectDetailResponse | null;
+  currentStep: StepId;
+  onStepChange: (step: StepId) => void;
   onDone: () => void;
 }) {
   const [phase, setPhase] = useState<SSEPhase>("idle");
@@ -439,9 +417,9 @@ function PlanTabContent({ projectId, project, onDone }: {
         onDone: () => {},
         onError: () => {},
       });
-      setPhase("idle");
+      setPhase("planning");
       startedRef.current = false;
-      setMessage("已返回修改，请调整主题描述后重新生成");
+      setMessage("已返回修改，正在根据反馈重新规划..."，请调整主题描述后重新生成");
     } catch (err) {
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "提交失败");

@@ -52,9 +52,10 @@ export interface RegenerateRequest {
 // 方法
 // ============================================================================
 
-export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full") {
+export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full", modules?: string[]) {
   return api.post<GenerateResponse>(`/projects/${projectId}/generate`, {
     action,
+    modules: modules ?? null,
   } as GenerateRequest);
 }
 
@@ -122,4 +123,14 @@ export function rejectPlan(projectId: string, feedback: string) {
   return api.post<GenerateResponse>(`/projects/${projectId}/generate/reject`, {
     feedback,
   });
+}
+
+// ============================================================================
+// 单模块重新生成（Phase F）
+// ============================================================================
+
+/** 重新生成单个模块（SSE 流） */
+export function regenerateModule(projectId: string, moduleId: string, options: SSEOptions) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+  return connectSSE(`${baseUrl}/projects/${projectId}/generate/module/${moduleId}/stream`, options);
 }

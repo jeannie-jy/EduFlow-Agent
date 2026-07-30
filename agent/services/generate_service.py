@@ -78,14 +78,97 @@ async def resume_generation_stream(
         resume_value: {"action": "approve"} 或 {"action": "reject", "feedback": ...}
     """
     if resume_value.get("action") == "reject":
-        # 拒绝：图内 interrupt 被 reject 后 planner_node 会设 plan_rejected → 图 END
-        # 但 resume 不再走 astream_events，所以这里显式处理：
-        # 标记 project 为 draft，done 事件不带 DSL
-        yield _sse_event("done", {
-            "phase": "done",
-            "pct": 100,
-            "message": "教学计划已返回修改",
+        # Phase F: 拒绝+反馈 → 重跑 Planner 并注入反馈
+        feedback = resume_value.get("feedback", "")
+        yield _sse_event("progress", {
+            "phase": "planning",
+            "message": "正在根据反馈重新制定教学计划...",
+            "pct": 5,
         })
+
+        try:
+            from db.database import async_session_factory
+            from db.models import Project as ProjectModel
+            from api.deps import parse_project_id
+
+            async with async_session_factory() as db_session:
+                project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                if project is None or not project.dsl_snapshot:
+                    yield _sse_event("error", {"phase": "error", "message": "项目数据缺失", "error_code": "NO_PROJECT"})
+                    return
+                snap = project.dsl_snapshot
+        except Exception as exc:
+            logger.exception("读取项目数据失败")
+            yield _sse_event("error", {"phase": "error", "message": f"读取失败: {exc}", "error_code": "RESUME_CONTEXT_FAILED"})
+            return
+
+        user_input = snap.get("input_content", snap.get("topic", ""))
+        old_plan = snap.get("teaching_plan", {})
+        replan_count = snap.get("_replan_count", 0)
+        max_replan = 3
+
+        if replan_count >= max_replan:
+            yield _sse_event("done", {"phase": "done", "pct": 100, "message": f"已达最大重规划次数 ({max_replan}次)，请重新开始"})
+            return
+
+        # 上下文清理：只保留原始主题 + 最新大纲 + 汇总反馈
+        from agents.nodes import planner_node
+        from agents.state import AgentState
+
+        replan_state: AgentState = {
+            "user_input": user_input,
+            "project_id": project_id,
+            "teaching_plan": old_plan,
+            "constraints": snap.get("constraints", {}),
+            "materials": [],
+            "approval_mode": True,
+            "user_feedback": {"type": "plan_reject", "content": feedback},
+            "selected_modules": snap.get("_pending_modules", []),
+            "status": "draft",
+            "reflection_count": 0,
+            "revision_history": [],
+        }
+
+        # 保存 replan 计数
+        try:
+            async with async_session_factory() as db_session:
+                p = await db_session.get(ProjectModel, parse_project_id(project_id))
+                if p and p.dsl_snapshot:
+                    s = dict(p.dsl_snapshot)
+                    s["_replan_count"] = replan_count + 1
+                    s["_replan_feedback"] = (s.get("_replan_feedback", "") + f"\n[第{replan_count+1}次]: {feedback}").strip()
+                    p.dsl_snapshot = s
+                    await db_session.commit()
+        except Exception:
+            pass
+
+        logger.info("Replan 第 %d/%d 次 | project=%s", replan_count + 1, max_replan, project_id)
+
+        try:
+            result = await planner_node(replan_state)
+            new_plan = result.get("teaching_plan", old_plan)
+
+            # 持久化新计划
+            try:
+                async with async_session_factory() as db_session:
+                    p = await db_session.get(ProjectModel, parse_project_id(project_id))
+                    if p and p.dsl_snapshot:
+                        s = dict(p.dsl_snapshot)
+                        s["teaching_plan"] = new_plan
+                        p.dsl_snapshot = s
+                        await db_session.commit()
+            except Exception:
+                pass
+
+            yield _sse_event("waiting_approval", {
+                "phase": "waiting_approval",
+                "message": "教学计划已根据反馈重新生成，请确认",
+                "pct": 28,
+                "teaching_plan": new_plan,
+            })
+        except Exception as exc:
+            logger.exception("Replan 失败")
+            yield _sse_event("error", {"phase": "error", "message": f"重新规划失败: {exc}", "error_code": "REPLAN_FAILED"})
         return
 
     # ── 批准：从 DB 读 teaching_plan，通过 dispatch_modules 调度生成 ──

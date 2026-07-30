@@ -414,3 +414,48 @@ async def module_generation_stream(
             yield sse_chunk
 
     return EventSourceResponse(event_generator())
+
+
+# ============================================================================
+# 单模块重新生成（Phase F）
+# ============================================================================
+
+
+@router.get("/{project_id}/generate/module/{module_id}/stream")
+async def single_module_stream(
+    project_id: str,
+    module_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """SSE 流式推送单个模块的重新生成进度。"""
+    from db.models import Project as ProjectModel
+    from agents.state import AgentState
+    from services.module_dispatcher import dispatch_modules
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    gen = get_generator(module_id)
+    if gen is None:
+        raise HTTPException(status_code=400, detail=f"Unknown module: {module_id}")
+
+    snap = project.dsl_snapshot or {}
+    state: AgentState = {
+        "user_input": snap.get("input_content", snap.get("topic", "")),
+        "project_id": project_id,
+        "teaching_plan": snap.get("teaching_plan", {}),
+        "knowledge_graph": snap.get("knowledge_graph", {}),
+        "constraints": snap.get("constraints", {}),
+        "selected_modules": [module_id],
+        "status": "generating",
+        "reflection_count": 0,
+        "revision_history": [],
+    }
+
+    async def event_generator():
+        async for chunk in dispatch_modules(project_id, state, [module_id]):
+            yield chunk
+
+    return EventSourceResponse(event_generator())
