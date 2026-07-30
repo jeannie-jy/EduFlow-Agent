@@ -130,15 +130,20 @@ export function ProjectWorkspace() {
   const [project, setProject] = useState<ProjectDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // 加载项目
+  // 加载 / 刷新项目
+  const refreshProject = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const data = await getProject(projectId);
+      setProject(data);
+    } catch { /* ignore */ }
+  }, [projectId]);
+
   useEffect(() => {
     if (!projectId) return;
     setLoading(true);
-    getProject(projectId)
-      .then(setProject)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [projectId]);
+    refreshProject().finally(() => setLoading(false));
+  }, [projectId, refreshProject]);
 
   // 确定当前 Tab
   const activeTab: ProjectTab = (() => {
@@ -222,7 +227,13 @@ export function ProjectWorkspace() {
       {/* 内容区 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {activeTab === "plan" && projectId && (
-          <PlanTabContent projectId={projectId} project={project} onDone={() => setTab("play")} />
+          <PlanTabContent
+            projectId={projectId}
+            project={project}
+            onDone={() => {
+              void refreshProject().then(() => setTab("results"));
+            }}
+          />
         )}
         {activeTab === "play" && projectId && (
           <PlayTabContent projectId={projectId} project={project} />

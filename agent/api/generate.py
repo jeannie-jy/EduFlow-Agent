@@ -239,9 +239,23 @@ async def approve_plan(
 
     logger.info("教学计划已批准: project=%s", project_id)
 
-    # 前端应连接 resume 流从中断点继续（不重跑 Planner）
+    # 构造可用模块列表（供前端 ModuleSelector 渲染）
+    module_infos = []
+    for gen in list_generators():
+        module_infos.append(ModuleInfo(
+            module_id=gen.module_id,
+            display_name=gen.display_name,
+            description=gen.description,
+            icon=gen.icon,
+            category=gen.category,
+            priority=gen.priority,
+            estimated_seconds=30,
+        ))
+    module_infos.sort(key=lambda m: m.priority)
+
     return ApprovePlanResponse(
         stream_url=f"/api/projects/{project_id}/generate/resume/stream?decision=approve",
+        available_modules=module_infos,
     )
 
 
