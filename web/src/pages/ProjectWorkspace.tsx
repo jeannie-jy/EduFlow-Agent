@@ -336,7 +336,6 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     setPhase("connecting");
     setErrorMsg(null);
     resetTimeout();
-    onStepChange("plan");
 
     let effectiveProjectId = projectId;
 
@@ -350,7 +349,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           difficulty: "intermediate",
         });
         effectiveProjectId = res.id;
-      onCreated?.(res.id);
+        onCreated?.(res.id);
       } catch (err) {
         setPhase("idle");
         startedRef.current = false;
@@ -358,6 +357,8 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         return;
       }
     }
+
+    onStepChange("plan");
 
     try {
       await startGeneration(effectiveProjectId, "modules", selected);
@@ -401,11 +402,12 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         },
       });
     } catch (err) {
-      setPhase("error");
+      setPhase("idle");
+      startedRef.current = false;
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "生成启动失败");
     }
-  }, [projectId, onDone]);
+  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, resetTimeout]);
 
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
@@ -503,6 +505,11 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
 
       {phase === "idle" && (
         <div className="space-y-6">
+          {errorMsg && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+              {errorMsg}
+            </div>
+          )}
           {isNew && (
             <div className="rounded-xl border border-[var(--border)] p-6">
               <h3 className="font-semibold mb-3">推演标题 *</h3>
