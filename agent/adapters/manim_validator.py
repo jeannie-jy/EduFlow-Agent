@@ -20,6 +20,8 @@ _INVALID_LEXERS = frozenset({
     "sql", "xml", "html", "css", "yaml", "json", "markdown",
 })
 
+_MANIM_NAMES_CACHE: frozenset[str] | None = None
+
 # ═══════════════════════════════════════════════════════════════
 # 核心校验入口
 # ═══════════════════════════════════════════════════════════════
@@ -41,6 +43,10 @@ def validate_script(script: str) -> list[dict[str, Any]]:
     issues.extend(_check_code_api(script))
     issues.extend(_check_rstring_escape(script))
     issues.extend(_check_print_in_construct(script))
+    issues.extend(_check_table_text_data(script))
+
+    # ── AST 静态检查（比上面的语义检查更通用）──
+    issues.extend(_check_undefined_names(script))
 
     return issues
 
@@ -140,4 +146,123 @@ def _check_print_in_construct(script: str) -> list[dict]:
             "rule": "print-in-construct", "severity": "warn",
             "line": lineno, "detail": "construct 中存在 print() 调试残留",
         })
+    return issues
+
+
+def _check_table_text_data(script: str) -> list[dict]:
+    """Table() 的数据必须是字符串，不能是 Text() 对象。
+
+    Manim Table 内部会对单元格做 "\\n".join(list(text))，
+    传 Text 对象会报 TypeError: expected str instance, Text found。
+    """
+    issues = []
+    # 匹配 Table( 后面直到匹配的 ) 之前，[ ... Text(...) ... ] 的模式
+    # 简化检测：在 Table( 调用的上下文中查找 Text( 对象作为数据元素的模式
+    for m in re.finditer(r"Table\(.*?\[.*?Text\s*\(.*?\].*?\)", script, re.DOTALL):
+        lineno = script[:m.start()].count("\n") + 1
+        ctx = m.group(0)[:120]
+        issues.append({
+            "rule": "table-text-data",
+            "severity": "error",
+            "line": lineno,
+            "detail": f"Table() 的数据中使用了 Text() 对象，应改为纯字符串。片段: {ctx}",
+        })
+    return issues
+
+
+# Python 内置常量/函数（不随 Manim 变化）
+_PYTHON_BUILTINS: frozenset[str] = frozenset({
+    "True", "False", "None", "int", "str", "float", "list", "dict", "set",
+    "tuple", "range", "len", "zip", "enumerate", "reversed", "sorted",
+    "print", "min", "max", "sum", "abs", "round", "type", "isinstance",
+    "super", "object", "Exception", "ValueError", "TypeError",
+    "self", "np", "math", "json", "os", "sys", "time", "itertools", "re",
+})
+
+
+def _get_manim_public_names() -> frozenset[str]:
+    """动态导入 Manim，获取 ``from manim import *`` 导出的全部公开名。
+
+    结果缓存在模块级别避免重复导入。
+    """
+    global _MANIM_NAMES_CACHE
+    if _MANIM_NAMES_CACHE is not None:
+        return _MANIM_NAMES_CACHE
+    try:
+        import manim as _manim
+        if hasattr(_manim, "__all__"):
+            _MANIM_NAMES_CACHE = frozenset(n for n in _manim.__all__ if isinstance(n, str))
+        else:
+            _MANIM_NAMES_CACHE = frozenset(n for n in dir(_manim) if n[0].isupper() or n.startswith("__"))
+    except Exception:
+        _MANIM_NAMES_CACHE = frozenset()
+    return _MANIM_NAMES_CACHE
+
+
+def _collect_defined_names(tree: ast.AST) -> set[str]:
+    """收集 AST 中所有被赋值/定义的变量名。"""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, ast.FunctionDef):
+            names.add(node.name)
+            for arg in node.args.args + node.args.posonlyargs + node.args.kwonlyargs:
+                names.add(arg.arg)
+            if node.args.vararg:
+                names.add(node.args.vararg.arg)
+            if node.args.kwarg:
+                names.add(node.args.kwarg.arg)
+    return names
+
+
+def _check_undefined_names(script: str) -> list[dict]:
+    """检测函数中引用了未定义的变量名。
+
+    遍历所有函数定义，检查函数体内的 Name(Load) 引用是否在以下范围中定义：
+    - 函数参数
+    - 函数体内赋值
+    - 外层作用域（通常为 construct 方法的局部变量）
+    - Python / Manim 内置名
+    """
+    issues: list[dict] = []
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return issues  # 语法错误已被 _check_syntax 处理
+
+    # 收集顶层和 construct 中的定义
+    top_level_names = _collect_defined_names(tree)
+    # 额外：from manim import * 导入的名称视为已定义
+    top_level_names |= {"np", "math", "json", "os", "sys", "time", "itertools"}
+
+    class FuncChecker(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            param_names = set()
+            for arg in node.args.args + node.args.posonlyargs + node.args.kwonlyargs:
+                param_names.add(arg.arg)
+            if node.args.vararg:
+                param_names.add(node.args.vararg.arg)
+            if node.args.kwarg:
+                param_names.add(node.args.kwarg.arg)
+
+            # 收集函数体内的赋值
+            body_defined = _collect_defined_names(node)
+            manim_names = _get_manim_public_names()
+            defined = param_names | body_defined | top_level_names | _PYTHON_BUILTINS | manim_names
+
+            # 检查函数体中的 Name(Load)
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                    if child.id not in defined:
+                        issues.append({
+                            "rule": "undefined-name",
+                            "severity": "error",
+                            "line": child.lineno,
+                            "detail": f"函数 '{node.name}' 中使用了未定义的变量 '{child.id}'",
+                        })
+                        break  # 每个函数只报第一个错误
+            self.generic_visit(node)
+
+    FuncChecker().visit(tree)
     return issues

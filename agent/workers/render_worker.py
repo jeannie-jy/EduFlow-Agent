@@ -133,13 +133,20 @@ def process_task(r: redis.Redis, task: dict) -> None:
         if ffmpeg_dir:
             env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
 
+        popen_kwargs: dict = {}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=MANIM_TIMEOUT,
             cwd=str(script_dir),
             env=env,
+            **popen_kwargs,
         )
 
         _update_status(r, job_id, "rendering", progress=85)
