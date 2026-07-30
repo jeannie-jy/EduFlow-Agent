@@ -159,6 +159,9 @@ class MindmapGenerator(BaseGenerator):
     def validate(self, output: dict[str, Any]) -> list[dict[str, Any]]:
         """校验思维导图结构完整性。"""
         issues = super().validate(output)
+        # 如果基类校验发现非 dict 等严重问题，直接返回
+        if any(i["severity"] == "high" and i["type"] == "schema_error" for i in issues):
+            return issues
 
         root = output.get("root", {})
         if not root.get("name"):

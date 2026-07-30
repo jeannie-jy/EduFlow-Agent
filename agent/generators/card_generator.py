@@ -149,6 +149,8 @@ class CardGenerator(BaseGenerator):
     def validate(self, output: dict[str, Any]) -> list[dict[str, Any]]:
         """校验卡片内容完整性。"""
         issues = super().validate(output)
+        if any(i["severity"] == "high" and i["type"] == "schema_error" for i in issues):
+            return issues
 
         cards = output.get("cards", [])
         if len(cards) == 0:

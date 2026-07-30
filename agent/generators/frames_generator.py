@@ -253,8 +253,17 @@ class FramesGenerator(BaseGenerator):
     def validate(self, output: dict[str, Any]) -> list[dict[str, Any]]:
         """校验 DSL 帧结构（复用现有 validate_dsl 逻辑）。"""
         issues: list[dict[str, Any]] = super().validate(output)
+        if any(i["severity"] == "high" and i["type"] == "schema_error" for i in issues):
+            return issues
 
         frames = output.get("frames", [])
+        if not isinstance(frames, list):
+            issues.append({
+                "severity": "high",
+                "type": "invalid_frames",
+                "description": f"frames 应为列表，实际为 {type(frames).__name__}",
+            })
+            return issues
         if len(frames) == 0:
             issues.append({
                 "severity": "high",
@@ -263,8 +272,17 @@ class FramesGenerator(BaseGenerator):
             })
             return issues
 
+        # 检查帧是否为合法对象列表
+        for i, f in enumerate(frames):
+            if not isinstance(f, dict):
+                issues.append({
+                    "severity": "high",
+                    "type": "invalid_frame_object",
+                    "description": f"Frame at index {i} is not a dict: {type(f).__name__}",
+                })
+
         # 检查帧 ID 唯一性
-        frame_ids = [f.get("frame_id", "") for f in frames]
+        frame_ids = [f.get("frame_id", "") if isinstance(f, dict) else "" for f in frames]
         if len(frame_ids) != len(set(frame_ids)):
             issues.append({
                 "severity": "high",
