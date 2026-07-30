@@ -212,6 +212,10 @@ class QuizGenerator(BaseGenerator):
             return issues
 
         questions = output.get("questions", [])
+        if not isinstance(questions, list):
+            issues.append({"severity": "high", "type": "invalid_questions",
+                           "description": f"questions 应为列表，实际为 {type(questions).__name__}"})
+            return issues
         if len(questions) == 0:
             issues.append({"severity": "high", "type": "empty_quiz", "description": "未生成任何练习题"})
             return issues
@@ -222,13 +226,21 @@ class QuizGenerator(BaseGenerator):
 
         has_mc = False
         for i, q in enumerate(questions):
+            if not isinstance(q, dict):
+                issues.append({"severity": "high", "type": "invalid_question_object",
+                               "description": f"Question at index {i} is not a dict: {type(q).__name__}"})
+                continue
             qid = q.get("id", f"q_{i}")
             qtype = q.get("type", "")
 
             if qtype == "multiple_choice":
                 has_mc = True
                 options = q.get("options", [])
-                correct_opts = [o for o in options if o.get("is_correct")]
+                if not isinstance(options, list):
+                    issues.append({"severity": "medium", "type": "invalid_options",
+                                   "description": f"选择题 {qid} 的 options 不是列表"})
+                    continue
+                correct_opts = [o for o in options if isinstance(o, dict) and o.get("is_correct")]
                 if len(options) < 2:
                     issues.append({"severity": "medium", "type": "too_few_options",
                                    "description": f"选择题 {qid} 选项不足 ({len(options)} 个)"})

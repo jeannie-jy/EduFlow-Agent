@@ -215,8 +215,14 @@ class ComparisonGenerator(BaseGenerator):
                            "description": f"对比维度不足 ({len(dimensions)} 个)，建议至少 4 个"})
 
         table = output.get("comparison_table", [])
+        if not isinstance(table, list):
+            issues.append({"severity": "high", "type": "invalid_table",
+                           "description": f"comparison_table 应为列表，实际为 {type(table).__name__}"})
+            return issues
         algo_names = {a["name"] for a in algorithms}
         for row in table:
+            if not isinstance(row, dict):
+                continue
             for name in algo_names:
                 if name not in row:
                     issues.append({"severity": "medium", "type": "missing_algo_in_row",
