@@ -263,7 +263,7 @@ export function ProjectWorkspace() {
 
 type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "reviewing" | "done" | "error";
 
-function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone, isNew, title, topic, setTitle, setTopic }: {
+function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone, isNew, title, topic, setTitle, setTopic, onCreated }: {
   projectId: string;
   project: ProjectDetailResponse | null;
   currentStep: StepId;
