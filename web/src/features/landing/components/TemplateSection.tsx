@@ -52,7 +52,7 @@ export function TemplateSection() {
                 {isPublicCase ? (
                   <Link to="/explore/dijkstra" className="landing-text-link">体验 Dijkstra 案例 <ArrowRight aria-hidden="true" /></Link>
                 ) : <span className="landing-template__availability">公开案例筹备中</span>}
-                <Link to={`/app/new?template=${encodeURIComponent(name)}`} className="landing-text-link">基于 {name} 模板创建 <ArrowRight aria-hidden="true" /></Link>
+                <Link to={`/app/project/_new?template=${encodeURIComponent(name)}`} className="landing-text-link">基于 {name} 模板创建 <ArrowRight aria-hidden="true" /></Link>
               </div>
               </article>
             );

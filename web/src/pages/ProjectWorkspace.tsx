@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import {
   getProject,
+  createProject,
   startGeneration,
   streamGeneration,
   streamFromUrl,
@@ -73,6 +74,7 @@ import {
   type VersionItem,
   type ModuleInfo,
   NetworkError,
+  ApiError,
 } from "@/services";
 import { VisualObjectRenderer } from "@/components/workbench/visual-objects/VisualObjectRenderer";
 import type { DSLVisualObject } from "@/components/workbench/simulation-model";
@@ -114,28 +116,42 @@ function getString(value: unknown, fallback: string) {
 
 export function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const isNew = projectId === "_new";
+  const realIdRef = useRef<string | null>(null);
+
   const [project, setProject] = useState<ProjectDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState<StepId>("select");
   const [completedSteps, setCompletedSteps] = useState<StepId[]>([]);
+  const [title, setTitle] = useState("");
+  const [topic, setTopic] = useState("");
 
   // 加载 / 刷新项目
   const refreshProject = useCallback(async () => {
-    if (!projectId) return;
+    if (!projectId || isNew) return;
     try {
       const data = await getProject(projectId);
       setProject(data);
     } catch { /* ignore */ }
-  }, [projectId]);
+  }, [projectId, isNew]);
 
   useEffect(() => {
+    if (isNew) {
+      setLoading(false);
+      const t = searchParams.get("template") ?? "";
+      if (t) setTopic(`讲解 ${t}，包括核心概念、工作原理和典型示例。`);
+      return;
+    }
     if (!projectId) return;
     setLoading(true);
     refreshProject().finally(() => setLoading(false));
-  }, [projectId, refreshProject]);
+  }, [projectId, isNew]);
 
   // 确定初始步骤
   useEffect(() => {
+    if (isNew) return;
     if (!project?.status) return;
     if (project.status === "done" && project.module_outputs) {
       setCurrentStep("results");
@@ -144,7 +160,14 @@ export function ProjectWorkspace() {
       setCurrentStep("plan");
       setCompletedSteps(["select"]);
     }
-  }, [project?.status, project?.module_outputs]);
+  }, [project?.status, project?.module_outputs, isNew]);
+
+  // Step 3 时替换 URL（新建模式）
+  useEffect(() => {
+    if (currentStep === "results" && realIdRef.current && isNew) {
+      navigate(`/app/project/${realIdRef.current}`, { replace: true });
+    }
+  }, [currentStep, isNew]);
 
   if (loading) {
     return (
@@ -221,6 +244,12 @@ export function ProjectWorkspace() {
                 setCompletedSteps(["select", "plan"]);
               });
             }}
+            isNew={isNew}
+            title={title}
+            topic={topic}
+            setTitle={setTitle}
+            setTopic={setTopic}
+            onCreated={(realId) => { realIdRef.current = realId; }}
           />
         )}
       </div>
@@ -234,12 +263,18 @@ export function ProjectWorkspace() {
 
 type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "reviewing" | "done" | "error";
 
-function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone }: {
+function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone, isNew, title, topic, setTitle, setTopic }: {
   projectId: string;
   project: ProjectDetailResponse | null;
   currentStep: StepId;
   onStepChange: (step: StepId) => void;
   onDone: () => void;
+  isNew: boolean;
+  title: string;
+  topic: string;
+  setTitle: (v: string) => void;
+  setTopic: (v: string) => void;
+  onCreated?: (realId: string) => void;
 }) {
   const [phase, setPhase] = useState<SSEPhase>("idle");
   const [progress, setProgress] = useState(0);
@@ -303,12 +338,33 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
     resetTimeout();
     onStepChange("plan");
 
+    let effectiveProjectId = projectId;
+
+    if (isNew) {
+      try {
+        const finalTitle = title.trim() || topic.trim().slice(0, 30) || "未命名推演";
+        const res = await createProject({
+          title: finalTitle,
+          input_content: topic.trim(),
+          audience: "undergraduate_cs",
+          difficulty: "intermediate",
+        });
+        effectiveProjectId = res.id;
+      onCreated?.(res.id);
+      } catch (err) {
+        setPhase("idle");
+        startedRef.current = false;
+        setErrorMsg(err instanceof NetworkError ? "无法连接到服务器" : err instanceof ApiError ? err.message : "创建失败，请重试");
+        return;
+      }
+    }
+
     try {
-      await startGeneration(projectId, "modules", selected);
+      await startGeneration(effectiveProjectId, "modules", selected);
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
-      streamGeneration(projectId, {
+      streamGeneration(effectiveProjectId, {
         signal: abortRef.current.signal,
         onProgress: (event: SSEProgressEvent) => {
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -447,6 +503,17 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
 
       {phase === "idle" && (
         <div className="space-y-6">
+          {isNew && (
+            <div className="rounded-xl border border-[var(--border)] p-6">
+              <h3 className="font-semibold mb-3">推演标题 *</h3>
+              <input
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-3 text-sm"
+                placeholder="例如：Dijkstra 最短路径算法"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
+          )}
           <div className="rounded-xl border border-[var(--border)] p-6">
             <h3 className="font-semibold mb-3">输入教学主题</h3>
             <p className="text-sm text-muted-foreground mb-4">
@@ -456,6 +523,8 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
               className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-3 text-sm resize-none"
               rows={3}
               placeholder="例如：Dijkstra 最短路径算法的工作原理和正确性证明"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
             />
           </div>
           <div className="rounded-xl border border-[var(--border)] p-4">

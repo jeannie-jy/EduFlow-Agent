@@ -65,7 +65,7 @@ export function SiteHeader({ isAuthenticated = false }: SiteHeaderProps) {
           ) : (
             <>
               <Link to="/login" className="site-header__login">登录</Link>
-              <Link to="/app/new" className="site-header__create">
+              <Link to="/app/project/_new" className="site-header__create">
                 开始创建 <ArrowUpRight aria-hidden="true" />
               </Link>
             </>
@@ -97,7 +97,7 @@ export function SiteHeader({ isAuthenticated = false }: SiteHeaderProps) {
             ) : (
               <>
                 <Link to="/login" onClick={closeMobileNavigation}>登录</Link>
-                <Link to="/app/new" className="site-header__mobile-create" onClick={closeMobileNavigation}>开始创建 <ArrowUpRight aria-hidden="true" /></Link>
+                <Link to="/app/project/_new" className="site-header__mobile-create" onClick={closeMobileNavigation}>开始创建 <ArrowUpRight aria-hidden="true" /></Link>
               </>
             )}
           </nav>

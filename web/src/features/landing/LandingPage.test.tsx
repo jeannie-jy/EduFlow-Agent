@@ -57,13 +57,13 @@ describe("LandingPage", () => {
     renderPage(<LandingPage />);
 
     expect(screen.getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
-    expect(screen.getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/new");
-    expect(screen.getByRole("link", { name: "创建新的推演" })).toHaveAttribute("href", "/app/new");
+    expect(screen.getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/project/_new");
+    expect(screen.getByRole("link", { name: "创建新的推演" })).toHaveAttribute("href", "/app/project/_new");
 
     await user.click(screen.getByRole("button", { name: "打开导航" }));
     const mobileNavigation = screen.getByRole("navigation", { name: "移动主导航" });
     expect(within(mobileNavigation).getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
-    expect(within(mobileNavigation).getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/new");
+    expect(within(mobileNavigation).getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/project/_new");
   });
 
   it("sends signed-in landing actions to the existing workspace while preserving the public demo", async () => {
@@ -97,7 +97,7 @@ describe("LandingPage", () => {
     expect(screen.getByRole("link", { name: "体验交互推演" }))
       .toHaveAttribute("href", "/explore/dijkstra");
     expect(screen.getByRole("link", { name: "创建新的推演" }))
-      .toHaveAttribute("href", "/app/new");
+      .toHaveAttribute("href", "/app/project/_new");
     expect(screen.getByText("从一个知识点出发，自动生成教学计划、逐帧动画、交互参数和可导出的教学内容。"))
       .toBeVisible();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
@@ -139,7 +139,7 @@ describe("LandingPage", () => {
     expect(audienceCards[0]).toHaveTextContent("学生：我想理解一个知识点");
     expect(audienceCards[1]).toHaveTextContent("教师：我想创建教学推演");
     expect(screen.getByRole("link", { name: "体验学生推演" })).toHaveAttribute("href", "/explore/dijkstra");
-    expect(screen.getByRole("link", { name: "开始创建推演" })).toHaveAttribute("href", "/app/new");
+    expect(screen.getByRole("link", { name: "开始创建推演" })).toHaveAttribute("href", "/app/project/_new");
     expect(screen.queryByText("助教")).not.toBeInTheDocument();
     expect(screen.queryByText("管理员")).not.toBeInTheDocument();
 
@@ -162,9 +162,9 @@ describe("LandingPage", () => {
     expect(screen.queryByRole("link", { name: "体验 冒泡排序 案例" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "体验 Round Robin 案例" })).not.toBeInTheDocument();
     expect(screen.getAllByText("公开案例筹备中")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: "基于 Dijkstra 模板创建" })).toHaveAttribute("href", "/app/new?template=Dijkstra");
-    expect(screen.getByRole("link", { name: "基于 冒泡排序 模板创建" })).toHaveAttribute("href", "/app/new?template=%E5%86%92%E6%B3%A1%E6%8E%92%E5%BA%8F");
-    expect(screen.getByRole("link", { name: "基于 Round Robin 模板创建" })).toHaveAttribute("href", "/app/new?template=Round%20Robin");
+    expect(screen.getByRole("link", { name: "基于 Dijkstra 模板创建" })).toHaveAttribute("href", "/app/project/_new?template=Dijkstra");
+    expect(screen.getByRole("link", { name: "基于 冒泡排序 模板创建" })).toHaveAttribute("href", "/app/project/_new?template=%E5%86%92%E6%B3%A1%E6%8E%92%E5%BA%8F");
+    expect(screen.getByRole("link", { name: "基于 Round Robin 模板创建" })).toHaveAttribute("href", "/app/project/_new?template=Round%20Robin");
 
     expect(Array.from(document.querySelectorAll("main > section")).map((section) => section.id || section.getAttribute("aria-labelledby"))).toEqual([
       "landing-hero-title",

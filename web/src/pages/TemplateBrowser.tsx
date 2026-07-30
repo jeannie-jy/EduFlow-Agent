@@ -181,7 +181,7 @@ export function TemplateBrowser() {
             return (
               <Link
                 key={id}
-                to={`/app/new?${templateParams.toString()}`}
+                to={`/app/project/_new?${templateParams.toString()}`}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all hover:shadow-md hover:border-indigo-200"
               >
                 <div className="flex items-start justify-between mb-2">
