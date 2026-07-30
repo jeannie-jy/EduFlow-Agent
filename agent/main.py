@@ -36,6 +36,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         import generators.card_generator      # noqa: F401
         import generators.frames_generator    # noqa: F401
         import generators.video_generator     # noqa: F401
+        import generators.quiz_generator      # noqa: F401
+        import generators.comparison_generator  # noqa: F401
         from generators.registry import list_generators
         logger.info("已注册 %d 个模块生成器", len(list_generators()))
     except Exception as exc:
