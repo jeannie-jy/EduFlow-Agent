@@ -1,0 +1,179 @@
+"""Manim Video Generator — 教学视频导出生成器。
+
+封装现有的 manim_llm_adapter 导出流程为 ModuleGenerator。
+依赖 frames 模块（必须先有 DSL 帧才能生成视频）。
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from .base import BaseGenerator
+from .registry import register_generator
+
+logger = logging.getLogger(__name__)
+
+
+VIDEO_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "job_id": {"type": "string"},
+        "status": {"type": "string"},
+        "config": {"type": "object"},
+        "message": {"type": "string"},
+    },
+    "required": ["status"],
+}
+
+
+class VideoGenerator(BaseGenerator):
+    """Manim 教学视频导出生成器。
+
+    依赖 frames 模块先完成 DSL 帧生成。
+    创建 Manim 渲染任务并返回 job_id 供前端轮询。
+    """
+
+    module_id = "video"
+    display_name = "教学视频"
+    description = "将教学推演导出为 Manim 动画视频（MP4），支持多种画质和字幕"
+    icon = "video"
+    category = "export"
+    priority = 5
+    version = "1.0.0"
+
+    temperature = 0.3
+    max_tokens = 16384
+
+    @property
+    def output_schema(self) -> dict[str, Any]:
+        return VIDEO_OUTPUT_SCHEMA
+
+    def get_system_prompt(self) -> str:
+        """视频导出不需要 LLM 提示词（通过 manim_llm_adapter 间接使用 LLM）。"""
+        return ""
+
+    async def generate(
+        self,
+        teaching_plan: dict[str, Any],
+        knowledge_graph: dict[str, Any],
+        user_input: str,
+        constraints: dict[str, Any],
+        project_id: str,
+    ) -> dict[str, Any]:
+        """创建 Manim 导出任务。
+
+        注意：此方法不直接渲染视频（渲染在 Worker/fallback 中异步进行）。
+        它创建 job 记录并返回 job_id。
+        """
+        import asyncio
+        import json
+        import uuid
+
+        # 1. 从 DB 获取当前 DSL（需要 frames 模块已经生成）
+        try:
+            from db.database import async_session_factory
+            from db.models import Project as ProjectModel, ExportJobModel
+            from api.deps import parse_project_id
+
+            async with async_session_factory() as db_session:
+                project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                if project is None:
+                    return {"status": "failed", "message": "项目不存在"}
+
+                if not project.dsl_snapshot or not project.dsl_snapshot.get("frames"):
+                    return {
+                        "status": "skipped",
+                        "message": "尚未生成推演帧，请先生成「交互推演」模块",
+                        "config": {},
+                    }
+
+                dsl = project.dsl_snapshot
+
+                # 2. 创建导出任务
+                job_id = uuid.uuid4()
+                config = {
+                    "quality": "h",
+                    "format": "mp4",
+                    "fps": 30,
+                    "include_subtitles": True,
+                }
+
+                export_job = ExportJobModel(
+                    id=job_id,
+                    project_id=parse_project_id(project_id),
+                    target="manim_video",
+                    status="queued",
+                    config=config,
+                )
+                db_session.add(export_job)
+                await db_session.flush()
+
+                # 3. 推送到 Redis 队列
+                try:
+                    import redis as redis_lib
+                    from config import get_settings
+
+                    settings = get_settings()
+                    r = redis_lib.from_url(
+                        settings.redis_url,
+                        decode_responses=True,
+                        socket_keepalive=True,
+                        health_check_interval=30,
+                    )
+                    r.ping()
+                    task = {
+                        "job_id": str(job_id),
+                        "dsl": dsl,
+                        "config": config,
+                    }
+                    r.rpush("manim:queue", json.dumps(task, ensure_ascii=False))
+                except Exception as redis_exc:
+                    logger.warning("Redis 入队失败，将使用 fallback: %s", redis_exc)
+
+                await db_session.commit()
+
+                # 4. 启动后台 fallback
+                from api.export import _fallback_export
+                asyncio.create_task(_fallback_export(str(job_id), dsl, config))
+
+                return {
+                    "job_id": str(job_id),
+                    "status": "queued",
+                    "config": config,
+                    "message": "视频导出任务已创建，正在渲染中...",
+                }
+
+        except Exception as exc:
+            logger.exception("VideoGenerator 失败")
+            return {
+                "status": "failed",
+                "message": f"视频导出失败: {exc}",
+                "config": {},
+            }
+
+    def validate(self, output: dict[str, Any]) -> list[dict[str, Any]]:
+        """校验视频导出结果。"""
+        issues: list[dict[str, Any]] = super().validate(output)
+
+        status = output.get("status", "")
+        if status == "failed":
+            issues.append({
+                "severity": "high",
+                "type": "export_failed",
+                "description": output.get("message", "视频导出失败"),
+            })
+        elif status == "skipped":
+            issues.append({
+                "severity": "medium",
+                "type": "no_frames",
+                "description": output.get("message", "跳过视频导出"),
+            })
+
+        return issues
+
+
+# ── 自动注册 ──────────────────────────────────────────────────
+
+register_generator(VideoGenerator())
+logger.info("VideoGenerator 已注册 (module_id=video)")

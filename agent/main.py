@@ -30,6 +30,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _setup_logging(settings)
     logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
+    # 注册模块生成器（Phase A: 模块化生成器架构）
+    try:
+        import generators.mindmap_generator   # noqa: F401 — 触发 register_generator
+        import generators.card_generator      # noqa: F401
+        import generators.frames_generator    # noqa: F401
+        import generators.video_generator     # noqa: F401
+        from generators.registry import list_generators
+        logger.info("已注册 %d 个模块生成器", len(list_generators()))
+    except Exception as exc:
+        logger.warning("模块生成器注册失败: %s", exc)
+
     # TODO: 初始化 DB 连接池、Redis 客户端
     yield
 
