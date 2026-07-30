@@ -40,142 +40,147 @@ async def dispatch_modules(
     """
     from generators.registry import get_generator
 
-    # ── 1. Knowledge Node：所有模块的共享前置 ──────────────────
-    kg = state.get("knowledge_graph")
-    if not kg or not kg.get("concepts"):
-        yield _sse("progress", {
-            "phase": "knowledge",
-            "message": "正在构建知识图谱...",
-            "pct": 5,
-        })
-        try:
-            from agents.nodes import knowledge_node
-            k_result = await knowledge_node(state)
-            state.update(k_result)
-            kg = state.get("knowledge_graph", {})
-            terms = state.get("key_terms", [])
-            yield _sse("progress", {
-                "phase": "knowledge",
-                "message": f"知识图谱构建完成 ({len(kg.get('concepts', []))} 概念, {len(terms)} 术语)",
-                "pct": 10,
-                "knowledge_graph": kg,
-            })
-        except Exception as exc:
-            logger.exception("Knowledge Node 失败，使用空知识图谱继续")
-            yield _sse("progress", {
-                "phase": "knowledge",
-                "message": f"知识图谱构建失败，将使用教学计划继续: {exc}",
-                "pct": 10,
-            })
-
-    # ── 2. 调度模块生成器 ─────────────────────────────────────
-    total = len(selected_modules)
     module_outputs: dict[str, Any] = {}
     module_errors: dict[str, str] = {}
+    total = len(selected_modules)
 
-    teaching_plan = state.get("teaching_plan", {})
-    user_input = state.get("user_input", "")
-    constraints = state.get("constraints", {})
-
-    for idx, mod_id in enumerate(selected_modules):
-        gen = get_generator(mod_id)
-        if gen is None:
-            logger.warning("未知模块 '%s'，跳过", mod_id)
-            module_errors[mod_id] = f"未知模块: {mod_id}"
-            yield _sse("module_error", {
-                "module_id": mod_id,
-                "error": f"未知模块: {mod_id}",
-                "pct": _pct_for_index(idx, total),
-            })
-            continue
-
-        # 模块开始
-        base_pct = _pct_for_index(idx, total)
-        yield _sse("module_start", {
-            "module_id": mod_id,
-            "display_name": gen.display_name,
-            "message": f"正在生成 {gen.display_name}...",
-            "pct": base_pct,
-        })
-
-        try:
-            output = await gen.generate(
-                teaching_plan=teaching_plan,
-                knowledge_graph=kg or {},
-                user_input=user_input,
-                constraints=constraints,
-                project_id=project_id,
-            )
-
-            # 校验
-            issues = gen.validate(output)
-            if issues:
-                errors_only = [i for i in issues if i.get("severity") == "error"]
-                warnings_only = [i for i in issues if i.get("severity") != "error"]
-                if errors_only:
-                    logger.warning("Module '%s' 校验发现 %d 错误: %s",
-                                   mod_id, len(errors_only),
-                                   "; ".join(i.get("description", "")[:60] for i in errors_only))
-                if warnings_only:
-                    logger.info("Module '%s' 校验发现 %d 警告", mod_id, len(warnings_only))
-
-            module_outputs[mod_id] = output
-            yield _sse("module_done", {
-                "module_id": mod_id,
-                "display_name": gen.display_name,
-                "output": output,
-                "issues": issues if issues else None,
-                "pct": _pct_for_index(idx + 1, total),
-            })
-            logger.info("Module '%s' 生成完成", mod_id)
-
-        except Exception as exc:
-            logger.exception("Module '%s' 生成失败", mod_id)
-            module_errors[mod_id] = str(exc)[:500]
-            yield _sse("module_error", {
-                "module_id": mod_id,
-                "display_name": gen.display_name,
-                "error": str(exc)[:500],
-                "pct": _pct_for_index(idx, total),
-            })
-
-    # ── 3. 持久化 ─────────────────────────────────────────────
     try:
-        from db.database import async_session_factory
-        from db.models import Project as ProjectModel
-        from services.project_persistence import merge_dsl_snapshot
-        from api.deps import parse_project_id
+            # ── 1. Knowledge Node：所有模块的共享前置 ──────────────────
+        kg = state.get("knowledge_graph")
+        if not kg or not kg.get("concepts"):
+            yield _sse("progress", {
+                "phase": "knowledge",
+                "message": "正在构建知识图谱...",
+                "pct": 5,
+            })
+            try:
+                from agents.nodes import knowledge_node
+                k_result = await knowledge_node(state)
+                state.update(k_result)
+                kg = state.get("knowledge_graph", {})
+                terms = state.get("key_terms", [])
+                yield _sse("progress", {
+                    "phase": "knowledge",
+                    "message": f"知识图谱构建完成 ({len(kg.get('concepts', []))} 概念, {len(terms)} 术语)",
+                    "pct": 10,
+                    "knowledge_graph": kg,
+                })
+            except Exception as exc:
+                logger.exception("Knowledge Node 失败，使用空知识图谱继续")
+                yield _sse("progress", {
+                    "phase": "knowledge",
+                    "message": f"知识图谱构建失败，部分模块可能降级生成（缺少知识上下文）",
+                    "pct": 10,
+                })
 
-        async with async_session_factory() as db_session:
-            project = await db_session.get(ProjectModel, parse_project_id(project_id))
-            if project is not None:
-                project.dsl_snapshot = merge_dsl_snapshot(
-                    project.dsl_snapshot,
-                    None,  # dsl=None，仅更新 module_outputs + knowledge_graph
+        # ── 2. 调度模块生成器 ─────────────────────────────────────
+
+        teaching_plan = state.get("teaching_plan", {})
+        user_input = state.get("user_input", "")
+        constraints = state.get("constraints", {})
+
+        for idx, mod_id in enumerate(selected_modules):
+            gen = get_generator(mod_id)
+            if gen is None:
+                logger.warning("未知模块 '%s'，跳过", mod_id)
+                module_errors[mod_id] = f"未知模块: {mod_id}"
+                yield _sse("module_error", {
+                    "module_id": mod_id,
+                    "error": f"未知模块: {mod_id}",
+                    "pct": _pct_for_index(idx, total),
+                })
+                continue
+
+            # 模块开始
+            base_pct = _pct_for_index(idx, total)
+            yield _sse("module_start", {
+                "module_id": mod_id,
+                "display_name": gen.display_name,
+                "message": f"正在生成 {gen.display_name}...",
+                "pct": base_pct,
+            })
+
+            try:
+                output = await gen.generate(
                     teaching_plan=teaching_plan,
-                    module_outputs=module_outputs,
-                    knowledge_graph=kg,
+                    knowledge_graph=kg or {},
+                    user_input=user_input,
+                    constraints=constraints,
+                    project_id=project_id,
                 )
-                # 仅当有 frames 模块产出时更新状态为 done
-                if "frames" in module_outputs and module_outputs["frames"]:
-                    project.status = "done"
-                elif module_outputs:
-                    project.status = "done"
-                await db_session.commit()
-                logger.info("模块产出已持久化: project=%s modules=%s",
-                            project_id, list(module_outputs.keys()))
-    except Exception as perr:
-        logger.warning("模块产出持久化失败: %s", perr)
 
-    # ── 4. 完成事件 ───────────────────────────────────────────
-    yield _sse("done", {
-        "phase": "done",
-        "pct": 100,
-        "module_outputs": module_outputs,
-        "module_errors": module_errors if module_errors else None,
-        "message": f"已完成 {len(module_outputs)}/{total} 个模块生成"
-            + (f"，{len(module_errors)} 个失败" if module_errors else ""),
-    })
+                # 校验
+                issues = gen.validate(output)
+                if issues:
+                    errors_only = [i for i in issues if i.get("severity") == "error"]
+                    warnings_only = [i for i in issues if i.get("severity") != "error"]
+                    if errors_only:
+                        logger.warning("Module '%s' 校验发现 %d 错误: %s",
+                                       mod_id, len(errors_only),
+                                       "; ".join(i.get("description", "")[:60] for i in errors_only))
+                    if warnings_only:
+                        logger.info("Module '%s' 校验发现 %d 警告", mod_id, len(warnings_only))
+
+                module_outputs[mod_id] = output
+                yield _sse("module_done", {
+                    "module_id": mod_id,
+                    "display_name": gen.display_name,
+                    "output": output,
+                    "issues": issues if issues else None,
+                    "pct": _pct_for_index(idx + 1, total),
+                })
+                logger.info("Module '%s' 生成完成", mod_id)
+
+            except Exception as exc:
+                logger.exception("Module '%s' 生成失败", mod_id)
+                module_errors[mod_id] = str(exc)[:500]
+                yield _sse("module_error", {
+                    "module_id": mod_id,
+                    "display_name": gen.display_name,
+                    "error": str(exc)[:500],
+                    "pct": _pct_for_index(idx, total),
+                })
+
+        # ── 3. 持久化 ─────────────────────────────────────────────
+        try:
+            from db.database import async_session_factory
+            from db.models import Project as ProjectModel
+            from services.project_persistence import merge_dsl_snapshot
+            from api.deps import parse_project_id
+
+            async with async_session_factory() as db_session:
+                project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                if project is not None:
+                    project.dsl_snapshot = merge_dsl_snapshot(
+                        project.dsl_snapshot,
+                        None,  # dsl=None，仅更新 module_outputs + knowledge_graph
+                        teaching_plan=teaching_plan,
+                        module_outputs=module_outputs,
+                        knowledge_graph=kg,
+                    )
+                    # 仅当有 frames 模块产出时更新状态为 done
+                    if "frames" in module_outputs and module_outputs["frames"]:
+                        project.status = "done"
+                    elif module_outputs:
+                        project.status = "done"
+                    await db_session.commit()
+                    logger.info("模块产出已持久化: project=%s modules=%s",
+                                project_id, list(module_outputs.keys()))
+        except Exception as perr:
+            logger.warning("模块产出持久化失败: %s", perr)
+
+    except Exception:
+        logger.exception("dispatch_modules 未处理异常")
+    finally:
+        # ── 4. 完成事件（始终发送，防止僵尸流）───────────────
+        yield _sse("done", {
+            "phase": "done",
+            "pct": 100,
+            "module_outputs": module_outputs,
+            "module_errors": module_errors if module_errors else None,
+            "message": f"已完成 {len(module_outputs)}/{total} 个模块生成"
+                + (f"，{len(module_errors)} 个失败" if module_errors else ""),
+        })
 
 
 # ── Helpers ─────────────────────────────────────────────────────

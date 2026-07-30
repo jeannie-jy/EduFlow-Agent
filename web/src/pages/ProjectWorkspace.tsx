@@ -647,6 +647,27 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
 
 
 
+      {phase === "reviewing" && (
+        <div className="space-y-6">
+          <div className="rounded-xl border p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Sparkles size={20} className="text-primary animate-pulse" />
+              <div>
+                <p className="font-medium">正在生成模块产物...</p>
+                <p className="text-sm text-muted-foreground">{message}</p>
+              </div>
+            </div>
+            <Progress value={progress} className="mb-4 h-2" />
+            {moduleStatuses.size > 0 && (
+              <ModuleProgress
+                modules={[...moduleStatuses.values()]}
+                totalPct={progress}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       {phase === "done" && (
         <div className="space-y-6">
           <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
