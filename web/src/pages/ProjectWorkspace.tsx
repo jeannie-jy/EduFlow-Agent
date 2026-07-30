@@ -78,17 +78,19 @@ import { VisualObjectRenderer } from "@/components/workbench/visual-objects/Visu
 import type { DSLVisualObject } from "@/components/workbench/simulation-model";
 import { ModuleSelector } from "@/features/modules/ModuleSelector";
 import { ModuleProgress, type ModuleProgressItem } from "@/features/modules/ModuleProgress";
+import { ModuleResultsPanel } from "@/features/modules/ModuleResultsPanel";
 
 // ============================================================================
 // Tab 类型
 // ============================================================================
 
-type ProjectTab = "plan" | "play" | "edit" | "export";
+type ProjectTab = "plan" | "play" | "edit" | "results" | "export";
 
 const TABS: { key: ProjectTab; label: string; icon: typeof Sparkles }[] = [
   { key: "plan", label: "计划", icon: Sparkles },
   { key: "play", label: "推演", icon: Play },
   { key: "edit", label: "编辑", icon: Pencil },
+  { key: "results", label: "成果", icon: FileText },
   { key: "export", label: "导出", icon: Film },
 ];
 
@@ -97,7 +99,7 @@ const STATUS_DEFAULT_TAB: Record<string, ProjectTab> = {
   planning: "plan",
   generating: "plan",
   reviewing: "play",
-  done: "play",
+  done: "results",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -139,10 +141,12 @@ export function ProjectWorkspace() {
   }, [projectId]);
 
   // 确定当前 Tab
-  const activeTab: ProjectTab =
-    TABS.some((t) => t.key === tabFromUrl) ? tabFromUrl
-    : project?.status ? (STATUS_DEFAULT_TAB[project.status] ?? "plan")
-    : "plan";
+  const activeTab: ProjectTab = (() => {
+    if (TABS.some((t) => t.key === tabFromUrl)) return tabFromUrl;
+    if (project?.status === "done" && !project?.module_outputs) return "play";
+    if (project?.status) return STATUS_DEFAULT_TAB[project.status] ?? "plan";
+    return "plan";
+  })();
 
   const setTab = (tab: ProjectTab) => {
     setSearchParams({ tab });
@@ -225,6 +229,12 @@ export function ProjectWorkspace() {
         )}
         {activeTab === "edit" && projectId && (
           <EditTabContent projectId={projectId} />
+        )}
+        {activeTab === "results" && projectId && (
+          <ModuleResultsPanel
+            project={project}
+            onNavigateTab={(tab) => setTab(tab as ProjectTab)}
+          />
         )}
         {activeTab === "export" && projectId && (
           <ExportTabContent projectId={projectId} />

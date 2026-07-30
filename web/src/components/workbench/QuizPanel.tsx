@@ -136,11 +136,11 @@ export function QuizPanel({ questions }: QuizPanelProps) {
       <div className="flex flex-col items-center gap-6 p-8">
         <Trophy size={64} className="text-yellow-500" />
         <div className="text-center">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">练习完成！</h3>
-          <p className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
+          <h3 className="text-xl font-bold text-[var(--foreground)]">练习完成！</h3>
+          <p className="mt-2 text-3xl font-bold text-[var(--interactive)]">
             {score.correct} / {score.total}
           </p>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-sm text-[var(--muted-foreground)]">
             正确率 {pct}%
           </p>
         </div>
@@ -153,7 +153,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
 
   if (!currentQuestion) {
     return (
-      <div className="flex items-center justify-center p-8 text-gray-400">
+      <div className="flex items-center justify-center p-8 text-[var(--muted-foreground)]">
         暂无练习题
       </div>
     );
@@ -164,12 +164,12 @@ export function QuizPanel({ questions }: QuizPanelProps) {
     <div className="flex flex-col gap-4 p-4">
       {/* 进度条 */}
       <div className="flex items-center gap-3">
-        <span className="text-sm text-gray-500 dark:text-gray-400">
+        <span className="text-sm text-[var(--muted-foreground)]">
           {currentIndex + 1} / {totalQuestions}
         </span>
-        <div className="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-gray-700">
+        <div className="h-1.5 flex-1 rounded-full bg-[var(--border)]/40">
           <div
-            className="h-full rounded-full bg-blue-500 transition-all"
+            className="h-full rounded-full bg-[var(--interactive)] transition-all"
             style={{ width: `${((currentIndex + 1) / totalQuestions) * 100}%` }}
           />
         </div>
@@ -193,7 +193,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
       </div>
 
       {/* 题干 */}
-      <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 leading-relaxed">
+      <h3 className="text-base font-semibold text-[var(--foreground)] leading-relaxed">
         {currentQuestion.question}
       </h3>
 
@@ -221,9 +221,9 @@ export function QuizPanel({ questions }: QuizPanelProps) {
               >
                 <span className={cn(
                   "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm font-medium",
-                  showCorrect && "border-green-500 bg-green-500 text-white",
-                  showWrong && "border-red-500 bg-red-500 text-white",
-                  isSelected && !hasAnswered && "border-blue-500 bg-blue-500 text-white",
+                  showCorrect && "border-green-500 bg-[var(--success)] text-white",
+                  showWrong && "border-red-500 bg-[var(--error)] text-white",
+                  isSelected && !hasAnswered && "border-blue-500 bg-[var(--interactive)] text-white",
                   !isSelected && !hasAnswered && "border-gray-300 text-gray-500 dark:border-gray-600",
                 )}>
                   {showCorrect ? <CheckCircle2 size={14} /> :
@@ -255,7 +255,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
                 onClick={() => handleSelect(val)}
                 disabled={hasAnswered}
                 variant={showCorrect ? "default" : showWrong ? "destructive" : isSelected ? "default" : "outline"}
-                className={cn("flex-1", showCorrect && "bg-green-500 hover:bg-green-500")}
+                className={cn("flex-1", showCorrect && "bg-[var(--success)] hover:bg-[var(--success)]")}
               >
                 {val === "true" ? "✓ 正确" : "✗ 错误"}
               </Button>
@@ -313,7 +313,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
             </Button>
           )}
           {hasAnswered && !revealed[currentQuestion.id] && (
-            <p className="text-xs text-gray-400">简答题不自动判分，点击查看参考答案</p>
+            <p className="text-xs text-[var(--muted-foreground)]">简答题不自动判分，点击查看参考答案</p>
           )}
         </div>
       )}
@@ -327,12 +327,12 @@ export function QuizPanel({ questions }: QuizPanelProps) {
           isCorrect === null && "border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950",
         )}>
           {isCorrect === true && (
-            <p className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-300">
+            <p className="flex items-center gap-2 text-sm font-medium text-[var(--success)]">
               <CheckCircle2 size={16} /> 回答正确！
             </p>
           )}
           {isCorrect === false && (
-            <p className="flex items-center gap-2 text-sm font-medium text-red-700 dark:text-red-300">
+            <p className="flex items-center gap-2 text-sm font-medium text-[var(--error)]">
               <XCircle size={16} /> 回答错误
               {currentQuestion.correct_answer && (
                 <span>（正确答案：{currentQuestion.correct_answer}）</span>
@@ -340,7 +340,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
             </p>
           )}
           {isCorrect === null && (
-            <p className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300">
+            <p className="flex items-center gap-2 text-sm font-medium text-[var(--interactive)]">
               <Lightbulb size={16} /> 已提交，请查看参考解析
             </p>
           )}
@@ -357,7 +357,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
           )}
 
           {revealed[currentQuestion.id] && (
-            <div className="mt-3 rounded-md bg-white/50 p-3 text-sm text-gray-700 dark:bg-gray-900/50 dark:text-gray-300">
+            <div className="mt-3 rounded-md bg-[var(--card)]/50 p-3 text-sm text-gray-700 dark:bg-[var(--secondary)]/50 dark:text-gray-300">
               <p className="font-medium mb-1 text-xs text-gray-500">📖 解析</p>
               {currentQuestion.explanation}
               {currentQuestion.expected_keywords && currentQuestion.expected_keywords.length > 0 && (

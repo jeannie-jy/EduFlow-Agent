@@ -62,7 +62,7 @@ export function LearningPathway({ data }: LearningPathwayProps) {
   const { current_topic, nodes, learning_tips, estimated_hours } = data;
 
   if (nodes.length === 0) {
-    return <div className="p-8 text-center text-gray-400">暂无学习路径数据</div>;
+    return <div className="p-8 text-center text-[var(--muted-foreground)]">暂无学习路径数据</div>;
   }
 
   const grouped = groupByType(nodes);
@@ -71,10 +71,10 @@ export function LearningPathway({ data }: LearningPathwayProps) {
   return (
     <div className="flex flex-col gap-5 p-4">
       <div>
-        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-bold text-[var(--foreground)]">
           📚 {current_topic}
         </h3>
-        <div className="mt-1 flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+        <div className="mt-1 flex items-center gap-3 text-sm text-[var(--muted-foreground)]">
           <span>{nodes.length} 个节点</span>
           {estimated_hours && (
             <span className="flex items-center gap-1">
@@ -99,10 +99,10 @@ export function LearningPathway({ data }: LearningPathwayProps) {
                     key={node.id}
                     className="rounded-lg border border-gray-200 p-3 dark:border-gray-700"
                   >
-                    <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    <p className="text-sm font-semibold text-[var(--foreground)]">
                       {node.name}
                     </p>
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                       {node.description}
                     </p>
                   </div>
@@ -122,11 +122,11 @@ export function LearningPathway({ data }: LearningPathwayProps) {
               const src = nodes.find((n) => n.id === edge.source);
               const tgt = nodes.find((n) => n.id === edge.target);
               return (
-                <span key={i} className="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+                <span key={i} className="inline-flex items-center gap-1 text-xs text-[var(--foreground)]/80">
                   {src?.name ?? edge.source}
                   <ArrowRight size={12} />
                   {tgt?.name ?? edge.target}
-                  <span className="text-gray-400">({edge.relation})</span>
+                  <span className="text-[var(--muted-foreground)]">({edge.relation})</span>
                 </span>
               );
             })}
@@ -137,8 +137,8 @@ export function LearningPathway({ data }: LearningPathwayProps) {
       {/* 学习建议 */}
       {learning_tips && learning_tips.length > 0 && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-          <p className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2">💡 学习建议</p>
-          <ul className="list-inside list-disc space-y-1 text-sm text-blue-700 dark:text-blue-300">
+          <p className="text-sm font-semibold text-[var(--interactive)] mb-2">💡 学习建议</p>
+          <ul className="list-inside list-disc space-y-1 text-sm text-[var(--interactive)]">
             {learning_tips.map((tip, i) => (
               <li key={i}>{tip}</li>
             ))}

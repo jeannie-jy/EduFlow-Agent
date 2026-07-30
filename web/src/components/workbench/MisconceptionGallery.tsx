@@ -36,14 +36,14 @@ const DIFFICULTY_LABELS: Record<number, string> = { 1: "初级", 2: "中级", 3:
 
 export function MisconceptionGallery({ items }: MisconceptionGalleryProps) {
   if (items.length === 0) {
-    return <div className="p-8 text-center text-gray-400">暂无误区数据</div>;
+    return <div className="p-8 text-center text-[var(--muted-foreground)]">暂无误区数据</div>;
   }
 
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
-        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">常见误区</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <h3 className="text-lg font-bold text-[var(--foreground)]">常见误区</h3>
+        <p className="text-sm text-[var(--muted-foreground)]">
           {items.length} 个常见误解，点击展开查看纠正
         </p>
       </div>
@@ -78,12 +78,12 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
           size={18}
           className={cn(
             "mt-0.5 shrink-0",
-            expanded ? "text-green-500" : "text-red-500",
+            expanded ? "text-[var(--success)]" : "text-[var(--error)]",
           )}
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <span className="text-sm font-semibold text-[var(--foreground)]">
               {item.concept}
             </span>
             <Badge className="text-xs">
@@ -91,24 +91,24 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
             </Badge>
           </div>
           <p className={cn(
-            "mt-1 text-sm line-through decoration-red-400",
-            expanded ? "text-gray-500 dark:text-gray-400" : "text-red-700 dark:text-red-300",
+            "mt-1 text-sm line-through decoration-[var(--error)]",
+            expanded ? "text-[var(--muted-foreground)]" : "text-[var(--error)]",
           )}>
             ❌ {item.misconception}
           </p>
         </div>
-        {expanded ? <ChevronUp size={16} className="shrink-0 text-gray-400" />
-                  : <ChevronDown size={16} className="shrink-0 text-gray-400" />}
+        {expanded ? <ChevronUp size={16} className="shrink-0 text-[var(--muted-foreground)]" />
+                  : <ChevronDown size={16} className="shrink-0 text-[var(--muted-foreground)]" />}
       </button>
 
       {/* 纠正内容（展开后可见） */}
       {expanded && (
-        <div className="border-t border-green-200 dark:border-green-800 px-4 pb-4 pt-3 space-y-3">
+        <div className="border-t border-[var(--success)]/30 px-4 pb-4 pt-3 space-y-3">
           <div>
-            <p className="flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
+            <p className="flex items-center gap-1 text-xs font-medium text-[var(--success)]">
               <Lightbulb size={14} /> 正确理解
             </p>
-            <p className="mt-1 text-sm text-green-800 dark:text-green-200">
+            <p className="mt-1 text-sm text-[var(--success)]">
               ✅ {item.correction}
             </p>
           </div>
@@ -116,7 +116,7 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
           {item.counter_example && (
             <div>
               <p className="text-xs font-medium text-gray-500">📎 反例说明</p>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              <p className="mt-1 text-sm text-[var(--foreground)]/80">
                 {item.counter_example}
               </p>
             </div>
@@ -125,7 +125,7 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
           {item.why_it_matters && (
             <div>
               <p className="text-xs font-medium text-gray-500">💡 为什么重要</p>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              <p className="mt-1 text-sm text-[var(--foreground)]/80">
                 {item.why_it_matters}
               </p>
             </div>

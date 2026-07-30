@@ -39,7 +39,7 @@ export function ComparisonView({ data }: ComparisonViewProps) {
 
   if (algorithms.length === 0) {
     return (
-      <div className="flex items-center justify-center p-8 text-gray-400">
+      <div className="flex items-center justify-center p-8 text-[var(--muted-foreground)]">
         暂无对比数据
       </div>
     );
@@ -49,8 +49,8 @@ export function ComparisonView({ data }: ComparisonViewProps) {
     <div className="flex flex-col gap-6 p-4">
       {/* 标题 */}
       <div>
-        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{topic}</h3>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <h3 className="text-lg font-bold text-[var(--foreground)]">{topic}</h3>
+        <p className="mt-1 text-sm text-[var(--muted-foreground)]">
           共对比 {algorithms.length} 个算法，{dimensions.length} 个维度
         </p>
       </div>
@@ -62,19 +62,19 @@ export function ComparisonView({ data }: ComparisonViewProps) {
             key={algo.name}
             className="rounded-lg border border-gray-200 p-4 dark:border-gray-700"
           >
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100">{algo.name}</h4>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{algo.description}</p>
+            <h4 className="font-semibold text-[var(--foreground)]">{algo.name}</h4>
+            <p className="mt-1 text-xs text-[var(--muted-foreground)]">{algo.description}</p>
 
             <div className="mt-3 space-y-2">
               <div>
-                <p className="text-xs font-medium text-green-600 dark:text-green-400">✅ 优点</p>
-                <ul className="mt-1 list-inside list-disc text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+                <p className="text-xs font-medium text-[var(--success)]">✅ 优点</p>
+                <ul className="mt-1 list-inside list-disc text-xs text-[var(--foreground)]/80 space-y-0.5">
                   {algo.pros.map((p, i) => <li key={i}>{p}</li>)}
                 </ul>
               </div>
               <div>
-                <p className="text-xs font-medium text-red-600 dark:text-red-400">⚠️ 缺点</p>
-                <ul className="mt-1 list-inside list-disc text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+                <p className="text-xs font-medium text-[var(--error)]">⚠️ 缺点</p>
+                <ul className="mt-1 list-inside list-disc text-xs text-[var(--foreground)]/80 space-y-0.5">
                   {algo.cons.map((c, i) => <li key={i}>{c}</li>)}
                 </ul>
               </div>
@@ -84,7 +84,7 @@ export function ComparisonView({ data }: ComparisonViewProps) {
       </div>
 
       {/* 对比表格 */}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+      <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
@@ -106,18 +106,18 @@ export function ComparisonView({ data }: ComparisonViewProps) {
               <tr
                 key={i}
                 className={cn(
-                  "border-b border-gray-100 dark:border-gray-800",
-                  i % 2 === 0 && "bg-white dark:bg-gray-900",
-                  i % 2 === 1 && "bg-gray-50/50 dark:bg-gray-800/50",
+                  "border-b border-[var(--border)]",
+                  i % 2 === 0 && "bg-[var(--card)]",
+                  i % 2 === 1 && "bg-[var(--secondary)]/50",
                 )}
               >
-                <td className="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-200">
+                <td className="px-4 py-2.5 font-medium text-[var(--foreground)]">
                   {row.dimension}
                 </td>
                 {algoNames.map((name) => (
                   <td
                     key={name}
-                    className="px-4 py-2.5 text-gray-600 dark:text-gray-400"
+                    className="px-4 py-2.5 text-[var(--foreground)]/80"
                   >
                     {row[name] ?? "—"}
                   </td>
@@ -130,10 +130,10 @@ export function ComparisonView({ data }: ComparisonViewProps) {
 
       {/* 场景分析 */}
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-        <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2">
+        <h4 className="text-sm font-semibold text-[var(--interactive)] mb-2">
           📋 选型建议
         </h4>
-        <p className="text-sm text-blue-700 dark:text-blue-300 leading-relaxed">
+        <p className="text-sm text-[var(--interactive)] leading-relaxed">
           {scenario_analysis}
         </p>
       </div>

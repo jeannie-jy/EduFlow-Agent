@@ -67,10 +67,10 @@ describe("ModuleCard", () => {
     render(
       <ModuleCard info={info} selected={true} onToggle={vi.fn()} />
     );
-    // The Check icon is an SVG - verify element exists as a button
     const button = screen.getByRole("button");
-    // Find check icon by its container (blue circle with checkmark)
-    expect(button.querySelector(".text-white")).toBeTruthy();
+    // Check icon rendered by lucide-react inside the selection marker
+    const svg = button.querySelector("svg.lucide-check");
+    expect(svg).toBeTruthy();
   });
 
   it("does not show check icon when not selected", () => {
@@ -80,8 +80,8 @@ describe("ModuleCard", () => {
     );
     const button = screen.getByRole("button");
     // No checkmark circle when unselected
-    const checkContainers = button.querySelectorAll(".rounded-full.bg-blue-500");
-    expect(checkContainers.length).toBe(0);
+    const checkIcons = button.querySelectorAll("svg.lucide-check");
+    expect(checkIcons.length).toBe(0);
   });
 
   it("calls onToggle when clicked", async () => {
@@ -136,9 +136,9 @@ describe("ModuleCard", () => {
     render(
       <ModuleCard info={info} selected={false} onToggle={vi.fn()} status="done" />
     );
-    // Green circle with check for done status
-    const doneMark = document.querySelector(".bg-green-500");
-    expect(doneMark).toBeTruthy();
+    // Check icon rendered for done state
+    const doneSvg = document.querySelector("svg.lucide-check");
+    expect(doneSvg).toBeTruthy();
   });
 
   it("shows error indicator when status is error", () => {
@@ -146,9 +146,8 @@ describe("ModuleCard", () => {
     render(
       <ModuleCard info={info} selected={false} onToggle={vi.fn()} status="error" />
     );
-    // Red circle for error
-    const errorMark = document.querySelector(".bg-red-500");
-    expect(errorMark).toBeTruthy();
+    // "!" character rendered for error
+    expect(screen.getByText("!")).toBeInTheDocument();
   });
 
   it("applies selected border styles when selected", () => {
@@ -157,8 +156,7 @@ describe("ModuleCard", () => {
       <ModuleCard info={info} selected={true} onToggle={vi.fn()} />
     );
     const button = screen.getByRole("button");
-    expect(button.className).toContain("border-blue-500");
-    expect(button.className).toContain("bg-blue-50");
+    expect(button.className).toContain("border-[var(--interactive)]");
   });
 
   it("applies default border styles when not selected", () => {
@@ -167,7 +165,7 @@ describe("ModuleCard", () => {
       <ModuleCard info={info} selected={false} onToggle={vi.fn()} />
     );
     const button = screen.getByRole("button");
-    expect(button.className).toContain("border-gray-200");
+    expect(button.className).toContain("border-[var(--border)]");
   });
 
   it("applies opacity when disabled", () => {

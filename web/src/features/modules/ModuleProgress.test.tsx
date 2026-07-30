@@ -127,7 +127,7 @@ describe("ModuleProgress", () => {
     const items = makeItems([{ id: "mod_a", name: "A", status: "done" }]);
     render(<ModuleProgress modules={items} totalPct={60} />);
     // Progress bar should have width: 60%
-    const bar = document.querySelector(".bg-blue-500");
+    const bar = document.querySelector(".bg-\\[var\\(--interactive\\)\\]");
     expect(bar).toBeTruthy();
     expect((bar as HTMLElement).style.width).toBe("60%");
   });

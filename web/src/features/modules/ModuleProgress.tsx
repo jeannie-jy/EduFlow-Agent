@@ -39,21 +39,21 @@ export function ModuleProgress({ modules, totalPct = 0 }: ModuleProgressProps) {
       {/* 总体进度 */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-600 dark:text-gray-400">
+          <span className="text-[var(--muted-foreground)]">
             {runningCount > 0
               ? `正在生成 (${doneCount}/${total})...`
               : errorCount > 0
                 ? `完成 (${doneCount} 成功, ${errorCount} 失败)`
                 : `已完成 ${doneCount}/${total} 个模块`}
           </span>
-          <span className="text-gray-500 dark:text-gray-400 tabular-nums">
+          <span className="text-[var(--muted-foreground)] tabular-nums">
             {totalPct}%
           </span>
         </div>
         {/* 进度条 */}
-        <div className="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+        <div className="h-2 overflow-hidden rounded-full bg-[var(--border)]/40">
           <div
-            className="h-full rounded-full bg-blue-500 transition-all duration-500"
+            className="h-full rounded-full bg-[var(--interactive)] transition-all duration-500"
             style={{ width: `${totalPct}%` }}
           />
         </div>

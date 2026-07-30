@@ -62,9 +62,10 @@ describe("ComparisonView", () => {
 
   it("renders all algorithm names", () => {
     render(<ComparisonView data={makeData()} />);
-    expect(screen.getByText("Quick Sort")).toBeInTheDocument();
-    expect(screen.getByText("Merge Sort")).toBeInTheDocument();
-    expect(screen.getByText("Bubble Sort")).toBeInTheDocument();
+    // Names appear in cards AND table headers, use getAllByText
+    expect(screen.getAllByText("Quick Sort").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Merge Sort").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Bubble Sort").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders algorithm descriptions", () => {
@@ -116,8 +117,9 @@ describe("ComparisonView", () => {
       ],
     });
     render(<ComparisonView data={data} />);
-    expect(screen.getByText("Quick Sort")).toBeInTheDocument();
-    expect(screen.getByText("Fast")).toBeInTheDocument();
+    expect(screen.getAllByText("Quick Sort").length).toBeGreaterThanOrEqual(1);
+    // "Fast" appears as description AND as a pro — both valid
+    expect(screen.getAllByText("Fast").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders pros and cons labels", () => {

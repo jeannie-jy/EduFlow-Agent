@@ -55,6 +55,8 @@ export interface ProjectDetailResponse {
   knowledge_graph: Record<string, unknown> | null;
   dsl: Record<string, unknown> | null;
   quality_report: Record<string, unknown> | null;
+  module_outputs: Record<string, unknown> | null;
+  selected_modules: string[] | null;
   frame_count: number;
   created_at: string;
   updated_at: string;

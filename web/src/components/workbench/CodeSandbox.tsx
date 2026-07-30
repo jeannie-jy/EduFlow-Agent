@@ -57,7 +57,7 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
   const [copied, setCopied] = useState(false);
 
   if (!data.starter_code && !data.full_solution) {
-    return <div className="p-8 text-center text-gray-400">暂无代码数据</div>;
+    return <div className="p-8 text-center text-[var(--muted-foreground)]">暂无代码数据</div>;
   }
 
   const handleCopy = async (code: string) => {
@@ -70,8 +70,8 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
     <div className="flex flex-col gap-4 p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Code2 size={20} className="text-blue-500" />
-          <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+          <Code2 size={20} className="text-[var(--interactive)]" />
+          <h3 className="text-lg font-bold text-[var(--foreground)]">
             {LANGUAGE_LABELS[data.language] ?? data.language} 代码
           </h3>
         </div>
@@ -93,7 +93,7 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
             <Copy size={12} /> {copied ? "已复制" : "复制"}
           </Button>
         </div>
-        <pre className="overflow-x-auto rounded-lg bg-gray-900 p-4 text-xs text-green-300 dark:bg-gray-950">
+        <pre className="overflow-x-auto rounded-lg bg-gray-900 p-4 text-xs text-[var(--success)] dark:bg-gray-950">
           <code>{data.starter_code}</code>
         </pre>
       </div>
@@ -102,13 +102,13 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
       <div>
         <button
           onClick={() => setShowSolution(!showSolution)}
-          className="flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+          className="flex items-center gap-1 text-xs font-medium text-[var(--interactive)] hover:underline"
         >
           {showSolution ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           {showSolution ? "隐藏" : "查看"}完整解答
         </button>
         {showSolution && (
-          <pre className="mt-2 overflow-x-auto rounded-lg bg-gray-900 p-4 text-xs text-green-300 dark:bg-gray-950">
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-gray-900 p-4 text-xs text-[var(--success)] dark:bg-gray-950">
             <code>{data.full_solution}</code>
           </pre>
         )}
@@ -124,18 +124,18 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
           <div className="flex flex-col gap-2">
             {data.test_cases.map((tc, i) => (
               <div key={i} className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{tc.name}</p>
+                <p className="text-sm font-semibold text-[var(--foreground)]">{tc.name}</p>
                 {tc.description && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{tc.description}</p>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">{tc.description}</p>
                 )}
                 <div className="mt-2 grid gap-1 text-xs">
                   <div className="flex gap-2">
-                    <span className="text-gray-400">输入:</span>
-                    <code className="text-blue-600 dark:text-blue-400">{JSON.stringify(tc.input)}</code>
+                    <span className="text-[var(--muted-foreground)]">输入:</span>
+                    <code className="text-[var(--interactive)]">{JSON.stringify(tc.input)}</code>
                   </div>
                   <div className="flex gap-2">
-                    <span className="text-gray-400">期望:</span>
-                    <code className="text-green-600 dark:text-green-400">{JSON.stringify(tc.expected_output)}</code>
+                    <span className="text-[var(--muted-foreground)]">期望:</span>
+                    <code className="text-[var(--success)]">{JSON.stringify(tc.expected_output)}</code>
                   </div>
                 </div>
               </div>
@@ -161,8 +161,8 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
       {/* Learning Notes */}
       {data.learning_notes && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-          <p className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-1">📖 学习笔记</p>
-          <p className="text-sm text-blue-700 dark:text-blue-300">{data.learning_notes}</p>
+          <p className="text-sm font-semibold text-[var(--interactive)] mb-1">📖 学习笔记</p>
+          <p className="text-sm text-[var(--interactive)]">{data.learning_notes}</p>
         </div>
       )}
     </div>
