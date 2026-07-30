@@ -297,15 +297,16 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone 
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, []);
 
-  const handleStart = useCallback(async () => {
+  const handleStart = useCallback(async (selected: string[]) => {
     if (startedRef.current) return;
     startedRef.current = true;
+    setSelectedModules(selected);
     setPhase("connecting");
     setErrorMsg(null);
     resetTimeout();
 
     try {
-      await startGeneration(projectId, "modules", selectedModules);
+      await startGeneration(projectId, "modules", selected);
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 

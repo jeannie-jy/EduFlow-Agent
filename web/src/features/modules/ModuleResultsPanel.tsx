@@ -137,6 +137,7 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
                     <Pencil size={12} /> 编辑
                   </Button>
                 )}
+              </div>
               <Badge variant="outline" className="text-xs text-[var(--muted-foreground)]">
                 已生成
               </Badge>
