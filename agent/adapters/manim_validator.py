@@ -20,6 +20,8 @@ _INVALID_LEXERS = frozenset({
     "sql", "xml", "html", "css", "yaml", "json", "markdown",
 })
 
+_MANIM_NAMES_CACHE: frozenset[str] | None = None
+
 # ═══════════════════════════════════════════════════════════════
 # 核心校验入口
 # ═══════════════════════════════════════════════════════════════
@@ -184,18 +186,17 @@ def _get_manim_public_names() -> frozenset[str]:
     结果缓存在模块级别避免重复导入。
     """
     global _MANIM_NAMES_CACHE
-    import sys as _sys
-    if "_MANIM_NAMES_CACHE" in _sys.modules[__name__].__dict__:
-        return _sys.modules[__name__].__dict__["_MANIM_NAMES_CACHE"]
+    if _MANIM_NAMES_CACHE is not None:
+        return _MANIM_NAMES_CACHE
     try:
         import manim as _manim
         if hasattr(_manim, "__all__"):
-            _sys.modules[__name__].__dict__["_MANIM_NAMES_CACHE"] = frozenset(n for n in _manim.__all__ if isinstance(n, str))
+            _MANIM_NAMES_CACHE = frozenset(n for n in _manim.__all__ if isinstance(n, str))
         else:
-            _sys.modules[__name__].__dict__["_MANIM_NAMES_CACHE"] = frozenset(n for n in dir(_manim) if n[0].isupper() or n.startswith("__"))
+            _MANIM_NAMES_CACHE = frozenset(n for n in dir(_manim) if n[0].isupper() or n.startswith("__"))
     except Exception:
-        _sys.modules[__name__].__dict__["_MANIM_NAMES_CACHE"] = frozenset()
-    return _sys.modules[__name__].__dict__["_MANIM_NAMES_CACHE"]
+        _MANIM_NAMES_CACHE = frozenset()
+    return _MANIM_NAMES_CACHE
 
 
 def _collect_defined_names(tree: ast.AST) -> set[str]:
