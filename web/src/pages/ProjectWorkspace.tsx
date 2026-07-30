@@ -259,7 +259,7 @@ export function ProjectWorkspace() {
 // Tab: 计划（原 PlanConfirm）
 // ============================================================================
 
-type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "module_selection" | "module_generating" | "generating" | "validating" | "done" | "error";
+type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "reviewing" | "done" | "error";
 
 function PlanTabContent({ projectId, project, onDone }: {
   projectId: string;
@@ -371,68 +371,12 @@ function PlanTabContent({ projectId, project, onDone }: {
   const handleApprove = useCallback(async () => {
     if (!projectId) return;
     try {
-      const res = await approvePlan(projectId);
-      // Phase A: 如果后端返回了 available_modules（新模块选择流程）
-      if (res.available_modules && res.available_modules.length > 0) {
-        setAvailableModules(res.available_modules);
-        setPhase("module_selection");
-        setProgress(30);
-        setMessage("请选择要生成的模块");
-        return;
-      }
-      // 旧流程: 连接 resume 流从中断点继续
-      setPhase("connecting");
+      const res = await approvePlan(projectId, selectedModules.length > 0 ? selectedModules : undefined);
+      setPhase("reviewing");
       setErrorMsg(null);
-      resetTimeout();
       abortRef.current?.abort();
       abortRef.current = new AbortController();
       streamFromUrl(res.stream_url, {
-        signal: abortRef.current.signal,
-        onProgress: (event: SSEProgressEvent) => {
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          setProgress(event.pct);
-          setMessage(event.message);
-          if (event.phase === "generating" || event.phase === "knowledge" || event.phase === "coder") {
-            setPhase("generating");
-          } else if (event.phase === "validating" || event.phase === "quality") {
-            setPhase("validating");
-          }
-        },
-        onDone: (event) => {
-          setPhase("done");
-          setProgress(100);
-          setMessage("生成完成");
-          if (event.quality_report) setQualityReport(event.quality_report as Record<string, unknown>);
-          onDone();
-        },
-        onError: (event) => {
-          setPhase("error");
-          setErrorMsg(event.message || "生成过程中发生错误");
-        },
-      });
-    } catch (err) {
-      setPhase("error");
-      if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
-      else setErrorMsg(err instanceof Error ? err.message : "批准失败");
-    }
-  }, [projectId, onDone, resetTimeout]);
-
-  // ── 模块选择 ─────────────────────────────────────────────────
-  const handleStartModules = useCallback(async (selectedIds: string[]) => {
-    if (!projectId || selectedIds.length === 0) return;
-    try {
-      await startModuleGeneration(projectId, selectedIds);
-      setPhase("module_generating");
-      setErrorMsg(null);
-      const statuses = new Map<string, ModuleProgressItem>();
-      for (const id of selectedIds) {
-        const mod = availableModules.find((m) => m.module_id === id);
-        statuses.set(id, { module_id: id, display_name: mod?.display_name ?? id, status: "pending" });
-      }
-      setModuleStatuses(new Map(statuses));
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
-      streamModuleGeneration(projectId, {
         signal: abortRef.current.signal,
         onModuleStart: (event: SSEModuleStartEvent) => {
           setModuleStatuses((prev) => {
@@ -463,6 +407,10 @@ function PlanTabContent({ projectId, project, onDone }: {
           });
           setProgress(event.pct);
         },
+        onProgress: (event: SSEProgressEvent) => {
+          setProgress(event.pct);
+          setMessage(event.message);
+        },
         onDone: (event) => {
           setPhase("done");
           setProgress(100);
@@ -478,9 +426,9 @@ function PlanTabContent({ projectId, project, onDone }: {
     } catch (err) {
       setPhase("error");
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
-      else setErrorMsg(err instanceof Error ? err.message : "模块生成启动失败");
+      else setErrorMsg(err instanceof Error ? err.message : "批准失败");
     }
-  }, [projectId, availableModules, onDone]);
+  }, [projectId, onDone, selectedModules]);
 
   const handleReject = useCallback(async (feedback: string) => {
     if (!projectId) return;
@@ -588,6 +536,21 @@ function PlanTabContent({ projectId, project, onDone }: {
             </pre>
           </div>
 
+          {/* 反悔机制：可折叠模块微调 */}
+          <details className="rounded-xl border border-[var(--border)] p-4">
+            <summary className="cursor-pointer text-sm text-[var(--muted-foreground)]">
+              已选 {selectedModules.length} 个模块 · 点击调整
+            </summary>
+            <div className="mt-3">
+              <ModuleSelector
+                modules={availableModules}
+                onStart={(ids) => setSelectedModules(ids)}
+                defaultSelected={selectedModules}
+                showStartButton={false}
+              />
+            </div>
+          </details>
+
           <div className="flex gap-3 justify-center">
             <Button
               onClick={handleApprove}
@@ -609,42 +572,9 @@ function PlanTabContent({ projectId, project, onDone }: {
         </div>
       )}
 
-      {phase === "module_selection" && (
-        <div className="space-y-6">
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-6">
-            <div className="flex items-start gap-3">
-              <Sparkles size={20} className="text-blue-500 mt-0.5 shrink-0" />
-              <div>
-                <h3 className="font-semibold text-blue-800 mb-1">教学计划已批准</h3>
-                <p className="text-sm text-blue-600">请选择需要生成的产出形式</p>
-              </div>
-            </div>
-          </div>
-          <ModuleSelector
-            modules={availableModules}
-            onStart={handleStartModules}
-          />
-        </div>
-      )}
 
-      {phase === "module_generating" && (
-        <div className="space-y-6">
-          <div className="rounded-xl border p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Sparkles size={20} className="text-primary animate-pulse" />
-              <div>
-                <p className="font-medium">正在生成模块...</p>
-                <p className="text-sm text-muted-foreground">{message}</p>
-              </div>
-            </div>
-            <Progress value={progress} className="mb-4" />
-            <ModuleProgress
-              modules={[...moduleStatuses.values()]}
-              totalPct={progress}
-            />
-          </div>
-        </div>
-      )}
+
+
 
       {phase === "done" && (
         <div className="space-y-6">
