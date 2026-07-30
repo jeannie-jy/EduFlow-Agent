@@ -342,7 +342,10 @@ function PlanTabContent({ projectId, project, onDone }: {
   }, [projectId, onDone]);
 
   useEffect(() => {
-    return () => { abortRef.current?.a  // ── 审批操作 ─────────────────────────────────────────────────
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
+  // ── 审批操作 ─────────────────────────────────────────────────
   const handleApprove = useCallback(async () => {
     if (!projectId) return;
     try {
