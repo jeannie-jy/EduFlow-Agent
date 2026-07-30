@@ -82,7 +82,7 @@ export function NewProject() {
         difficulty,
         constraints: materialIds.length > 0 ? { material_ids: materialIds } : {},
       });
-      navigate(`/app/project/${res.id}?tab=plan`);
+      navigate(`/app/project/${res.id}`);
     } catch (err) {
       if (err instanceof NetworkError) {
         setError("无法连接到服务器，请检查后端是否已启动");

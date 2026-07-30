@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams, Link } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -114,9 +114,6 @@ function getString(value: unknown, fallback: string) {
 
 export function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const tabFromUrl = (searchParams.get("tab") ?? "") as string;
   const [project, setProject] = useState<ProjectDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState<StepId>("select");
