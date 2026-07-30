@@ -14,11 +14,25 @@ import { connectSSE, type SSEOptions } from "./sse";
 // ============================================================================
 
 export interface GenerateRequest {
-  action?: "full" | "plan_only" | "frames_only";
+  action?: "full" | "plan_only" | "modules";
 }
 
 export interface GenerateResponse {
   stream_url: string;
+}
+
+export interface ModuleInfo {
+  module_id: string;
+  display_name: string;
+  description: string;
+  icon: string;
+  category: "visual" | "interactive" | "export";
+  priority: number;
+  estimated_seconds: number;
+}
+
+export interface ModuleSelectRequest {
+  modules: string[];
 }
 
 export interface RegenerateRequest {
@@ -62,8 +76,39 @@ export function regenerate(projectId: string, scope: RegenerateRequest["scope"])
   } as RegenerateRequest);
 }
 
+// ============================================================================
+// 模块生成（Phase A）
+// ============================================================================
+
+/** 获取可用模块列表 */
+export function listModules(projectId: string) {
+  return api.get<{ modules: ModuleInfo[] }>(`/projects/${projectId}/generate/modules`);
+}
+
+/** 提交模块选择，开始生成 */
+export function startModuleGeneration(projectId: string, modules: string[]) {
+  return api.post<GenerateResponse>(`/projects/${projectId}/generate/modules`, {
+    modules,
+  } as ModuleSelectRequest);
+}
+
+/** 连接模块生成 SSE 流 */
+export function streamModuleGeneration(projectId: string, options: SSEOptions) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+  return connectSSE(`${baseUrl}/projects/${projectId}/generate/modules/stream`, options);
+}
+
+// ============================================================================
+// HITL 审批
+// ============================================================================
+
+export interface ApprovePlanResponse {
+  stream_url: string;
+  available_modules?: ModuleInfo[];
+}
+
 export function approvePlan(projectId: string) {
-  return api.post<GenerateResponse>(`/projects/${projectId}/generate/approve`);
+  return api.post<ApprovePlanResponse>(`/projects/${projectId}/generate/approve`);
 }
 
 export function rejectPlan(projectId: string, feedback: string) {

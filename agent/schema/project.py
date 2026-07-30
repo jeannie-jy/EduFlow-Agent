@@ -151,12 +151,37 @@ class RecomputeRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     """启动生成请求。"""
-    action: str = "full"     # full / plan_only / frames_only
+    action: str = "full"     # full / plan_only / modules
 
 
 class GenerateResponse(BaseModel):
     """启动生成响应。"""
     stream_url: str
+
+
+class ModuleSelectRequest(BaseModel):
+    """模块选择请求。"""
+    modules: list[str] = Field(
+        ...,
+        min_length=1,
+        description="要生成的模块 ID 列表，如 ['mindmap', 'cards', 'frames']",
+    )
+
+
+class ModuleInfo(BaseModel):
+    """模块元信息（供前端模块选择器渲染）。"""
+    module_id: str
+    display_name: str
+    description: str = ""
+    icon: str = "box"
+    category: str = "visual"
+    priority: int = 5
+    estimated_seconds: int = 30
+
+
+class ModuleListResponse(BaseModel):
+    """可用模块列表响应。"""
+    modules: list[ModuleInfo] = Field(default_factory=list)
 
 
 class RegenerateRequest(BaseModel):
@@ -172,6 +197,7 @@ class RejectPlanRequest(BaseModel):
 class ApprovePlanResponse(BaseModel):
     """批准教学计划响应。"""
     stream_url: str
+    available_modules: list[ModuleInfo] = Field(default_factory=list)
 
 
 # ============================================================================

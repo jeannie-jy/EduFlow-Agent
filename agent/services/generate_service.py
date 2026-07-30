@@ -653,6 +653,72 @@ async def run_generation_sync(
     return result
 
 
+async def run_module_generation_stream(
+    project_id: str,
+    selected_modules: list[str],
+) -> AsyncGenerator[str, None]:
+    """执行模块化生成流程并以 SSE 格式流式推送进度。
+
+    从 DB 读取已审批的 teaching_plan / knowledge_graph 等上下文，
+    通过 ModuleDispatcher 调度用户选中的模块生成器。
+
+    Args:
+        project_id: 项目 ID
+        selected_modules: 用户选中的模块 ID 列表
+    """
+    from agents.state import AgentState
+    from services.module_dispatcher import dispatch_modules
+    from db.database import async_session_factory
+    from db.models import Project as ProjectModel
+    from api.deps import parse_project_id
+
+    # 从 DB 读取上下文
+    async with async_session_factory() as db_session:
+        project = await db_session.get(ProjectModel, parse_project_id(project_id))
+        if project is None:
+            yield _sse_event("error", {
+                "phase": "error",
+                "message": "项目不存在",
+                "error_code": "NOT_FOUND",
+            })
+            return
+
+        snap = project.dsl_snapshot or {}
+        teaching_plan = snap.get("teaching_plan", {})
+        knowledge_graph = snap.get("knowledge_graph", {})
+        user_input = snap.get("input_content", snap.get("topic", ""))
+        constraints = snap.get("constraints", {})
+
+    state: AgentState = {
+        "user_input": user_input,
+        "project_id": project_id,
+        "teaching_plan": teaching_plan,
+        "knowledge_graph": knowledge_graph,
+        "constraints": constraints,
+        "selected_modules": selected_modules,
+        "status": "generating",
+        "reflection_count": 0,
+        "revision_history": [],
+    }
+
+    logger.info("模块生成流启动: project=%s modules=%s", project_id, selected_modules)
+
+    try:
+        async for chunk in dispatch_modules(
+            project_id=project_id,
+            state=state,
+            selected_modules=selected_modules,
+        ):
+            yield chunk
+    except Exception:
+        logger.exception("模块生成流程失败")
+        yield _sse_event("error", {
+            "phase": "error",
+            "message": "模块生成流程内部错误，请稍后重试",
+            "error_code": "MODULE_GENERATION_FAILED",
+        })
+
+
 # ── Helpers ─────────────────────────────────────────────────
 
 

@@ -42,6 +42,34 @@ export interface SSEErrorEvent {
   details?: unknown;
 }
 
+/** 模块生成开始事件 */
+export interface SSEModuleStartEvent {
+  phase: "module_start";
+  module_id: string;
+  display_name: string;
+  message: string;
+  pct: number;
+}
+
+/** 模块生成完成事件 */
+export interface SSEModuleDoneEvent {
+  phase: "module_done";
+  module_id: string;
+  display_name: string;
+  output: unknown;
+  issues?: unknown[] | null;
+  pct: number;
+}
+
+/** 模块生成错误事件（非阻塞） */
+export interface SSEModuleErrorEvent {
+  phase: "module_error";
+  module_id: string;
+  display_name?: string;
+  error: string;
+  pct: number;
+}
+
 export type SSEConnectionState = "connecting" | "open" | "closed" | "error";
 
 export interface SSEConnection {
@@ -54,6 +82,9 @@ export interface SSEOptions {
   onWaitingApproval?: (event: SSEWaitingApprovalEvent) => void;
   onDone?: (event: SSEDoneEvent) => void;
   onError?: (event: SSEErrorEvent) => void;
+  onModuleStart?: (event: SSEModuleStartEvent) => void;
+  onModuleDone?: (event: SSEModuleDoneEvent) => void;
+  onModuleError?: (event: SSEModuleErrorEvent) => void;
   signal?: AbortSignal;
   /** 自动重连间隔（毫秒），默认 3000，设为 0 禁用 */
   reconnectMs?: number;
@@ -163,6 +194,12 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
       onError?.(data as unknown as SSEErrorEvent);
     } else if (phase === "waiting_approval") {
       onWaitingApproval?.(data as unknown as SSEWaitingApprovalEvent);
+    } else if (phase === "module_start") {
+      onModuleStart?.(data as unknown as SSEModuleStartEvent);
+    } else if (phase === "module_done") {
+      onModuleDone?.(data as unknown as SSEModuleDoneEvent);
+    } else if (phase === "module_error") {
+      onModuleError?.(data as unknown as SSEModuleErrorEvent);
     } else {
       onProgress?.(data as SSEProgressEvent);
     }
