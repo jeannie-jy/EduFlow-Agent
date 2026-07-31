@@ -107,6 +107,7 @@ async def dispatch_modules(
                     user_input=user_input,
                     constraints=constraints,
                     project_id=project_id,
+                    existing_outputs=module_outputs,
                 )
 
                 # 校验

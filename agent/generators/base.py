@@ -62,6 +62,7 @@ class BaseGenerator(ABC):
         user_input: str,
         constraints: dict[str, Any],
         project_id: str,
+        existing_outputs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """默认生成实现：调用 LLM 并校验结果。
 

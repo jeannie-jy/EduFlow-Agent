@@ -60,36 +60,53 @@ class VideoGenerator(BaseGenerator):
         user_input: str,
         constraints: dict[str, Any],
         project_id: str,
+        existing_outputs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """创建 Manim 导出任务。
 
-        注意：此方法不直接渲染视频（渲染在 Worker/fallback 中异步进行）。
-        它创建 job 记录并返回 job_id。
+        从 existing_outputs["frames"] 读取帧数据（内存获取，避免 DB 时序问题）。
+        创建 job 记录并返回 job_id。
         """
         import asyncio
         import json
         import uuid
 
-        # 1. 从 DB 获取当前 DSL（需要 frames 模块已经生成）
+        # 1. 从已生成的模块产出中获取 frames（内存优先于 DB）
+        dsl = None
+        if existing_outputs and "frames" in existing_outputs:
+            frames_output = existing_outputs["frames"]
+            # frames_generator 产出完整 DSL 对象 → 直接使用
+            if isinstance(frames_output, dict) and frames_output.get("frames"):
+                dsl = frames_output
+
+        # 回退到 DB 读取（向后兼容）
+        if dsl is None:
+            try:
+                from db.database import async_session_factory
+                from db.models import Project as ProjectModel
+                from api.deps import parse_project_id
+
+                async with async_session_factory() as db_session:
+                    project = await db_session.get(ProjectModel, parse_project_id(project_id))
+                    if project and project.dsl_snapshot and project.dsl_snapshot.get("frames"):
+                        dsl = project.dsl_snapshot
+            except Exception:
+                pass
+
+        if dsl is None:
+            return {
+                "status": "skipped",
+                "message": "尚未生成推演脚本（frames），请先生成推演脚本模块",
+                "config": {},
+            }
+
+        # 2. 创建导出任务
         try:
             from db.database import async_session_factory
             from db.models import Project as ProjectModel, ExportJobModel
             from api.deps import parse_project_id
 
             async with async_session_factory() as db_session:
-                project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                if project is None:
-                    return {"status": "failed", "message": "项目不存在"}
-
-                if not project.dsl_snapshot or not project.dsl_snapshot.get("frames"):
-                    return {
-                        "status": "skipped",
-                        "message": "尚未生成推演帧，请先生成「交互推演」模块",
-                        "config": {},
-                    }
-
-                dsl = project.dsl_snapshot
-
                 # 2. 创建导出任务
                 job_id = uuid.uuid4()
                 config = {
