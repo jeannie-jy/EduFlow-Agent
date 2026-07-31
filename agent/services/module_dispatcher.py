@@ -42,7 +42,9 @@ async def dispatch_modules(
 
     module_outputs: dict[str, Any] = {}
     module_errors: dict[str, str] = {}
-    # video 依赖 frames → 强制排在最后
+    # video 依赖 frames → 自动补充 frames + 强制排在最后
+    if "video" in selected_modules and "frames" not in selected_modules:
+        selected_modules = list(selected_modules) + ["frames"]
     if "video" in selected_modules:
         selected_modules = [m for m in selected_modules if m != "video"] + ["video"]
     total = len(selected_modules)

@@ -96,7 +96,7 @@ class VideoGenerator(BaseGenerator):
         if dsl is None:
             return {
                 "status": "skipped",
-                "message": "尚未生成推演脚本（frames），请先生成推演脚本模块",
+                "message": "缺少推演脚本（frames），已自动补充。如重复出现请重试",
                 "config": {},
             }
 
