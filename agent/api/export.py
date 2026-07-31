@@ -205,6 +205,10 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
     except Exception as exc:
         logger.exception("导出失败: job=%s", job_id)
         _update_redis_status(r, job_id, "failed", error=str(exc)[:500])
+        try:
+            asyncio.run(_update_db_export_status(job_id, "failed", error_log=str(exc)[:500]))
+        except Exception:
+            pass
 
 
 async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:

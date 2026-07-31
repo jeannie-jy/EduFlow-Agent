@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { regenerateModule } from "@/services/generate";
+import { getExportStatus } from "@/services/export";
 import type { SSEModuleDoneEvent, SSEModuleErrorEvent } from "@/services/sse";
 
 // ============================================================================
@@ -152,6 +153,74 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
           </section>
         );
       })}
+    </div>
+  );
+}
+
+// ============================================================================
+// VideoExportCard — 视频导出状态轮询 + 播放器
+// ============================================================================
+
+function VideoExportCard({ value }: { value: Record<string, unknown> }) {
+  const jobId = value?.job_id as string | undefined;
+  const [status, setStatus] = useState<string>(value?.status as string ?? "queued");
+  const [progress, setProgress] = useState<number>(0);
+  const [artifacts, setArtifacts] = useState<Array<{ type: string; url: string; size_bytes: number }> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await getExportStatus(jobId);
+        if (cancelled) return;
+        setStatus(res.status);
+        setProgress(res.progress_pct ?? 0);
+        if (res.status === "completed" && res.artifacts) setArtifacts(res.artifacts);
+        if (res.status === "failed") setError(res.error_log ?? "渲染失败");
+        if (res.status === "completed" || res.status === "failed") return;
+      } catch { /* ignore */ }
+      if (!cancelled) setTimeout(poll, 3000);
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [jobId]);
+
+  const mp4 = artifacts?.find((a) => a.type === "mp4");
+
+  return (
+    <div className="p-4 space-y-3">
+      {status === "queued" || status === "rendering" ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--interactive)] border-t-transparent" />
+            <span className="text-sm text-[var(--muted-foreground)]">
+              {status === "queued" ? "排队中..." : `渲染中 ${progress}%`}
+            </span>
+          </div>
+          <Progress value={progress} className="h-1.5" />
+        </div>
+      ) : status === "completed" && mp4 ? (
+        <div className="space-y-3">
+          <video controls className="w-full rounded-lg" src={mp4.url}>
+            您的浏览器不支持视频播放
+          </video>
+          {artifacts && artifacts.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {artifacts.map((a) => (
+                <a key={a.type} href={a.url} download className="inline-flex items-center gap-1 rounded border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--interactive)] hover:bg-[var(--interactive)]/10">
+                  {a.type === "mp4" ? "下载视频" : a.type === "manim_source" ? "源码" : "字幕"}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : status === "failed" ? (
+        <p className="text-sm text-[var(--error)]">{error ?? "导出失败"}</p>
+      ) : (
+        <p className="text-sm text-[var(--muted-foreground)]">未知状态: {status}</p>
+      )}
     </div>
   );
 }
@@ -300,21 +369,7 @@ function renderModuleContent(
     case "frames":
       return <FramesPlayer value={value as Record<string, unknown>} />;
     case "video":
-      return (
-        <div className="p-4 text-sm text-[var(--muted-foreground)]">
-          视频导出任务：{(value as Record<string, unknown>)?.status as string ?? "未知"}
-          {(value as Record<string, unknown>)?.job_id && (
-            <span className="ml-2 font-mono text-xs">
-              {(value as Record<string, unknown>).job_id as string}
-            </span>
-          )}
-          {onNavigateTab && (
-            <Button variant="link" size="sm" className="ml-3" onClick={() => onNavigateTab("export")}>
-              前往导出
-            </Button>
-          )}
-        </div>
-      );
+      return <VideoExportCard value={value as Record<string, unknown>} />;
     case "comparison":
       return <ComparisonView data={value as ComparisonData} />;
     case "misconception":
