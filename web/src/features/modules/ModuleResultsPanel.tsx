@@ -184,17 +184,14 @@ function renderModuleContent(
       );
     case "quiz":
       return <QuizPanel questions={(value as { questions?: QuizQuestion[] })?.questions ?? []} />;
-    case "frames":
+    case "frames": {
+      const frameCount = (value as Record<string, unknown>)?.frames ? ((value as Record<string, unknown>).frames as unknown[])?.length ?? 0 : 0;
       return (
         <div className="p-4 text-sm text-[var(--muted-foreground)]">
-          <span>推演帧已生成。帧数：{(value as Record<string, unknown>)?.frames ? ((value as Record<string, unknown>).frames as unknown[])?.length ?? 0 : 0}</span>
-          {onNavigateTab && (
-            <Button variant="link" size="sm" className="ml-3" onClick={() => onNavigateTab("play")}>
-              前往推演
-            </Button>
-          )}
+          <span>推演帧已生成，共 {frameCount} 帧</span>
         </div>
       );
+    }
     case "video":
       return (
         <div className="p-4 text-sm text-[var(--muted-foreground)]">

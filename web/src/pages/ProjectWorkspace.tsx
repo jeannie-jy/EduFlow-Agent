@@ -218,11 +218,6 @@ export function ProjectWorkspace() {
         {projectId && currentStep === "results" && (
           <ModuleResultsPanel
             project={project}
-            onNavigateTab={(tab) => {
-              if (tab === "play" || tab === "export") {
-                // 保留旧 Tab 兼容：在 results 中内嵌显示
-              }
-            }}
           />
         )}
         {projectId && currentStep !== "results" && (
@@ -460,7 +455,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           setProgress(event.pct);
           setMessage(event.message);
         },
-        onDone: (event) => {
+        onDone: async (event) => {
           setPhase("done");
           setProgress(100);
           setMessage("模块生成完成");
