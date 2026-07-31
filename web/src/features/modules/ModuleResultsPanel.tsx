@@ -166,7 +166,7 @@ function renderModuleContent(
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {((value as { cards?: Array<Record<string, unknown>> })?.cards ?? []).map(
             (card, i) => (
-              <KnowledgeCard key={card.id as string ?? i} data={{
+              <KnowledgeCard key={card.id as string ?? i} card={{
                 id: card.id as string,
                 title: card.title as string,
                 definition: card.definition as string,
