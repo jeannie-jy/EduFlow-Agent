@@ -178,7 +178,7 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
 
         _update_redis_status(r, job_id, "rendering", progress=50)
 
-        real_mp4, render_error = _render_manim_sync(
+        real_mp4 = _render_manim_sync(
             str(scripts_dir / "main.py"), export_dir, scripts_dir,
             quality_flags.get(quality, "-qh"), fps, str(mp4_output_dir),
         )
@@ -199,12 +199,12 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
             _update_redis_status(r, job_id, "completed", progress=100, artifacts=artifacts)
             logger.info("导出完成: job=%s | artifacts=%d", job_id, len(artifacts))
         else:
-            _update_redis_status(r, job_id, "failed", error=render_error or "渲染完成但未找到 MP4 产物")
+            _update_redis_status(r, job_id, "failed", error="渲染完成但未找到 MP4 产物，请检查 Manim 脚本")
             try:
-                asyncio.run(_update_db_export_status(job_id, "failed", error_log=render_error or "未找到 MP4"))
+                asyncio.run(_update_db_export_status(job_id, "failed", error_log="未找到 MP4 产物"))
             except Exception:
                 pass
-            logger.warning("渲染未产出 MP4: job=%s | error=%s", job_id, render_error)
+            logger.warning("渲染未产出 MP4: job=%s", job_id)
 
     except Exception as exc:
         logger.exception("导出失败: job=%s", job_id)
