@@ -19,10 +19,11 @@ import type { QuizQuestion } from "@/components/workbench/QuizPanel";
 import { KnowledgeCard } from "@/components/workbench/KnowledgeCard";
 import { MindmapView } from "@/components/workbench/MindmapView";
 import type { ProjectDetailResponse } from "@/services/projects";
-import { useState, useCallback } from "react";
-import { RefreshCw, Pencil } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { RefreshCw, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { regenerateModule } from "@/services/generate";
 import type { SSEModuleDoneEvent, SSEModuleErrorEvent } from "@/services/sse";
 
@@ -153,6 +154,116 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
   );
 }
 
+// ============================================================================
+// FramesPlayer — 交互式逐帧播放器
+// ============================================================================
+
+function FramesPlayer({ value }: { value: Record<string, unknown> }) {
+  const frames = (value?.frames ?? []) as Array<Record<string, unknown>>;
+  const frameCount = frames.length;
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  // 帧数变化时复位（重生成后防止越界）
+  useEffect(() => { setActiveIndex(0); }, [frameCount]);
+
+  if (frameCount === 0) {
+    return <p className="p-4 text-sm text-[var(--muted-foreground)]">推演帧已生成，暂无帧数据</p>;
+  }
+
+  const frame = frames[activeIndex];
+  const vos = (frame?.visual_objects ?? []) as Array<Record<string, unknown>>;
+  const voTypes = [...new Set(vos.map((v) => String(v?.type ?? "")).values())].filter(Boolean);
+  const isFirst = activeIndex === 0;
+  const isLast = activeIndex === frameCount - 1;
+  const pct = Math.round(((activeIndex + 1) / frameCount) * 100);
+
+  // 键盘导航
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowLeft" && !isFirst) setActiveIndex((i) => i - 1);
+    if (e.key === "ArrowRight" && !isLast) setActiveIndex((i) => i + 1);
+  };
+
+  return (
+    <div className="space-y-4 p-4" tabIndex={0} onKeyDown={handleKeyDown}>
+      {/* 进度条 + 序号 */}
+      <div className="flex items-center gap-3">
+        <Progress value={pct} className="h-1.5 flex-1" />
+        <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums shrink-0">
+          {activeIndex + 1} / {frameCount}
+        </span>
+      </div>
+
+      {/* 当前帧内容 */}
+      <div className="rounded-lg border border-[var(--border)] p-4 space-y-3">
+        {/* 帧编号 + 标题 */}
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums">
+            {String(frame?.frame_id ?? `f_${activeIndex + 1}`)}
+          </span>
+          <span className="text-sm font-semibold text-[var(--foreground)]">
+            {String(frame?.title ?? "")}
+          </span>
+        </div>
+
+        {/* 学习目标 */}
+        {frame?.learning_goal && (
+          <p className="text-xs text-[var(--muted-foreground)]">
+            目标：{String(frame.learning_goal)}
+          </p>
+        )}
+
+        {/* 旁白 */}
+        {frame?.narration && (
+          <p className="text-sm leading-relaxed text-[var(--foreground)]/80">
+            {String(frame.narration)}
+          </p>
+        )}
+
+        {/* 可视化对象类型标签 */}
+        {voTypes.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {voTypes.map((t) => (
+              <span
+                key={t}
+                className="inline-block rounded border border-[var(--border)] bg-[var(--secondary)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 导航按钮 */}
+      <div className="flex items-center justify-between">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={isFirst}
+          onClick={() => setActiveIndex((i) => i - 1)}
+          className="gap-1"
+        >
+          <ChevronLeft size={14} />
+          上一帧
+        </Button>
+        <span className="text-xs text-[var(--muted-foreground)] tabular-nums">
+          {pct}%
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={isLast}
+          onClick={() => setActiveIndex((i) => i + 1)}
+          className="gap-1"
+        >
+          下一帧
+          <ChevronRight size={14} />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function renderModuleContent(
   moduleId: string,
   value: unknown,
@@ -184,57 +295,8 @@ function renderModuleContent(
       );
     case "quiz":
       return <QuizPanel questions={(value as { questions?: QuizQuestion[] })?.questions ?? []} />;
-    case "frames": {
-      const dsl = value as Record<string, unknown>;
-      const frames = (dsl?.frames ?? []) as Array<Record<string, unknown>>;
-      const frameCount = frames.length;
-      return (
-        <div className="p-4 space-y-3">
-          <p className="text-sm text-[var(--muted-foreground)]">
-            推演帧已生成，共 {frameCount} 帧
-          </p>
-          {frames.length > 0 && (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {frames.map((f, i) => {
-                const vos = (f?.visual_objects ?? []) as Array<Record<string, unknown>>;
-                const voTypes = [...new Set(vos.map((v) => String(v?.type ?? ""))).values()].filter(Boolean);
-                return (
-                  <div key={String(f?.frame_id ?? i)} className="rounded-lg border border-[var(--border)] p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums">
-                        {String(f?.frame_id ?? `f_${i + 1}`)}
-                      </span>
-                      <span className="text-sm font-medium text-[var(--foreground)]">
-                        {String(f?.title ?? "")}
-                      </span>
-                      {f?.learning_goal && (
-                        <span className="text-xs text-[var(--muted-foreground)]">
-                          — {String(f.learning_goal)}
-                        </span>
-                      )}
-                    </div>
-                    {f?.narration && (
-                      <p className="mt-1 text-xs leading-relaxed text-[var(--foreground)]/80">
-                        {String(f.narration)}
-                      </p>
-                    )}
-                    {voTypes.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {voTypes.map((t) => (
-                          <span key={t} className="inline-block rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]">
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      );
-    }
+    case "frames":
+      return <FramesPlayer value={value as Record<string, unknown>} />;
     case "video":
       return (
         <div className="p-4 text-sm text-[var(--muted-foreground)]">
