@@ -16,13 +16,24 @@ export interface SandboxRendererProps {
 // ============================================================================
 
 function buildHtml(code: string): string {
-  // 剥离 LLM 可能残留的 markdown 代码块包裹
-  const cleanCode = code
+  // 1. 剥离 markdown 代码块包裹
+  let cleanCode = code
     .replace(/```[a-z]*\n?/gi, "")
     .replace(/```/g, "")
     .trim();
 
-  // 如果代码以 "const InteractiveDemo" 开头，确保最后调用 render
+  // 2. 剥离 import 语句（LLM 可能违反禁止令）
+  cleanCode = cleanCode
+    .replace(/^import\s+.*?;\s*$/gm, "")
+    .replace(/^export\s+default\s+/gm, "const InteractiveDemo = ");
+
+  // 3. 确保组件导出名为 InteractiveDemo
+  if (!cleanCode.includes("InteractiveDemo")) {
+    // 如果 LLM 用了别的名字，尝试包裹
+    cleanCode = `const InteractiveDemo = () => {\n  return ${cleanCode};\n};`;
+  }
+
+  // 4. 挂载逻辑
   const renderCall = `
 const __root = ReactDOM.createRoot(document.getElementById('root'));
 __root.render(React.createElement(InteractiveDemo));
@@ -72,11 +83,11 @@ __root.render(React.createElement(InteractiveDemo));
 </head>
 <body>
   <div id="root"></div>
+  <div id="sandbox-error" style="display:none;padding:16px;color:var(--error);font-size:14px;font-family:monospace;white-space:pre-wrap;background:var(--card);border:1px solid var(--error);border-radius:8px;margin:8px;"></div>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script>
-    // 全局 Hook 别名 — LLM 生成的代码可直接使用
     window.useState = React.useState;
     window.useEffect = React.useEffect;
     window.useRef = React.useRef;
@@ -84,8 +95,14 @@ __root.render(React.createElement(InteractiveDemo));
     window.useMemo = React.useMemo;
   </script>
   <script type="text/babel" data-type="module">
-    ${cleanCode}
-    ${renderCall}
+    try {
+      ${cleanCode}
+      ${renderCall}
+    } catch(e) {
+      document.getElementById('sandbox-error').style.display = 'block';
+      document.getElementById('sandbox-error').textContent = 'Sandbox Error: ' + e.message + '\\n\\n' + e.stack;
+      document.getElementById('root').style.display = 'none';
+    }
   </script>
 </body>
 </html>`;
