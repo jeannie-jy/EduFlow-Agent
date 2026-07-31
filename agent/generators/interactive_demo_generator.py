@@ -90,8 +90,8 @@ class InteractiveDemoGenerator(BaseGenerator):
     """
 
     module_id = "interactive_demo"
-    display_name = "交互演示"
-    description = "生成可交互的算法可视化 React 组件（沙箱渲染）"
+    display_name = "交互推演"
+    description = "生成可交互的算法可视化 React 组件（沙箱渲染），支持逐步操作和实时反馈"
     icon = "play"
     category = "interactive"
     priority = 10

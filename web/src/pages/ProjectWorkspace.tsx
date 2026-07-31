@@ -300,7 +300,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         setAvailableModules([
           { module_id: "mindmap", display_name: "思维导图", description: "知识概念导图", icon: "mindmap", category: "visual", priority: 1, estimated_seconds: 15 },
           { module_id: "cards", display_name: "知识卡片", description: "概念知识卡片", icon: "cards", category: "visual", priority: 2, estimated_seconds: 20 },
-          { module_id: "frames", display_name: "交互推演", description: "逐帧交互演示", icon: "play", category: "interactive", priority: 3, estimated_seconds: 40 },
+          { module_id: "frames", display_name: "推演脚本", description: "结构化教学推演脚本（逐帧DSL）", icon: "play", category: "interactive", priority: 3, estimated_seconds: 40 },
           { module_id: "quiz", display_name: "小练习", description: "自动生成练习题", icon: "quiz", category: "interactive", priority: 4, estimated_seconds: 25 },
           { module_id: "comparison", display_name: "算法对比", description: "多维度算法对比", icon: "comparison", category: "visual", priority: 5, estimated_seconds: 30 },
         ]);

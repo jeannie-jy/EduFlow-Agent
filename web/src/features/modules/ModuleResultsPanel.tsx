@@ -35,13 +35,13 @@ import type { SSEModuleDoneEvent, SSEModuleErrorEvent } from "@/services/sse";
 const SECTION_CONFIG: Record<string, { title: string; icon: typeof Brain; order: number }> = {
   mindmap:   { title: "思维导图",   icon: Brain,          order: 1 },
   cards:     { title: "知识卡片",   icon: Layers,         order: 2 },
-  frames:    { title: "交互推演",   icon: Play,           order: 3 },
+  frames:    { title: "推演脚本",   icon: Play,           order: 3 },
   quiz:      { title: "小练习",     icon: PenTool,        order: 4 },
   comparison:{ title: "算法对比",   icon: GitCompare,     order: 5 },
   misconception: { title: "常见误区", icon: AlertTriangle, order: 6 },
   pathway:   { title: "学习路径",   icon: Map,            order: 7 },
   sandbox:   { title: "代码沙箱",   icon: Code2,          order: 8 },
-  interactive_demo: { title: "交互演示", icon: Play,     order: 9 },
+  interactive_demo: { title: "交互推演", icon: Play,     order: 9 },
   video:     { title: "教学视频",   icon: Video,          order: 10 },
 };
 

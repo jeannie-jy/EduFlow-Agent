@@ -109,8 +109,8 @@ class FramesGenerator(BaseGenerator):
     """
 
     module_id = "frames"
-    display_name = "交互推演"
-    description = "生成逐帧交互式教学推演，支持在 Web 端播放、调速和参数调节"
+    display_name = "推演脚本"
+    description = "生成结构化教学推演脚本（逐帧 DSL），可用于视频导出和步骤预览"
     icon = "play"
     category = "interactive"
     priority = 3
