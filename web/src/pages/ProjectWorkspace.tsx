@@ -285,7 +285,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const [availableModules, setAvailableModules] = useState<ModuleInfo[]>([]);
   const [selectedModules, setSelectedModules] = useState<string[]>([
     "mindmap", "cards", "frames", "quiz", "comparison", "misconception", "pathway", "sandbox",
-    "interactive_demo",
+    "interactive_demo", "video",
   ]);
   const [moduleStatuses, setModuleStatuses] = useState<Map<string, ModuleProgressItem>>(new Map());
   const [moduleOutputs, setModuleOutputs] = useState<Record<string, unknown>>({});
