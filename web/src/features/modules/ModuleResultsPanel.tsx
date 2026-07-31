@@ -196,7 +196,8 @@ function renderModuleContent(
           {frames.length > 0 && (
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {frames.map((f, i) => {
-                const vos = (f?.visual_objects ?? []) as unknown[];
+                const vos = (f?.visual_objects ?? []) as Array<Record<string, unknown>>;
+                const voTypes = [...new Set(vos.map((v) => String(v?.type ?? ""))).values()].filter(Boolean);
                 return (
                   <div key={String(f?.frame_id ?? i)} className="rounded-lg border border-[var(--border)] p-3">
                     <div className="flex items-center gap-2">
@@ -206,20 +207,26 @@ function renderModuleContent(
                       <span className="text-sm font-medium text-[var(--foreground)]">
                         {String(f?.title ?? "")}
                       </span>
-                    </div>
-                    {f?.narration && (
-                      <p className="mt-1 text-xs text-[var(--muted-foreground)] line-clamp-2">
-                        {String(f.narration)}
-                      </p>
-                    )}
-                    <div className="mt-2 flex items-center gap-3 text-xs text-[var(--muted-foreground)]">
-                      <span>{vos.length} 个可视化对象</span>
-                      {(f?.state_snapshot && typeof f.state_snapshot === "object") && (
-                        <span className="font-mono">
-                          {(Object.keys(f.state_snapshot as Record<string, unknown>)).length} 个状态项
+                      {f?.learning_goal && (
+                        <span className="text-xs text-[var(--muted-foreground)]">
+                          — {String(f.learning_goal)}
                         </span>
                       )}
                     </div>
+                    {f?.narration && (
+                      <p className="mt-1 text-xs leading-relaxed text-[var(--foreground)]/80">
+                        {String(f.narration)}
+                      </p>
+                    )}
+                    {voTypes.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {voTypes.map((t) => (
+                          <span key={t} className="inline-block rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
