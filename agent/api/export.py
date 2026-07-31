@@ -178,7 +178,7 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
 
         _update_redis_status(r, job_id, "rendering", progress=50)
 
-        real_mp4 = _render_manim_sync(
+        real_mp4, render_error = _render_manim_sync(
             str(scripts_dir / "main.py"), export_dir, scripts_dir,
             quality_flags.get(quality, "-qh"), fps, str(mp4_output_dir),
         )
