@@ -407,11 +407,19 @@ async def get_export_status(
     if jid:
         job = await session.get(ExportJobModel, jid)
         if job:
+            db_artifacts = job.artifacts or []
             return {
                 "job_id": str(job.id),
                 "status": job.status,
                 "progress_pct": job.progress_pct or 0,
-                "artifacts": job.artifacts,
+                "artifacts": [
+                    {
+                        "type": a.get("type", "mp4"),
+                        "url": f"/api/export/{job_id}/download/{a.get('filename', 'output.mp4')}",
+                        "size_bytes": a.get("size_bytes", 0),
+                    }
+                    for a in db_artifacts
+                ],
                 "error_log": job.error_log,
                 "duration_ms": None,
                 "total_frames": None,
