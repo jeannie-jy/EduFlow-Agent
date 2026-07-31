@@ -185,10 +185,46 @@ function renderModuleContent(
     case "quiz":
       return <QuizPanel questions={(value as { questions?: QuizQuestion[] })?.questions ?? []} />;
     case "frames": {
-      const frameCount = (value as Record<string, unknown>)?.frames ? ((value as Record<string, unknown>).frames as unknown[])?.length ?? 0 : 0;
+      const dsl = value as Record<string, unknown>;
+      const frames = (dsl?.frames ?? []) as Array<Record<string, unknown>>;
+      const frameCount = frames.length;
       return (
-        <div className="p-4 text-sm text-[var(--muted-foreground)]">
-          <span>推演帧已生成，共 {frameCount} 帧</span>
+        <div className="p-4 space-y-3">
+          <p className="text-sm text-[var(--muted-foreground)]">
+            推演帧已生成，共 {frameCount} 帧
+          </p>
+          {frames.length > 0 && (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {frames.map((f, i) => {
+                const vos = (f?.visual_objects ?? []) as unknown[];
+                return (
+                  <div key={String(f?.frame_id ?? i)} className="rounded-lg border border-[var(--border)] p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums">
+                        {String(f?.frame_id ?? `f_${i + 1}`)}
+                      </span>
+                      <span className="text-sm font-medium text-[var(--foreground)]">
+                        {String(f?.title ?? "")}
+                      </span>
+                    </div>
+                    {f?.narration && (
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)] line-clamp-2">
+                        {String(f.narration)}
+                      </p>
+                    )}
+                    <div className="mt-2 flex items-center gap-3 text-xs text-[var(--muted-foreground)]">
+                      <span>{vos.length} 个可视化对象</span>
+                      {(f?.state_snapshot && typeof f.state_snapshot === "object") && (
+                        <span className="font-mono">
+                          {(Object.keys(f.state_snapshot as Record<string, unknown>)).length} 个状态项
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     }
