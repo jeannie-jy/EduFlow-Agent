@@ -180,7 +180,10 @@ function VideoExportCard({ value }: { value: Record<string, unknown> }) {
         if (res.status === "completed" && res.artifacts) setArtifacts(res.artifacts);
         if (res.status === "failed") setError(res.error_log ?? "渲染失败");
         if (res.status === "completed" || res.status === "failed") return;
-      } catch { /* ignore */ }
+      } catch {
+        if (!cancelled) setTimeout(poll, 5000);
+        return;
+      }
       if (!cancelled) setTimeout(poll, 3000);
     };
     poll();
@@ -191,7 +194,9 @@ function VideoExportCard({ value }: { value: Record<string, unknown> }) {
 
   return (
     <div className="p-4 space-y-3">
-      {status === "queued" || status === "rendering" ? (
+      {!jobId ? (
+        <p className="text-sm text-[var(--muted-foreground)]">缺少导出任务 ID</p>
+      ) : status === "queued" || status === "rendering" ? (
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--interactive)] border-t-transparent" />
@@ -210,16 +215,21 @@ function VideoExportCard({ value }: { value: Record<string, unknown> }) {
             <div className="flex flex-wrap gap-2">
               {artifacts.map((a) => (
                 <a key={a.type} href={a.url} download className="inline-flex items-center gap-1 rounded border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--interactive)] hover:bg-[var(--interactive)]/10">
-                  {a.type === "mp4" ? "下载视频" : a.type === "manim_source" ? "源码" : "字幕"}
+                  {a.type === "mp4" ? "下载视频" : a.type === "manim_source" ? "Manim 源码" : "字幕 SRT"}
                 </a>
               ))}
             </div>
           )}
         </div>
       ) : status === "failed" ? (
-        <p className="text-sm text-[var(--error)]">{error ?? "导出失败"}</p>
+        <div className="space-y-2">
+          <p className="text-sm text-[var(--error)] font-medium">导出失败</p>
+          <p className="text-xs text-[var(--muted-foreground)]">{error ?? "未知错误"}</p>
+        </div>
+      ) : status === "skipped" ? (
+        <p className="text-sm text-[var(--muted-foreground)]">{value?.message as string ?? "已跳过"}</p>
       ) : (
-        <p className="text-sm text-[var(--muted-foreground)]">未知状态: {status}</p>
+        <p className="text-sm text-[var(--muted-foreground)]">状态: {status} — {value?.message as string ?? ""}</p>
       )}
     </div>
   );
