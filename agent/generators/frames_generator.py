@@ -133,6 +133,7 @@ class FramesGenerator(BaseGenerator):
         user_input: str,
         constraints: dict[str, Any],
         project_id: str,
+        existing_outputs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """生成 DSL 帧，完全复现 coder_node 的行为。
 
