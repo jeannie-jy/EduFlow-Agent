@@ -152,6 +152,8 @@ async def get_project(
         "knowledge_graph": project.dsl_snapshot.get("knowledge_graph") if project.dsl_snapshot else None,
         "dsl": project.dsl_snapshot,
         "quality_report": project.dsl_snapshot.get("quality_report") if project.dsl_snapshot else None,
+        "module_outputs": project.dsl_snapshot.get("module_outputs") if project.dsl_snapshot else None,
+        "selected_modules": project.dsl_snapshot.get("selected_modules") if project.dsl_snapshot else None,
         "frame_count": frame_count,
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
