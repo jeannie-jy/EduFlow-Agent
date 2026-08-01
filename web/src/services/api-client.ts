@@ -7,7 +7,7 @@
  * - 超时控制
  */
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // ============================================================================
 // 类型
@@ -108,7 +108,7 @@ async function request<T>(
 }
 
 function buildUrl(path: string, params?: Record<string, string>): string {
-  const url = new URL(BASE_URL + path);
+  const url = new URL(BASE_URL + path, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null) url.searchParams.set(k, v);
