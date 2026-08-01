@@ -28,10 +28,12 @@ def _get_llm_client() -> AsyncOpenAI:
     """获取 LLM 客户端单例。"""
     global _llm_client
     if _llm_client is None:
+        import httpx
         settings = get_settings()
         _llm_client = AsyncOpenAI(
             base_url=settings.llm_endpoint,
             api_key=settings.llm_api_key,
+            timeout=httpx.Timeout(120.0, connect=10.0),
         )
     return _llm_client
 
