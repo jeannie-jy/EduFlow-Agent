@@ -4,7 +4,7 @@
 
 - Docker 24+
 - Docker Compose v2
-- 4 GB 可用内存（含 Manim Worker）
+- 4 GB 可用内存（Manim 渲染在 API 进程内执行，1080p 导出较吃内存）
 - 10 GB 磁盘空间
 
 ## 快速启动
@@ -42,18 +42,20 @@ docker compose up -d
 
 # 4. 验证
 curl http://localhost:8000/api/health
-# → {"status":"ok","version":"0.1.0"}
+# → {"status":"ok","version":"0.8.0"}
 ```
 
 ## 服务架构
 
 | 服务 | 端口 | 说明 |
 |------|------|------|
-| `agent-api` | 8000 | FastAPI 后端（Agent 编排 + REST API） |
+| `agent-api` | 8000 | FastAPI 后端（Agent 编排 + REST API，启动时自动执行数据库迁移） |
 | `postgres` | 5432 | PostgreSQL 16 + pgvector（向量检索） |
-| `redis` | 6379 | Redis 7（任务队列 + 缓存） |
-| `manim-worker` | — | Manim 视频渲染 Worker（Docker 隔离） |
-| `minio` | 9000, 9001 | MinIO 对象存储（上传文件 + 渲染产物） |
+| `redis` | 6379 | Redis 7（导出状态追踪 + 缓存） |
+| `minio` | 9000, 9001 | MinIO 对象存储（**预留**，S3 客户端尚未接入，产物存本地磁盘） |
+
+> 注：Manim 视频渲染在 `agent-api` 进程内执行（单轨导出，无独立 Worker 容器），
+> 并发导出上限为 2（线程池），详见根 README「已知局限与后续可拓展思路」。
 
 ## 常用命令
 
@@ -97,9 +99,8 @@ cd web
 npm install
 npm run dev
 
-# 手动启动 Manim Worker（需要先 pip install manim redis）
-cd agent
-python workers/render_worker.py
+# 视频导出为进程内渲染（无独立 Worker），首次导出前确认已安装 manim 与 ffmpeg
+pip install -r requirements.txt   # 已含 manim>=0.20
 
 # 知识库初始化
 cd agent
@@ -133,8 +134,10 @@ python -m scripts.seed_embeddings
 # 数据库连接失败
 docker compose logs postgres
 
-# Manim 渲染失败
-docker compose logs manim-worker
+# 视频导出失败
+# 1) 查看 agent-api 日志（导出为进程内渲染）
+docker compose logs -f agent-api
+# 2) 渲染错误完整记录在对应任务目录：data/exports/{job_id}/render_error.log
 
 # 后端 Agent 错误
 docker compose logs agent-api

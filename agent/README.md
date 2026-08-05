@@ -145,9 +145,16 @@ agent/
 | `POST` | `/api/projects` | 创建项目 |
 | `GET` | `/api/projects` | 项目列表（分页 + 状态筛选） |
 | `GET` | `/api/projects/{id}` | 项目详情（含完整 DSL） |
-| `POST` | `/api/projects/{id}/generate` | 启动生成流程 |
+| `POST` | `/api/projects/{id}/generate` | 启动生成流程（action: full/plan_only/modules） |
 | `GET` | `/api/projects/{id}/generate/stream` | SSE 流式进度 |
+| `POST` | `/api/projects/{id}/generate/approve` | HITL：批准教学计划，恢复生成 |
+| `POST` | `/api/projects/{id}/generate/reject` | HITL：拒绝并带反馈重规划 |
+| `GET` | `/api/projects/{id}/generate/resume/stream` | HITL 审批后恢复的 SSE 流 |
+| `GET` | `/api/projects/{id}/generate/modules` | 可用模块列表 |
+| `GET` | `/api/projects/{id}/generate/module/{module_id}/stream` | 单模块重生成（SSE） |
 | `POST` | `/api/projects/{id}/regenerate` | 局部重生成 |
+| `GET` | `/api/projects/{id}/regenerate/stream` | 重生成进度（SSE） |
+| `DELETE` | `/api/projects/{id}` | 删除项目 |
 | `GET` | `/api/projects/{id}/frames` | 帧列表 |
 | `PUT` | `/api/projects/{id}/frames/{fid}` | 编辑帧（locked 时 409） |
 | `POST` | `/api/projects/{id}/frames/{fid}/lock` | 锁定/解锁帧 |
@@ -160,6 +167,7 @@ agent/
 | `POST` | `/api/materials/upload` | 上传课件文件 |
 | `POST` | `/api/materials/{id}/parse` | 解析文件内容 |
 | `POST` | `/api/projects/{id}/feedback` | 提交反馈 |
+| `GET` | `/api/projects/{id}/feedback` | 反馈列表 |
 | `POST` | `/api/projects/{id}/versions` | 保存版本 |
 | `GET` | `/api/projects/{id}/versions` | 版本列表 |
 | `GET` | `/api/projects/{id}/versions/{vid}` | 版本详情 |
