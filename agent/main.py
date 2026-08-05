@@ -80,10 +80,11 @@ def _setup_logging(settings) -> None:
 
 def create_app() -> FastAPI:
     """工厂函数：创建并配置 FastAPI 实例。"""
+    settings = get_settings()
     app = FastAPI(
         title="EduFlow-Agent API",
         description="面向计算机科学教育的自主 Agent 教学推演系统",
-        version="0.1.0",
+        version=settings.app_version,
         lifespan=lifespan,
     )
 
@@ -125,4 +126,5 @@ app = create_app()
 @app.get("/api/health", tags=["system"])
 async def health_check() -> dict[str, str]:
     """健康检查端点。"""
-    return {"status": "ok", "version": "0.1.0"}
+    settings = get_settings()
+    return {"status": "ok", "version": settings.app_version}
