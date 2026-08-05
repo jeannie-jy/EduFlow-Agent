@@ -23,9 +23,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    volumes:
-      - manim_output:/app/data/exports    # 共享 worker 渲染产物
-      - manim_scripts:/app/data/scripts   # 共享 worker 生成的脚本
     restart: unless-stopped
 
   # ── Database (PostgreSQL + pgvector) ────────────────────
@@ -53,30 +50,8 @@ services:
     command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
     restart: unless-stopped
 
-  # ── Manim Render Worker ──────────────────────────────────
-  manim-worker:
-    build:
-      context: ./agent
-      dockerfile: workers/Dockerfile
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - OUTPUT_DIR=/app/output
-      - SCRIPTS_DIR=/app/scripts
-      - MANIM_TIMEOUT=600
-    volumes:
-      - manim_output:/app/output
-      - manim_scripts:/app/scripts
-    depends_on:
-      redis:
-        condition: service_started
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2g
-
   # ── Object Storage (MinIO S3-compatible) ──────────────────
+  # 注意：MinIO 当前为预留服务（后端尚未接入 S3 客户端），见 README「已知局限与后续可拓展思路」
   minio:
     image: minio/minio:latest
     ports: ["9000:9000", "9001:9001"]
@@ -90,6 +65,4 @@ services:
 
 volumes:
   pgdata:
-  manim_output:
-  manim_scripts:
   minio_data:

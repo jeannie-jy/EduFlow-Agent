@@ -23,4 +23,5 @@ RUN mkdir -p /app/data/uploads /app/data/exports
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动前先执行数据库迁移（业务表由 Alembic 管理，见 alembic/versions/0001_baseline.py）
+CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]

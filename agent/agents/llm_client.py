@@ -3,13 +3,16 @@
 统一封装 OpenAI 兼容的 LLM 调用（DeepSeek API）。
 支持 function calling 和结构化 JSON 输出。
 
-使用模块级单例避免每次调用创建新客户端（防止连接泄漏）。
+客户端为「线程本地」单例：httpx AsyncClient 绑定创建它的事件循环，
+模块级全局单例在导出线程（独立事件循环）复用会触发跨 loop 错误
+（got Future attached to a different loop），因此每个线程持有自己的客户端。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -18,36 +21,38 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# ── 模块级单例（避免连接泄漏）────────────────────────────────
+# ── 线程本地客户端（httpx 绑定事件循环，跨线程/跨 loop 复用会崩）────
 
-_llm_client: AsyncOpenAI | None = None
-_embedding_client: AsyncOpenAI | None = None
+_llm_client_local = threading.local()
+_embedding_client_local = threading.local()
 
 
 def _get_llm_client() -> AsyncOpenAI:
-    """获取 LLM 客户端单例。"""
-    global _llm_client
-    if _llm_client is None:
+    """获取当前线程的 LLM 客户端（每个线程首次调用时创建）。"""
+    client = getattr(_llm_client_local, "client", None)
+    if client is None:
         import httpx
         settings = get_settings()
-        _llm_client = AsyncOpenAI(
+        client = AsyncOpenAI(
             base_url=settings.llm_endpoint,
             api_key=settings.llm_api_key,
             timeout=httpx.Timeout(120.0, connect=10.0),
         )
-    return _llm_client
+        _llm_client_local.client = client
+    return client
 
 
 def _get_embedding_client() -> AsyncOpenAI:
-    """获取 Embedding 客户端单例。"""
-    global _embedding_client
-    if _embedding_client is None:
+    """获取当前线程的 Embedding 客户端。"""
+    client = getattr(_embedding_client_local, "client", None)
+    if client is None:
         settings = get_settings()
-        _embedding_client = AsyncOpenAI(
+        client = AsyncOpenAI(
             base_url=settings.embedding_endpoint,
             api_key=settings.embedding_api_key,
         )
-    return _embedding_client
+        _embedding_client_local.client = client
+    return client
 
 
 # ── 向后兼容的别名（弃用）────────────────────────────────────
