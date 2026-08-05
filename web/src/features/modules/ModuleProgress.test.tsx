@@ -11,15 +11,6 @@ import type { ModuleProgressItem } from "./ModuleProgress";
 // Helpers
 // ============================================================================
 
-function makeItem(overrides: Partial<ModuleProgressItem> = {}): ModuleProgressItem {
-  return {
-    module_id: "test_mod",
-    display_name: "测试模块",
-    status: "pending",
-    ...overrides,
-  };
-}
-
 function makeItems(
   statuses: Array<{ id: string; name: string; status: ModuleProgressItem["status"]; error?: string }>
 ): ModuleProgressItem[] {

@@ -135,7 +135,6 @@ describe("ModuleSelector", () => {
   });
 
   it("disables start button when no modules selected", async () => {
-    const user = userEvent.setup();
     const modules = makeModules();
 
     render(

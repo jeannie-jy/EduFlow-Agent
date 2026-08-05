@@ -53,10 +53,9 @@ export interface RegenerateRequest {
 // ============================================================================
 
 export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full", modules?: string[]) {
-  return api.post<GenerateResponse>(`/projects/${projectId}/generate`, {
-    action,
-    modules: modules ?? null,
-  } as GenerateRequest);
+  const body: GenerateRequest = { action };
+  if (modules !== undefined) body.modules = modules;
+  return api.post<GenerateResponse>(`/projects/${projectId}/generate`, body);
 }
 
 export function streamGeneration(projectId: string, options: SSEOptions) {

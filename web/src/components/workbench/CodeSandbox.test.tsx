@@ -2,7 +2,7 @@
  * CodeSandbox 组件测试。
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { CodeSandbox, type SandboxData } from "./CodeSandbox";
 

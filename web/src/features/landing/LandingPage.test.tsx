@@ -58,7 +58,7 @@ describe("LandingPage", () => {
 
     expect(screen.getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
     expect(screen.getByRole("link", { name: "开始创建" })).toHaveAttribute("href", "/app/project/_new");
-    expect(screen.getByRole("link", { name: "创建新的推演" })).toHaveAttribute("href", "/app/project/_new");
+    expect(screen.getByRole("link", { name: "创建新的推演" })).toHaveAttribute("href", "/app/new");
 
     await user.click(screen.getByRole("button", { name: "打开导航" }));
     const mobileNavigation = screen.getByRole("navigation", { name: "移动主导航" });
@@ -97,7 +97,7 @@ describe("LandingPage", () => {
     expect(screen.getByRole("link", { name: "体验交互推演" }))
       .toHaveAttribute("href", "/explore/dijkstra");
     expect(screen.getByRole("link", { name: "创建新的推演" }))
-      .toHaveAttribute("href", "/app/project/_new");
+      .toHaveAttribute("href", "/app/new");
     expect(screen.getByText("从一个知识点出发，自动生成教学计划、逐帧动画、交互参数和可导出的教学内容。"))
       .toBeVisible();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
@@ -139,7 +139,7 @@ describe("LandingPage", () => {
     expect(audienceCards[0]).toHaveTextContent("学生：我想理解一个知识点");
     expect(audienceCards[1]).toHaveTextContent("教师：我想创建教学推演");
     expect(screen.getByRole("link", { name: "体验学生推演" })).toHaveAttribute("href", "/explore/dijkstra");
-    expect(screen.getByRole("link", { name: "开始创建推演" })).toHaveAttribute("href", "/app/project/_new");
+    expect(screen.getByRole("link", { name: "开始创建推演" })).toHaveAttribute("href", "/app/new");
     expect(screen.queryByText("助教")).not.toBeInTheDocument();
     expect(screen.queryByText("管理员")).not.toBeInTheDocument();
 

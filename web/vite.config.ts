@@ -27,5 +27,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // 与 MSW handler 的绝对 URL（http://localhost:8000/api/...）对齐，
+    // 否则 api-client 默认相对路径 /api 永远匹配不到 mock
+    env: {
+      VITE_API_BASE_URL: 'http://localhost:8000/api',
+    },
   },
 })

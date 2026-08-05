@@ -23,6 +23,7 @@ export function LoginPage() {
     if (Object.keys(validation).length > 0) return;
 
     setSubmitting(true);
+    // 占位：后端认证未实现，仅设置本地 auth 状态（见 lib/auth.ts 头注）
     await simulateAuth();
     setAuthState({ isAuthenticated: true, nickname: email.split("@")[0], email });
     setSubmitting(false);

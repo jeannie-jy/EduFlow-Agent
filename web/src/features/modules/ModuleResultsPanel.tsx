@@ -18,16 +18,16 @@ import type { ComparisonData } from "@/components/workbench/ComparisonView";
 import { QuizPanel } from "@/components/workbench/QuizPanel";
 import type { QuizQuestion } from "@/components/workbench/QuizPanel";
 import { KnowledgeCard } from "@/components/workbench/KnowledgeCard";
-import { MindmapView } from "@/components/workbench/MindmapView";
+import { MindmapView, type MindmapNode } from "@/components/workbench/MindmapView";
 import type { ProjectDetailResponse } from "@/services/projects";
 import { useState, useCallback, useEffect } from "react";
-import { RefreshCw, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
+import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { regenerateModule } from "@/services/generate";
 import { getExportStatus } from "@/services/export";
-import type { SSEModuleDoneEvent, SSEModuleErrorEvent } from "@/services/sse";
+import type { SSEModuleDoneEvent } from "@/services/sse";
 
 // ============================================================================
 // 模块配置
@@ -55,7 +55,6 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
   const moduleOutputs = (project?.module_outputs ?? {}) as Record<string, unknown>;
   const [localOutputs, setLocalOutputs] = useState<Record<string, unknown>>(moduleOutputs);
   const [isRegenerating, setIsRegenerating] = useState<Record<string, boolean>>({});
-  const [showEditor, setShowEditor] = useState(false);
 
   const displayedOutputs = { ...moduleOutputs, ...localOutputs };
   const entries = Object.entries(displayedOutputs).filter(([, v]) => v != null);
@@ -69,7 +68,7 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
         setLocalOutputs((prev) => ({ ...prev, [event.module_id]: event.output }));
         setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
       },
-      onModuleError: (event: SSEModuleErrorEvent) => {
+      onModuleError: () => {
         setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
       },
     });
@@ -135,12 +134,6 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
                   <RefreshCw size={12} className={isRegenerating[key] ? "animate-spin" : ""} />
                   {isRegenerating[key] ? "生成中" : "重生成"}
                 </Button>
-                {/* frames: 打开编辑器 */}
-                {key === "frames" && (
-                  <Button variant="ghost" size="sm" className="h-6 gap-1 text-xs" onClick={() => setShowEditor(true)}>
-                    <Pencil size={12} /> 编辑
-                  </Button>
-                )}
               </div>
               <Badge variant="outline" className="text-xs text-[var(--muted-foreground)]">
                 已生成
@@ -148,7 +141,7 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
             </div>
             {/* 内容 */}
             <div>
-              {renderModuleContent(key, value, onNavigateTab)}
+              {renderModuleContent(key, value)}
             </div>
           </section>
         );
@@ -287,18 +280,18 @@ function FramesPlayer({ value }: { value: Record<string, unknown> }) {
         </div>
 
         {/* 学习目标 */}
-        {frame?.learning_goal && (
+        {frame?.learning_goal ? (
           <p className="text-xs text-[var(--muted-foreground)]">
             目标：{String(frame.learning_goal)}
           </p>
-        )}
+        ) : null}
 
         {/* 旁白 */}
-        {frame?.narration && (
+        {frame?.narration ? (
           <p className="text-sm leading-relaxed text-[var(--foreground)]/80">
             {String(frame.narration)}
           </p>
-        )}
+        ) : null}
 
         {/* 可视化对象类型标签 */}
         {voTypes.length > 0 && (
@@ -348,11 +341,11 @@ function FramesPlayer({ value }: { value: Record<string, unknown> }) {
 function renderModuleContent(
   moduleId: string,
   value: unknown,
-  onNavigateTab?: (tab: string) => void,
 ): React.ReactNode {
   switch (moduleId) {
     case "mindmap":
-      return <MindmapView root={(value as { root?: Record<string, unknown> })?.root} />;
+      // root 结构由 LLM 产出，运行时由 MindmapView 递归渲染；此处仅做类型断言
+      return <MindmapView root={(value as { root?: MindmapNode })?.root as MindmapNode} />;
     case "cards":
       return (
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -364,8 +357,8 @@ function renderModuleContent(
                 definition: card.definition as string,
                 intuition: card.intuition as string,
                 pitfalls: (card.pitfalls as string[]) ?? [],
-                formula: card.formula as string | null,
-                pseudocode: card.pseudocode as string | null,
+                formula: (card.formula as string | null) ?? undefined,
+                pseudocode: (card.pseudocode as string | null) ?? undefined,
                 relatedFrameIds: card.related_frame_ids as string[],
                 category: card.category as string,
                 difficulty: card.difficulty as number,

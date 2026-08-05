@@ -5,10 +5,9 @@
  */
 
 import { useState } from "react";
-import { Code2, Play, CheckCircle2, Copy, ChevronDown, ChevronUp } from "lucide-react";
+import { Code2, CheckCircle2, Copy, ChevronDown, ChevronUp, Package, FileText, Settings, BookOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 // ============================================================================
 // 类型
@@ -80,7 +79,7 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
             <Badge variant="outline" className="text-xs">⏱ {data.time_complexity}</Badge>
           )}
           {data.space_complexity && (
-            <Badge variant="outline" className="text-xs">📦 {data.space_complexity}</Badge>
+            <Badge variant="outline" className="text-xs gap-1"><Package size={12} /> {data.space_complexity}</Badge>
           )}
         </div>
       </div>
@@ -88,7 +87,7 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
       {/* Starter Code */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <p className="text-xs font-medium text-gray-500">📝 初始代码</p>
+          <p className="flex items-center gap-1 text-xs font-medium text-gray-500"><FileText size={12} /> 初始代码</p>
           <Button variant="ghost" size="sm" className="h-6 gap-1 text-xs" onClick={() => handleCopy(data.starter_code)}>
             <Copy size={12} /> {copied ? "已复制" : "复制"}
           </Button>
@@ -147,7 +146,7 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
       {/* Editable Params */}
       {data.editable_params && data.editable_params.length > 0 && (
         <div>
-          <p className="text-xs font-medium text-gray-500 mb-2">⚙️ 可调参数</p>
+          <p className="flex items-center gap-1 text-xs font-medium text-gray-500 mb-2"><Settings size={12} /> 可调参数</p>
           <div className="flex flex-wrap gap-2">
             {data.editable_params.map((p) => (
               <Badge key={p.key} variant="outline" className="text-xs">
@@ -161,7 +160,7 @@ export function CodeSandbox({ data }: CodeSandboxProps) {
       {/* Learning Notes */}
       {data.learning_notes && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-          <p className="text-sm font-semibold text-[var(--interactive)] mb-1">📖 学习笔记</p>
+          <p className="flex items-center gap-1 text-sm font-semibold text-[var(--interactive)] mb-1"><BookOpen size={14} /> 学习笔记</p>
           <p className="text-sm text-[var(--interactive)]">{data.learning_notes}</p>
         </div>
       )}

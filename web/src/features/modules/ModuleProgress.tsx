@@ -6,7 +6,6 @@
  */
 
 import { CheckCircle2, XCircle, Loader2, Clock } from "lucide-react";
-import type { ModuleInfo } from "@/services/generate";
 
 // ============================================================================
 // 类型

@@ -10,7 +10,6 @@ import { Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ModuleCard } from "./ModuleCard";
 import type { ModuleInfo } from "@/services/generate";
-import type { ModuleStatus } from "./ModuleCard";
 
 // ============================================================================
 // 类型
