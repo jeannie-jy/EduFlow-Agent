@@ -24,23 +24,20 @@ assignees: []
 
 ## 影响的接口
 
-<!-- 是否需要新增/修改 MCP Tool？gRPC 接口？SSE 事件？ -->
+<!-- 是否需要新增/修改 REST API？SSE 事件？DSL Schema 字段？ -->
 
-- [ ] MCP Tool
-- [ ] gRPC
-- [ ] SSE
-- [ ] A2A
 - [ ] REST API
+- [ ] SSE 事件
+- [ ] DSL Schema
 - [ ] 不涉及接口变更
 
 ## 影响的模块
 
-- [ ] Python Agent Runtime
-- [ ] Java Spring Boot
-- [ ] Next.js 前端
+- [ ] 后端 `agent/`（FastAPI + LangGraph）
+- [ ] 前端 `web/`（React + TypeScript）
 - [ ] Manim 视频渲染
-- [ ] Docker 部署
-- [ ] 数据库
+- [ ] Docker 部署 / 启动脚本
+- [ ] 数据库 / 迁移
 
 ## 优先级
 

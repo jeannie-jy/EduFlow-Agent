@@ -23,40 +23,33 @@
 
 <!-- 勾选受影响的模块 -->
 
-- [ ] Python Agent Runtime
-- [ ] Java Spring Boot
-- [ ] Next.js 前端
-- [ ] MCP Server
-- [ ] Manim 视频渲染
-- [ ] Docker 部署
-- [ ] 数据库
+- [ ] 后端 `agent/`（FastAPI + LangGraph）
+- [ ] 前端 `web/`（React + TypeScript）
+- [ ] 数据库 / 迁移（Alembic）
+- [ ] Docker 部署 / 启动脚本
 - [ ] 文档
 
 ## 接口变更检查
 
-<!-- 如果此 PR 修改了组件间接口，必须完成以下检查 -->
+<!-- 如果此 PR 修改了前后端接口或 DSL 契约，必须完成以下检查 -->
 
 - [ ] 无接口变更
-- [ ] 有接口变更 → 已同步更新 `docs/INTERFACES.md`
-- [ ] 有 gRPC proto 变更 → 已同步更新 `.proto` 文件和生成代码
-- [ ] 有 MCP Tool 变更 → 已同步更新 Tool Schema 定义
+- [ ] 有接口变更 → 已同步更新 `docs/开发任务与接口规范.md`（API 契约 / DSL Schema 速查）
 
 ## 测试
 
 <!-- 说明测试情况 -->
 
-- [ ] 新增测试覆盖
-- [ ] 已有测试全部通过
-- [ ] Golden Dataset 场景测试通过
+- [ ] 后端：`cd agent && python -m pytest` 全绿
+- [ ] 前端：`cd web && npm run verify`（typecheck + 测试 + 构建）全绿
 - [ ] 手动测试步骤：
 
 ## Checklist
 
-- [ ] 代码通过 Lint (`ruff check` / `./mvnw checkstyle:check` / `pnpm lint`)
-- [ ] 类型检查通过 (`mypy` / `pnpm type-check`)
-- [ ] 代码风格一致
+- [ ] 代码通过 Lint（后端 ruff / 前端 oxlint）
+- [ ] 类型检查通过（前端 `npm run typecheck`，即 `tsc -b`）
+- [ ] 代码风格一致（中文注释、`fix:/feat:/refactor:` 提交前缀）
 - [ ] 无硬编码敏感信息（密钥、密码等）
-- [ ] Commit 符合 Conventional Commits 规范
 - [ ] 设计文档已同步更新（如涉及架构变更）
 
 ## 截图/演示

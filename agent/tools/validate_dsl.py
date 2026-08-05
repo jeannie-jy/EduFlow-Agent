@@ -10,56 +10,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TOOL_DEF_VALIDATE = {
-    "name": "validate_dsl_schema",
-    "description": "校验 DSL JSON 结构的完整性和类型正确性。返回校验通过/失败及具体错误列表。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "dsl": {
-                "type": "object",
-                "description": "待校验的 RenderScript DSL JSON",
-            },
-        },
-        "required": ["dsl"],
-    },
-    "returns": {
-        "type": "object",
-        "properties": {
-            "valid": {"type": "boolean"},
-            "errors": {"type": "array"},
-        },
-    },
-    "errors": [],
-    "retryable": False,
-    "timeout_ms": 5_000,
-}
-
-TOOL_DEF_CONSISTENCY = {
-    "name": "check_state_consistency",
-    "description": "检查帧间状态变量一致性（如距离表、数组状态等）。返回不一致的帧对及差异描述。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "frames": {
-                "type": "array",
-                "description": "帧列表（frames 数组）",
-            },
-        },
-        "required": ["frames"],
-    },
-    "returns": {
-        "type": "object",
-        "properties": {
-            "consistent": {"type": "boolean"},
-            "issues": {"type": "array"},
-        },
-    },
-    "errors": [],
-    "retryable": False,
-    "timeout_ms": 5_000,
-}
-
 
 async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     """使用 Pydantic 校验 DSL 结构完整性。"""

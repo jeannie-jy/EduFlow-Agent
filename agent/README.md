@@ -23,7 +23,7 @@ pip install -r requirements.txt
 cp ../.env.example ../.env
 
 # 启动开发服务器
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 --reload-dir agents --reload-dir api --reload-dir adapters --reload-dir db --reload-dir generators --reload-dir plugins --reload-dir schema --reload-dir services --reload-dir tools --reload-dir alembic --reload-dir scripts --reload-dir main.py
 ```
 
 API 文档: http://localhost:8000/docs
@@ -61,19 +61,22 @@ agent/
 │
 ├── schema/                   # Pydantic 数据模型
 │   ├── dsl.py                # DSL Schema（renderScript / Frame / VisualObject×14 / Animation×16）
-│   └── project.py            # API Request/Response 模型
+│   ├── project.py            # API Request/Response 模型
+│   └── modules.py            # 各模块产出格式
 │
 ├── db/                       # 数据库层
-│   ├── database.py           # AsyncSession 工厂 + 读写分离
+│   ├── database.py           # AsyncSession 工厂
 │   └── models.py             # SQLAlchemy ORM 模型（8 张表）
 │
 ├── services/                 # 业务服务层
-│   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度）
+│   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度 + 统一持久化）
+│   ├── module_dispatcher.py  # 模块生成调度器（串行调度 + 失败落库 + frames 表同步）
+│   ├── project_persistence.py# DSL snapshot 合并 + frames 表持久化
 │   └── knowledge_service.py  # pgvector 语义检索 + embedding 播种
 │
-├── tools/                    # Agent 可调用的 Tool
+├── tools/                    # 确定性工具（节点直接异步调用）
 │   ├── validate_dsl.py       # DSL Schema 校验 + 帧间状态一致性检查
-│   ├── design_parameters.py  # 参数设计工具（8 种知识类型模板）
+│   ├── design_parameters.py  # 参数设计工具（按知识类型的参数模板）
 │   └── generate_asset.py     # 多模态资源生成（card/mindmap/table/code）
 │
 ├── adapters/                 # DSL → Manim 转换器
@@ -86,17 +89,18 @@ agent/
 │   ├── domain_plugin.py      # DomainPlugin Protocol + 注册表
 │   └── cs_plugin.py          # CS 内置插件（6 学科 + 5 教学策略 + 6 质量规则）
 │
-├── workers/                  # 后台 Worker
-│   ├── render_worker.py      # Redis 队列消费者（DSL→Manim→MP4）
-│   └── Dockerfile            # Manim Worker Docker 镜像
+├── generators/               # 模块化生成器（10 个，registry 注册，main.py 启动时导入）
+│   ├── registry.py           # 注册表 + get_generator
+│   ├── base.py               # BaseGenerator（LLM 调用 + 校验骨架）
+│   └── *_generator.py        # mindmap/card/frames/quiz/comparison/misconception/pathway/sandbox/video/interactive_demo
 │
 ├── scripts/                  # 运维脚本
-│   └── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector）
+│   └── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector，幂等）
 │
 ├── data/                     # 静态数据
 │   └── seed_knowledge.json   # 22 个知识点种子数据
 │
-├── tests/                    # 测试（373 个）
+├── tests/                    # 测试（694 个）
 │   ├── test_agent_nodes.py   # 5 个 Agent 节点 + Graph 拓扑
 │   ├── test_api_integration.py  # API 集成测试
 │   ├── test_db_integration.py   # 数据库 CRUD
@@ -104,9 +108,10 @@ agent/
 │   ├── test_llm_client.py       # LLM 客户端
 │   ├── test_schema.py           # DSL Schema 校验
 │   ├── test_schema_edge_cases.py # Schema 边界案例
+│   ├── test_phase2_reliability.py # 生成器可靠性（畸形输出/失败落库/字段白名单）
 │   └── ...
 │
-└── alembic/                  # 数据库迁移（预留）
+└── alembic/                  # 数据库迁移（基线 0001_baseline.py：8 张 ORM 表 + knowledge_base）
 ```
 
 ## Agent 协作流程

@@ -252,25 +252,12 @@ async def resume_generation_stream(
                     break
 
             dsl = state.get("dsl", {})
-            try:
-                from db.database import async_session_factory
-                from db.models import Project as ProjectModel
-                from api.versions import save_version
-                from services.project_persistence import merge_dsl_snapshot, persist_frames_to_table
-                async with async_session_factory() as db_session:
-                    project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                    if project is not None:
-                        project.dsl_snapshot = merge_dsl_snapshot(
-                            project.dsl_snapshot, dsl,
-                            quality_report=state.get("quality_report"),
-                            teaching_plan=teaching_plan,
-                        )
-                        project.status = "done"
-                        await persist_frames_to_table(project_id, dsl.get("frames", []), db_session)
-                        await save_version(project_id, dsl, "Agent 生成", db_session)
-                        await db_session.commit()
-            except Exception as perr:
-                logger.warning("Resume 持久化失败: %s", perr)
+            await _persist_dsl_result(
+                project_id, dsl,
+                quality_report=state.get("quality_report"),
+                teaching_plan=teaching_plan,
+                change_summary="Agent 生成",
+            )
 
             yield _sse_event("done", {
                 "phase": "done", "pct": 100,
@@ -421,33 +408,12 @@ async def run_regenerate_stream(
         # 5. 持久化
         dsl = state.get("dsl", {})
         quality_report = state.get("quality_report", {})
-        try:
-            from db.database import async_session_factory
-            from db.models import Project as ProjectModel
-            from api.versions import save_version
-            from services.project_persistence import (
-                merge_dsl_snapshot,
-                persist_frames_to_table,
-            )
-            from api.deps import parse_project_id
-
-            async with async_session_factory() as db_session:
-                project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                if project is not None:
-                    project.dsl_snapshot = merge_dsl_snapshot(
-                        project.dsl_snapshot,
-                        dsl,
-                        quality_report=quality_report,
-                        teaching_plan=teaching_plan,
-                    )
-                    project.status = "done"
-                    await persist_frames_to_table(
-                        project_id, dsl.get("frames", []), db_session
-                    )
-                    await save_version(project_id, dsl, f"局部重生成 ({scope.get('type', 'from_frame')})", db_session)
-                    await db_session.commit()
-        except Exception as perr:
-            logger.warning("Regenerate 持久化失败: %s", perr)
+        await _persist_dsl_result(
+            project_id, dsl,
+            quality_report=quality_report,
+            teaching_plan=teaching_plan,
+            change_summary=f"局部重生成 ({scope.get('type', 'from_frame')})",
+        )
 
         yield _sse_event("done", {
             "phase": "done",
@@ -603,33 +569,12 @@ async def _finalize_done(final_state, project_id: str) -> AsyncGenerator[str, No
 
             # 拒绝导致无 DSL 时不持久化，直接 done
             if dsl:
-                try:
-                    from db.database import async_session_factory
-                    from db.models import Project as ProjectModel
-                    from api.versions import save_version
-                    from services.project_persistence import (
-                        merge_dsl_snapshot,
-                        persist_frames_to_table,
-                    )
-                    from api.deps import parse_project_id
-
-                    async with async_session_factory() as db_session:
-                        project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                        if project is not None:
-                            project.dsl_snapshot = merge_dsl_snapshot(
-                                project.dsl_snapshot,
-                                dsl,
-                                quality_report=quality_report,
-                                teaching_plan=teaching_plan,
-                            )
-                            project.status = "done"
-                            await persist_frames_to_table(
-                                project_id, dsl.get("frames", []), db_session
-                            )
-                            await save_version(project_id, dsl, "Agent 生成", db_session)
-                            await db_session.commit()
-                except Exception as perr:
-                    logger.warning("生成产物持久化失败: %s", perr)
+                await _persist_dsl_result(
+                    project_id, dsl,
+                    quality_report=quality_report,
+                    teaching_plan=teaching_plan,
+                    change_summary="Agent 生成",
+                )
 
             yield _sse_event("done", {
                 "phase": "done",
@@ -753,6 +698,48 @@ async def run_module_generation_stream(
 
 
 # ── Helpers ─────────────────────────────────────────────────
+
+
+async def _persist_dsl_result(
+    project_id: str,
+    dsl: dict[str, Any],
+    *,
+    quality_report: dict[str, Any] | None,
+    teaching_plan: dict[str, Any],
+    change_summary: str,
+) -> None:
+    """持久化生成产物：merge dsl_snapshot + status=done + frames 表 + 版本记录。
+
+    统一 full 生成 / resume / regenerate 三条链路的落库逻辑（此前为三份同构代码）。
+    保持既有权衡：失败仅降级为 warning 日志，不中断 SSE 流。
+    """
+    try:
+        from db.database import async_session_factory
+        from db.models import Project as ProjectModel
+        from api.versions import save_version
+        from services.project_persistence import (
+            merge_dsl_snapshot,
+            persist_frames_to_table,
+        )
+        from api.deps import parse_project_id
+
+        async with async_session_factory() as db_session:
+            project = await db_session.get(ProjectModel, parse_project_id(project_id))
+            if project is not None:
+                project.dsl_snapshot = merge_dsl_snapshot(
+                    project.dsl_snapshot,
+                    dsl,
+                    quality_report=quality_report,
+                    teaching_plan=teaching_plan,
+                )
+                project.status = "done"
+                await persist_frames_to_table(
+                    project_id, dsl.get("frames", []), db_session
+                )
+                await save_version(project_id, dsl, change_summary, db_session)
+                await db_session.commit()
+    except Exception as perr:
+        logger.warning("生成产物持久化失败: %s", perr)
 
 
 def _sse_event(event: str, data: dict[str, Any]) -> dict[str, str]:

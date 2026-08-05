@@ -1,6 +1,8 @@
 """模块生成相关的 Pydantic 模型。
 
-定义模块选择请求、模块信息、各模块产出格式等 API 层数据模型。
+各模块产出格式等 API 层数据模型。
+注意：模块选择请求/模块信息/模块列表响应等模型定义在 schema/project.py（API 唯一真源），
+本文件只保留各模块的产出格式定义。
 """
 
 from __future__ import annotations
@@ -8,41 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-
-# ============================================================================
-# 模块选择
-# ============================================================================
-
-
-class ModuleSelectRequest(BaseModel):
-    """选择要生成的模块请求。"""
-    modules: list[str] = Field(
-        ...,
-        min_length=1,
-        description="要生成的模块 ID 列表，如 ['mindmap', 'cards', 'frames']",
-    )
-
-
-class ModuleInfo(BaseModel):
-    """模块元信息（供前端模块选择器渲染）。"""
-    module_id: str = Field(..., description="模块唯一标识")
-    display_name: str = Field(..., description="用户可读名称")
-    description: str = Field(default="", description="功能描述")
-    icon: str = Field(default="box", description="前端图标标识")
-    category: str = Field(default="visual", description="visual | interactive | export")
-    priority: int = Field(default=5, description="默认推荐优先级 1-10")
-    estimated_seconds: int = Field(default=30, description="预估生成耗时（秒）")
-
-
-class ModuleListResponse(BaseModel):
-    """可用模块列表响应。"""
-    modules: list[ModuleInfo] = Field(default_factory=list)
-
-
-class ModuleGenerateResponse(BaseModel):
-    """模块生成启动响应。"""
-    stream_url: str
 
 
 # ============================================================================
@@ -160,15 +127,17 @@ class ExportOutput(BaseModel):
 
 
 # ============================================================================
-# 模块产出聚合容器
+# 模块产出聚合容器（未使用）
 # ============================================================================
 
 
 class ModuleOutputs(BaseModel):
     """所有模块产出的聚合容器。
 
-    存储在 project.dsl_snapshot['module_outputs'] 中。
-    每个模块的产出格式由其 generator 定义。
+    ⚠️ 未使用：实际产出以各 generator 的裸 dict 存储于
+    project.dsl_snapshot['module_outputs']（module_dispatcher 落库），
+    本模型字段与实际产出形状不符（如 cards 实际是 {"cards": [...]} 而非 list），
+    仅保留作为类型参考，勿用于校验。
     """
     mindmap: dict[str, Any] | None = None
     cards: list[dict[str, Any]] | None = None

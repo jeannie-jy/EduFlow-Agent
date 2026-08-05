@@ -11,29 +11,29 @@
 | 中文 | English | 说明 |
 |------|---------|------|
 | 自主决策循环 | Agent Loop | Agent 自主决定思考→行动→观察的循环，区别于固定 Workflow |
-| 有向无环任务图 | Task DAG | 带依赖关系的教学步骤图结构 |
-| 思考-行动-观察 | ReAct (Reasoning + Acting) | Agent 决策框架三要素 |
-| 人在回路 | Human-in-the-Loop (HITL) | 关键决策需人类确认的交互模式 |
+| Agent 编排图 | LangGraph StateGraph | 5 个 Agent 节点组成的有向图（Planner → Knowledge → Coder → Quality → [Reflection ↺]） |
+| 人在回路 | Human-in-the-Loop (HITL) | 教学计划生成后中断等待教师确认/拒绝，从断点恢复 |
 | 规划 | Planning | Agent 分解知识点、构建教学步骤的过程 |
-| 反思 | Reflection | Agent 分析失败原因并调整策略的能力 |
+| 反思 | Reflection | Agent 根据质量报告修正 DSL 的过程 |
 
-## Agent 角色（初步设计）
+## Agent 角色（当前实现，5 个 LangGraph 节点）
 
 | 中文 | English | 职责 |
 |------|---------|------|
-| 规划 Agent | Planner Agent | 分解知识点、构建教学步骤 DAG、选择工具 |
-| 编码 Agent | Coder Agent | 将教学计划转为渲染指令 JSON |
-| 校验 Agent | Validator Agent | 校验输出结构的完整性和正确性 |
-| 反思 Agent | Reflection Agent | 失败根因分析、策略调整、经验抽取 |
+| 规划 Agent | Planner Agent | 生成教学计划（目标/大纲/策略/建议参数），输出后 HITL 中断 |
+| 知识 Agent | Knowledge Agent | 从教学计划提取概念图（concepts/edges/key_terms） |
+| 编码 Agent | Coder Agent | 将教学计划 + 知识图谱转为逐帧 DSL（RenderScript） |
+| 质量 Agent | Quality Agent | 三层校验：Pydantic Schema + 帧间状态一致性 + LLM 六维度评分 |
+| 反思 Agent | Reflection Agent | 质量不达标时修订 DSL（最多 3 轮），尊重锁定帧 |
 
-## 记忆系统
+## 记忆系统（规划中，尚未实现）
+
+> v0.8 未实现记忆系统；早期 init.sql 中的长期记忆/轨迹表已随遗留 schema 一并移除，
+> 后续按需以独立迁移引入。
 
 | 中文 | English | 说明 |
 |------|---------|------|
-| 工作记忆 | Working Memory | 当前会话上下文，会话结束清空 |
-| 短期记忆 | Short-Term Memory | 最近几轮会话的关键信息，滑动窗口 |
-| 长期记忆 | Long-Term Memory | 永久存储的成功模板、失败案例、用户偏好 |
-| 记忆衰减 | Memory Decay | 不常用记忆随时间降低重要性 |
+| 会话上下文 | Session Context | 当前生成流程的 AgentState（LangGraph checkpointer 持久化） |
 
 ## 渲染相关
 
@@ -83,13 +83,12 @@
 | 需求方说法 | 开发者术语 |
 |-----------|-----------|
 | "推演" / "动画" | `render` / `visualize` |
-| "分镜" / "一帧" | `RenderFrame` |
-| "教学步骤" | `TaskNode` / `step` |
-| "步骤编排" / "教案" | `TaskGraph` / `planning` |
-| "动画效果" | `easing` / `animation` |
+| "分镜" / "一帧" | `Frame` |
+| "教学步骤" | `step`（teaching_plan.outline） |
+| "步骤编排" / "教案" | `teaching_plan` / `planning` |
+| "动画效果" | `animation` |
 | "学生练习" | `quiz` |
-| "审阅" / "确认" | `approval` |
+| "审阅" / "确认" | `approval`（HITL） |
 | "纠错" | `reflection` / `correction` |
-| "学习记录" | `trajectory` / `memory` |
 | "知识点" | `concept` |
 | "导出视频" | `video export` |

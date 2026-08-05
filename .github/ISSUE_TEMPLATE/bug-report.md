@@ -30,11 +30,9 @@ assignees: []
 
 - OS: [e.g. Windows 11 / macOS 14 / Ubuntu 24.04]
 - Python 版本: [e.g. 3.12.3]
-- Java 版本: [e.g. 21.0.1]
 - Node.js 版本: [e.g. 20.10]
 - Docker 版本: [e.g. 26.0]
-- 使用的 LLM: [e.g. DeepSeek-Coder-V3 / GPT-4o]
-- GPU: [e.g. NVIDIA T4 / 无]
+- 使用的 LLM 模型: [e.g. deepseek-chat]
 
 ## 日志/截图
 
@@ -46,13 +44,11 @@ assignees: []
 
 ## 影响模块
 
-- [ ] Python Agent Runtime
-- [ ] Java Spring Boot
-- [ ] Next.js 前端
-- [ ] MCP Server
+- [ ] 后端 `agent/`（FastAPI + LangGraph）
+- [ ] 前端 `web/`（React + TypeScript）
 - [ ] Manim 视频渲染
-- [ ] Docker 部署
-- [ ] 数据库
+- [ ] Docker 部署 / 启动脚本
+- [ ] 数据库 / 迁移
 - [ ] 文档
 
 ## 严重程度

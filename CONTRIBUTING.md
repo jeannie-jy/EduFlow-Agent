@@ -15,21 +15,21 @@
 
 ```
 main ───────●────────────── (稳定版本)
-            └── develop ─── (集成分支)
+            └── dev ─────── (集成分支)
                   ├── feature/xxx  (功能模块分支)
                   └── docs/xxx     (文档分支)
 ```
 
-- `main`：只从 `develop` 合并，保持可运行
-- `develop`：日常集成
-- `feature/<模块名>`：按功能模块分，完成后合并回 `develop`
+- `main`：只从 `dev` 合并，保持可运行
+- `dev`：日常集成
+- `feature/<模块名>`：按功能模块分，完成后合并回 `dev`
 
 ## 日常流程
 
-1. 从 `develop` 拉出 feature 分支
-2. 开发 → 自测 → 提交 PR 到 `develop`
+1. 从 `dev` 拉出 feature 分支
+2. 开发 → 自测 → 提交 PR 到 `dev`
 3. 另一人交叉测试通过后合并
-4. 阶段性从 `develop` 合并到 `main`
+4. 阶段性从 `dev` 合并到 `main`
 
 ## Commit 规范
 

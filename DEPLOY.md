@@ -90,7 +90,7 @@ docker compose up -d postgres redis minio
 # 手动启动后端（hot reload）
 cd agent
 pip install -r requirements.txt
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 --reload-dir agents --reload-dir api --reload-dir adapters --reload-dir db --reload-dir generators --reload-dir plugins --reload-dir schema --reload-dir services --reload-dir tools --reload-dir alembic --reload-dir scripts --reload-dir main.py
 
 # 手动启动前端（hot reload）
 cd web
@@ -113,7 +113,7 @@ python -m scripts.seed_embeddings
 | `GET /api/health` | 后端健康状态 |
 | `GET /api/ping` | 轻量 ping |
 | `GET /api/knowledge/templates` | 知识库就绪确认 |
-| `GET /api/docs` | Swagger API 文档 |
+| `GET /docs` | Swagger API 文档 |
 
 ## 端口一览
 
