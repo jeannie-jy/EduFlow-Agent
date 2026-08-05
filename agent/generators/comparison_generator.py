@@ -192,18 +192,25 @@ class ComparisonGenerator(BaseGenerator):
             issues.append({"severity": "high", "type": "too_few_algorithms",
                            "description": f"需要至少 2 个算法进行对比，当前 {len(algorithms)} 个"})
         if len(algorithms) > 5:
-            issues.append({"severity": "warn", "type": "too_many_algorithms",
+            issues.append({"severity": "low", "type": "too_many_algorithms",
                            "description": f"对比算法过多 ({len(algorithms)} 个)，建议 2-3 个"})
 
         for i, algo in enumerate(algorithms):
+            if not isinstance(algo, dict):
+                issues.append({
+                    "severity": "high",
+                    "type": "invalid_algo_object",
+                    "description": f"Algorithm at index {i} is not a dict: {type(algo).__name__}",
+                })
+                continue
             name = algo.get("name", f"algo_{i}")
             pros = algo.get("pros", [])
             cons = algo.get("cons", [])
             if len(pros) < 2:
-                issues.append({"severity": "warn", "type": "few_pros",
+                issues.append({"severity": "low", "type": "few_pros",
                                "description": f"算法 {name} 的优点不足 ({len(pros)} 条)"})
             if len(cons) < 1:
-                issues.append({"severity": "warn", "type": "no_cons",
+                issues.append({"severity": "low", "type": "no_cons",
                                "description": f"算法 {name} 没有列出缺点，缺乏客观性"})
             if not algo.get("description"):
                 issues.append({"severity": "medium", "type": "missing_description",
@@ -219,7 +226,7 @@ class ComparisonGenerator(BaseGenerator):
             issues.append({"severity": "high", "type": "invalid_table",
                            "description": f"comparison_table 应为列表，实际为 {type(table).__name__}"})
             return issues
-        algo_names = {a["name"] for a in algorithms}
+        algo_names = {a.get("name", f"algo_{i}") for i, a in enumerate(algorithms) if isinstance(a, dict)}
         for row in table:
             if not isinstance(row, dict):
                 continue
@@ -230,7 +237,7 @@ class ComparisonGenerator(BaseGenerator):
 
         scenario = output.get("scenario_analysis", "")
         if len(scenario) < 30:
-            issues.append({"severity": "warn", "type": "short_analysis",
+            issues.append({"severity": "low", "type": "short_analysis",
                            "description": "场景分析过短，建议给出具体的选型建议"})
 
         return issues

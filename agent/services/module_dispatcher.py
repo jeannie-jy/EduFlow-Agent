@@ -115,17 +115,17 @@ async def dispatch_modules(
                     existing_outputs=module_outputs,
                 )
 
-                # 校验
+                # 校验（severity 语义：high=阻断性错误 / medium=警告 / low=提示）
                 issues = gen.validate(output)
                 if issues:
-                    errors_only = [i for i in issues if i.get("severity") == "error"]
-                    warnings_only = [i for i in issues if i.get("severity") != "error"]
+                    errors_only = [i for i in issues if i.get("severity") == "high"]
+                    warnings_only = [i for i in issues if i.get("severity") != "high"]
                     if errors_only:
-                        logger.warning("Module '%s' 校验发现 %d 错误: %s",
+                        logger.warning("Module '%s' 校验发现 %d 个 high 级问题: %s",
                                        mod_id, len(errors_only),
                                        "; ".join(i.get("description", "")[:60] for i in errors_only))
                     if warnings_only:
-                        logger.info("Module '%s' 校验发现 %d 警告", mod_id, len(warnings_only))
+                        logger.info("Module '%s' 校验发现 %d 个警告/提示", mod_id, len(warnings_only))
 
                 module_outputs[mod_id] = output
                 yield _sse("module_done", {
@@ -151,7 +151,10 @@ async def dispatch_modules(
         try:
             from db.database import async_session_factory
             from db.models import Project as ProjectModel
-            from services.project_persistence import merge_dsl_snapshot
+            from services.project_persistence import (
+                merge_dsl_snapshot,
+                persist_frames_to_table,
+            )
             from api.deps import parse_project_id
 
             async with async_session_factory() as db_session:
@@ -159,19 +162,28 @@ async def dispatch_modules(
                 if project is not None:
                     project.dsl_snapshot = merge_dsl_snapshot(
                         project.dsl_snapshot,
-                        None,  # dsl=None，仅更新 module_outputs + knowledge_graph
+                        None,  # dsl=None，仅更新 module_outputs + module_errors + knowledge_graph
                         teaching_plan=teaching_plan,
                         module_outputs=module_outputs,
+                        module_errors=module_errors or None,
                         knowledge_graph=kg,
                     )
-                    # 仅当有 frames 模块产出时更新状态为 done
-                    if "frames" in module_outputs and module_outputs["frames"]:
+                    # frames 模块产出同步写入 frames 表（与 generate_service 路径一致，
+                    # 消除「模块流不落表 → frames API 双真源」问题）
+                    frames_out = module_outputs.get("frames")
+                    if isinstance(frames_out, dict) and frames_out.get("frames"):
+                        await persist_frames_to_table(
+                            project_id, frames_out.get("frames", []), db_session
+                        )
+                    # 状态机：有产出 → done；全部失败 → failed；均无 → 维持原状态
+                    if module_outputs:
                         project.status = "done"
-                    elif module_outputs:
-                        project.status = "done"
+                    elif module_errors:
+                        project.status = "failed"
                     await db_session.commit()
-                    logger.info("模块产出已持久化: project=%s modules=%s",
-                                project_id, list(module_outputs.keys()))
+                    logger.info("模块产出已持久化: project=%s modules=%s errors=%s",
+                                project_id, list(module_outputs.keys()),
+                                list(module_errors.keys()) if module_errors else [])
         except Exception as perr:
             logger.warning("模块产出持久化失败: %s", perr)
 

@@ -68,7 +68,6 @@ class VideoGenerator(BaseGenerator):
         创建 job 记录并返回 job_id。
         """
         import asyncio
-        import json
         import uuid
 
         # 1. 从已生成的模块产出中获取 frames（内存优先于 DB）
@@ -125,32 +124,9 @@ class VideoGenerator(BaseGenerator):
                 )
                 db_session.add(export_job)
                 await db_session.flush()
-
-                # 3. 推送到 Redis 队列
-                try:
-                    import redis as redis_lib
-                    from config import get_settings
-
-                    settings = get_settings()
-                    r = redis_lib.from_url(
-                        settings.redis_url,
-                        decode_responses=True,
-                        socket_keepalive=True,
-                        health_check_interval=30,
-                    )
-                    r.ping()
-                    task = {
-                        "job_id": str(job_id),
-                        "dsl": dsl,
-                        "config": config,
-                    }
-                    r.rpush("manim:queue", json.dumps(task, ensure_ascii=False))
-                except Exception as redis_exc:
-                    logger.warning("Redis 入队失败，将使用 fallback: %s", redis_exc)
-
                 await db_session.commit()
 
-                # 4. 启动后台 fallback
+                # 单轨导出：无独立 Worker，直接启动进程内后台渲染任务
                 from api.export import _fallback_export
                 asyncio.create_task(_fallback_export(str(job_id), dsl, config))
 

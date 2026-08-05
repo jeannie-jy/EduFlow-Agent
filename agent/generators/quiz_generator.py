@@ -221,7 +221,7 @@ class QuizGenerator(BaseGenerator):
             return issues
 
         if len(questions) > 15:
-            issues.append({"severity": "warn", "type": "too_many_questions",
+            issues.append({"severity": "low", "type": "too_many_questions",
                            "description": f"题目过多 ({len(questions)} 题)，建议 3-10 题"})
 
         has_mc = False
@@ -254,11 +254,11 @@ class QuizGenerator(BaseGenerator):
 
             difficulty = q.get("difficulty", 0)
             if not (1 <= difficulty <= 3):
-                issues.append({"severity": "warn", "type": "invalid_difficulty",
+                issues.append({"severity": "low", "type": "invalid_difficulty",
                                "description": f"题目 {qid} difficulty={difficulty} 应在 1-3 之间"})
 
         if not has_mc:
-            issues.append({"severity": "warn", "type": "no_multiple_choice",
+            issues.append({"severity": "low", "type": "no_multiple_choice",
                            "description": "建议至少包含 1 道选择题作为入门检查"})
 
         return issues

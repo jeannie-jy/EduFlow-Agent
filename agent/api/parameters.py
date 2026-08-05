@@ -83,7 +83,9 @@ async def recompute_project(
 
     logger.info("重算: project=%s | changed_keys=%s", project_id, list(changed_params.keys()))
 
-    # 更新参数值
+    # 更新参数值 —— 双真源同步：
+    # list_parameters 优先读 dsl_snapshot.parameters，因此表与 snapshot 必须一起更新，
+    # 否则前端参数面板读到的永远是旧值（此前只更新表 → snapshot 永不生效）。
     from db.models import ParameterModel
 
     from sqlalchemy import select, update
@@ -98,7 +100,16 @@ async def recompute_project(
             .values(current_value=value)
         )
 
-    # 触发重新生成
+    if project.dsl_snapshot:
+        snap = dict(project.dsl_snapshot)
+        snap_params = list(snap.get("parameters", []))
+        for p in snap_params:
+            if isinstance(p, dict) and p.get("key") in changed_params:
+                p["current_value"] = changed_params[p["key"]]
+        snap["parameters"] = snap_params
+        project.dsl_snapshot = snap
+
+    # 触发重新生成（已知限制：当前为完整生成流而非范围重算，见 README「已知局限」）
     return {
         "stream_url": f"/api/projects/{project_id}/generate/stream",
     }

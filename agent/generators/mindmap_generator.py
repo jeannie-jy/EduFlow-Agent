@@ -164,6 +164,13 @@ class MindmapGenerator(BaseGenerator):
             return issues
 
         root = output.get("root", {})
+        if not isinstance(root, dict):
+            issues.append({
+                "severity": "high",
+                "type": "invalid_root",
+                "description": f"思维导图 root 不是对象: {type(root).__name__}",
+            })
+            return issues
         if not root.get("name"):
             issues.append({
                 "severity": "high",
@@ -189,7 +196,7 @@ class MindmapGenerator(BaseGenerator):
         depth = _max_depth(root)
         if depth > 4:
             issues.append({
-                "severity": "warn",
+                "severity": "low",
                 "type": "deep_tree",
                 "description": f"思维导图深度为 {depth}，建议不超过 3 层",
             })

@@ -30,21 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Helper: clean JSON from LLM output
-# ============================================================================
-
-
-def _extract_json(text: str) -> dict[str, Any]:
-    """从 LLM 文本回复中提取 JSON。处理 markdown code block 包裹。"""
-    text = text.strip()
-    # 去掉 markdown code block 标记
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    return json.loads(text)
-
-
-# ============================================================================
 # Helpers
 # ============================================================================
 
@@ -688,12 +673,14 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         det_overall = schema_score * 0.3 + consistency_score * 0.7
         final_overall = round(det_overall * 0.4 + llm_overall * 0.6, 2)
         scores = llm_scores.get("scores", {})
-        if schema_score > scores.get("renderability", 0.7):
-            logger.debug("renderability: LLM=%.2f 被确定性 schema_score=%.2f 覆盖",
+        # 确定性分数作为对应维度的上限约束：校验失败必须压低 LLM 的乐观评分，
+        # 校验通过则不干预（上限 1.0 无约束）。
+        if schema_score < scores.get("renderability", 0.7):
+            logger.debug("renderability: LLM=%.2f 被确定性 schema_score=%.2f 压低",
                          scores.get("renderability", 0.7), schema_score)
             scores["renderability"] = schema_score
-        if consistency_score > scores.get("coherence", 0.7):
-            logger.debug("coherence: LLM=%.2f 被确定性 consistency_score=%.2f 覆盖",
+        if consistency_score < scores.get("coherence", 0.7):
+            logger.debug("coherence: LLM=%.2f 被确定性 consistency_score=%.2f 压低",
                          scores.get("coherence", 0.7), consistency_score)
             scores["coherence"] = consistency_score
         suggestions = llm_scores.get("suggestions", [])

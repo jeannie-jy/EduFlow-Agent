@@ -104,14 +104,28 @@ def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | Non
         if snap:
             cf["state_snapshot"] = snap
 
-        # 精简 visual_objects：保留所有字段，LLM 自主决定如何使用
+        # 精简 visual_objects：保留全部 14 种 VisualObject 的结构字段（对齐 schema/dsl.py:175-275），
+        # LLM 自主决定如何使用。白名单而非黑名单，避免 style.extras 等自由 JSON 噪声泄漏。
         vos = []
         for vo in f.get("visual_objects", []):
             vos.append({
                 k: v for k, v in vo.items()
-                if k in ("id", "type", "label", "code", "language",
-                         "latex", "headers", "rows", "cells", "values",
-                         "position", "style", "directed")
+                if k in ("id", "type", "label", "position", "style",
+                         # node
+                         "node_type",
+                         # edge（图结构数据：边/权重，缺了 LLM 无法还原图）
+                         "source", "target", "directed", "weight",
+                         # array / linked_list / tree / graph / table / memory_block / timeline / mindmap
+                         "cells", "nodes", "root_id", "edges", "graph_edges",
+                         "headers", "rows", "blocks", "events",
+                         "root", "children",
+                         # code_block / formula / card
+                         "code", "language", "highlight_lines", "latex",
+                         "title", "content", "category",
+                         # process
+                         "pid", "state", "attributes",
+                         # 兼容历史字段
+                         "values")
             })
         cf["visual_objects"] = vos
 

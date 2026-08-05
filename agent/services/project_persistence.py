@@ -76,13 +76,14 @@ def merge_dsl_snapshot(
     quality_report: dict[str, Any] | None = None,
     teaching_plan: dict[str, Any] | None = None,
     module_outputs: dict[str, Any] | None = None,
+    module_errors: dict[str, Any] | None = None,
     knowledge_graph: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """合并生成产物到 dsl_snapshot（返回新字典以触发 JSONB 变更检测）。
 
     保留 existing 中的用户输入字段（input_content/input_type/constraints/material_ids），
     叠加完整 DSL（frames/parameters/knowledge_graph/teaching_strategy 等），
-    并写入 teaching_plan / quality_report / module_outputs 供 getProject 读取。
+    并写入 teaching_plan / quality_report / module_outputs / module_errors 供 getProject 读取。
     """
     snap: dict[str, Any] = dict(existing or {})
     if dsl is not None:
@@ -98,4 +99,8 @@ def merge_dsl_snapshot(
         existing_mods = dict(snap.get("module_outputs", {}))
         existing_mods.update(module_outputs)
         snap["module_outputs"] = existing_mods
+    if module_errors is not None:
+        existing_errs = dict(snap.get("module_errors", {}))
+        existing_errs.update(module_errors)
+        snap["module_errors"] = existing_errs
     return snap

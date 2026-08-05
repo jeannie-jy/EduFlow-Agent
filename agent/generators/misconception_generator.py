@@ -142,7 +142,7 @@ class MisconceptionGenerator(BaseGenerator):
             if not item.get("correction"):
                 issues.append({"severity": "medium", "type": "missing_correction", "description": f"{iid} 缺少 correction"})
             if len(item.get("correction", "")) < 10:
-                issues.append({"severity": "warn", "type": "short_correction", "description": f"{iid} 的 correction 过短"})
+                issues.append({"severity": "low", "type": "short_correction", "description": f"{iid} 的 correction 过短"})
         return issues
 
 

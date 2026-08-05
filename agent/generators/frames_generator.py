@@ -291,19 +291,21 @@ class FramesGenerator(BaseGenerator):
                 "description": "存在重复的 frame_id",
             })
 
-        # 检查每帧必要字段
+        # 检查每帧必要字段（非 dict 帧已在上面标记，此处跳过避免崩溃）
         for i, frame in enumerate(frames):
+            if not isinstance(frame, dict):
+                continue
             fid = frame.get("frame_id", f"index_{i}")
             if not frame.get("narration"):
                 issues.append({
-                    "severity": "warn",
+                    "severity": "low",
                     "type": "empty_narration",
                     "description": f"帧 {fid} 缺少讲解文本 (narration)",
                 })
             vos = frame.get("visual_objects", [])
             if len(vos) == 0:
                 issues.append({
-                    "severity": "warn",
+                    "severity": "low",
                     "type": "empty_visuals",
                     "description": f"帧 {fid} 没有 visual_objects",
                 })

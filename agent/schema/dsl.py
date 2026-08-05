@@ -3,7 +3,8 @@
 教学推演中间表示（RenderScript）的完整类型定义。
 这是前后端共享的数据契约，也是 Agent 产出的目标格式。
 
-对齐设计文档 v1.0 第 5 节 + 开发任务第 4 节。
+本文件是 DSL 的唯一真源（设计文档相关章节为「目标态」描述，
+联调以本文件与 docs/开发任务与接口规范.md 第 4 节速查为准）。
 """
 
 from __future__ import annotations
@@ -114,6 +115,7 @@ class ProjectStatus(StrEnum):
     GENERATING = "generating"
     REVIEWING = "reviewing"
     DONE = "done"
+    FAILED = "failed"  # 模块生成全部失败（module_errors 落库）
 
 
 class ExportStatus(StrEnum):

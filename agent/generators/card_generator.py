@@ -162,6 +162,13 @@ class CardGenerator(BaseGenerator):
             return issues
 
         for i, card in enumerate(cards):
+            if not isinstance(card, dict):
+                issues.append({
+                    "severity": "high",
+                    "type": "invalid_card_object",
+                    "description": f"Card at index {i} is not a dict: {type(card).__name__}",
+                })
+                continue
             card_id = card.get("id", f"card_{i}")
             # 必填字段检查
             for field in ("title", "definition", "intuition"):
@@ -175,7 +182,7 @@ class CardGenerator(BaseGenerator):
             definition = card.get("definition", "")
             if len(definition) < 10:
                 issues.append({
-                    "severity": "warn",
+                    "severity": "low",
                     "type": "short_definition",
                     "description": f"卡片 {card_id} 的 definition 过短 ({len(definition)} 字符)",
                 })
@@ -183,7 +190,7 @@ class CardGenerator(BaseGenerator):
             pitfalls = card.get("pitfalls", [])
             if isinstance(pitfalls, list) and len(pitfalls) == 0:
                 issues.append({
-                    "severity": "warn",
+                    "severity": "low",
                     "type": "no_pitfalls",
                     "description": f"卡片 {card_id} 没有标注常见误区",
                 })
