@@ -5,6 +5,7 @@
  */
 
 import { memo } from "react";
+import { TreePine, BarChart3 } from "lucide-react";
 import type { DSLVisualObject } from "../simulation-model";
 import { NodeObject } from "./NodeObject";
 import { EdgeObject } from "./EdgeObject";
@@ -70,8 +71,8 @@ export const VisualObjectRenderer = memo(function VisualObjectRenderer({
       // Tree 使用简化节点渲染，完整树用 Graph 或自定义布局
       return (
         <div className={className} aria-label={object.label ?? "树结构"}>
-          <span className="text-xs text-muted-foreground">
-            🌳 {(object.label as string) ?? "Tree"} ({((object.nodes as unknown[])?.length ?? 0)} 节点)
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <TreePine size={13} aria-label="树" /> {(object.label as string) ?? "Tree"} ({((object.nodes as unknown[])?.length ?? 0)} 节点)
           </span>
         </div>
       );
@@ -80,8 +81,8 @@ export const VisualObjectRenderer = memo(function VisualObjectRenderer({
       // Graph 需要 ReactFlow，回退到描述文本
       return (
         <div className={className} aria-label={object.label ?? "图结构"}>
-          <span className="text-xs text-muted-foreground">
-            📊 {(object.label as string) ?? "Graph"} ({((object.nodes as unknown[])?.length ?? 0)} 节点, {((object.graph_edges as unknown[])?.length ?? 0)} 边)
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <BarChart3 size={13} aria-label="图" /> {(object.label as string) ?? "Graph"} ({((object.nodes as unknown[])?.length ?? 0)} 节点, {((object.graph_edges as unknown[])?.length ?? 0)} 边)
           </span>
         </div>
       );

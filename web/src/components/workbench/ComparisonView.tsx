@@ -4,6 +4,7 @@
  * 展示多算法的并排对比表和场景分析。
  */
 
+import { CheckCircle2, TriangleAlert, ClipboardList } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
@@ -67,13 +68,13 @@ export function ComparisonView({ data }: ComparisonViewProps) {
 
             <div className="mt-3 space-y-2">
               <div>
-                <p className="text-xs font-medium text-[var(--success)]">✅ 优点</p>
+                <p className="flex items-center gap-1 text-xs font-medium text-[var(--success)]"><CheckCircle2 size={13} aria-label="优点" /> 优点</p>
                 <ul className="mt-1 list-inside list-disc text-xs text-[var(--foreground)]/80 space-y-0.5">
                   {algo.pros.map((p, i) => <li key={i}>{p}</li>)}
                 </ul>
               </div>
               <div>
-                <p className="text-xs font-medium text-[var(--error)]">⚠️ 缺点</p>
+                <p className="flex items-center gap-1 text-xs font-medium text-[var(--error)]"><TriangleAlert size={13} aria-label="缺点" /> 缺点</p>
                 <ul className="mt-1 list-inside list-disc text-xs text-[var(--foreground)]/80 space-y-0.5">
                   {algo.cons.map((c, i) => <li key={i}>{c}</li>)}
                 </ul>
@@ -130,8 +131,8 @@ export function ComparisonView({ data }: ComparisonViewProps) {
 
       {/* 场景分析 */}
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-        <h4 className="text-sm font-semibold text-[var(--interactive)] mb-2">
-          📋 选型建议
+        <h4 className="flex items-center gap-1 text-sm font-semibold text-[var(--interactive)] mb-2">
+          <ClipboardList size={14} aria-label="选型建议" /> 选型建议
         </h4>
         <p className="text-sm text-[var(--interactive)] leading-relaxed">
           {scenario_analysis}

@@ -83,7 +83,7 @@ export const KnowledgeCard = memo(function KnowledgeCard({
         </div>
       )}
       {card.pseudocode && (
-        <div className="mb-3 rounded-lg border bg-[#0d1117] p-2.5">
+        <div className="mb-3 rounded-lg border bg-code-bg p-2.5">
           <p className="text-xs font-medium text-white/40 mb-1">伪代码</p>
           <pre className="text-sm font-mono text-white/85 whitespace-pre-wrap">
             {card.pseudocode}

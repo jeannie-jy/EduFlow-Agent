@@ -182,14 +182,14 @@ describe("QuizPanel", () => {
   it("renders true/false question with correct buttons", () => {
     render(<QuizPanel questions={[makeTFQuestion()]} />);
 
-    expect(screen.getByText("✓ 正确")).toBeInTheDocument();
-    expect(screen.getByText("✗ 错误")).toBeInTheDocument();
+    expect(screen.getByText(/正确/)).toBeInTheDocument();
+    expect(screen.getByText(/错误/)).toBeInTheDocument();
   });
 
   it("true_false: selecting correct answer shows feedback", () => {
     render(<QuizPanel questions={[makeTFQuestion()]} />);
 
-    fireEvent.click(screen.getByText("✓ 正确"));
+    fireEvent.click(screen.getByText(/正确/));
     expect(screen.getByText(/回答正确/)).toBeInTheDocument();
   });
 

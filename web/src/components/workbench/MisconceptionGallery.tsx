@@ -5,7 +5,7 @@
  */
 
 import { useState } from "react";
-import { Lightbulb, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { Lightbulb, AlertTriangle, ChevronDown, ChevronUp, XCircle, CheckCircle2, Paperclip } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -94,7 +94,7 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
             "mt-1 text-sm line-through decoration-[var(--error)]",
             expanded ? "text-[var(--muted-foreground)]" : "text-[var(--error)]",
           )}>
-            ❌ {item.misconception}
+            <XCircle size={14} className="inline mr-1 align-[-2px]" aria-label="误区" /> {item.misconception}
           </p>
         </div>
         {expanded ? <ChevronUp size={16} className="shrink-0 text-[var(--muted-foreground)]" />
@@ -109,13 +109,13 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
               <Lightbulb size={14} /> 正确理解
             </p>
             <p className="mt-1 text-sm text-[var(--success)]">
-              ✅ {item.correction}
+              <CheckCircle2 size={14} className="inline mr-1 align-[-2px]" aria-label="纠正" /> {item.correction}
             </p>
           </div>
 
           {item.counter_example && (
             <div>
-              <p className="text-xs font-medium text-gray-500">📎 反例说明</p>
+              <p className="flex items-center gap-1 text-xs font-medium text-gray-500"><Paperclip size={12} /> 反例说明</p>
               <p className="mt-1 text-sm text-[var(--foreground)]/80">
                 {item.counter_example}
               </p>
@@ -124,7 +124,7 @@ function MisconceptionCard({ item }: { item: MisconceptionItem }) {
 
           {item.why_it_matters && (
             <div>
-              <p className="text-xs font-medium text-gray-500">💡 为什么重要</p>
+              <p className="flex items-center gap-1 text-xs font-medium text-gray-500"><Lightbulb size={12} /> 为什么重要</p>
               <p className="mt-1 text-sm text-[var(--foreground)]/80">
                 {item.why_it_matters}
               </p>

@@ -72,7 +72,7 @@ export function LearningPathway({ data }: LearningPathwayProps) {
     <div className="flex flex-col gap-5 p-4">
       <div>
         <h3 className="text-lg font-bold text-[var(--foreground)]">
-          📚 {current_topic}
+          <BookOpen size={15} className="inline mr-1 align-[-2px]" /> {current_topic}
         </h3>
         <div className="mt-1 flex items-center gap-3 text-sm text-[var(--muted-foreground)]">
           <span>{nodes.length} 个节点</span>
@@ -137,7 +137,7 @@ export function LearningPathway({ data }: LearningPathwayProps) {
       {/* 学习建议 */}
       {learning_tips && learning_tips.length > 0 && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-          <p className="text-sm font-semibold text-[var(--interactive)] mb-2">💡 学习建议</p>
+          <p className="flex items-center gap-1 text-sm font-semibold text-[var(--interactive)] mb-2"><Lightbulb size={14} /> 学习建议</p>
           <ul className="list-inside list-disc space-y-1 text-sm text-[var(--interactive)]">
             {learning_tips.map((tip, i) => (
               <li key={i}>{tip}</li>

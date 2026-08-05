@@ -90,7 +90,7 @@ export const CodeBlockObject = memo(function CodeBlockObject({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border bg-[#0d1117] font-mono text-sm",
+        "overflow-hidden rounded-lg border bg-code-bg font-mono text-sm",
         className,
       )}
     >

@@ -98,7 +98,7 @@ describe("ComparisonView", () => {
 
   it("renders scenario analysis section", () => {
     render(<ComparisonView data={makeData()} />);
-    expect(screen.getByText("📋 选型建议")).toBeInTheDocument();
+    expect(screen.getByText(/选型建议/)).toBeInTheDocument();
     expect(screen.getByText(/Quick Sort 适合通用排序场景/)).toBeInTheDocument();
   });
 
@@ -124,8 +124,9 @@ describe("ComparisonView", () => {
 
   it("renders pros and cons labels", () => {
     render(<ComparisonView data={makeData()} />);
-    const prosLabels = screen.getAllByText("✅ 优点");
-    const consLabels = screen.getAllByText("⚠️ 缺点");
+    // 优点/缺点以 lucide 图标 + aria-label 表达（DESIGN.md：禁止 Emoji/文本符号）
+    const prosLabels = screen.getAllByLabelText("优点");
+    const consLabels = screen.getAllByLabelText("缺点");
     expect(prosLabels.length).toBe(3);
     expect(consLabels.length).toBe(3);
   });

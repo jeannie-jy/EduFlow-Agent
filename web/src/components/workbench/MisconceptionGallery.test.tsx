@@ -45,7 +45,7 @@ describe("MisconceptionGallery", () => {
     render(<MisconceptionGallery items={makeItems(1)} />);
     // Click the card header to expand
     fireEvent.click(screen.getByText("Concept 1").closest("button")!);
-    expect(screen.getByText("✅ Right idea 1 with enough detail")).toBeInTheDocument();
+    expect(screen.getByText(/Right idea 1 with enough detail/)).toBeInTheDocument();
   });
 
   it("shows counter example when expanded", () => {
@@ -64,7 +64,7 @@ describe("MisconceptionGallery", () => {
     render(<MisconceptionGallery items={makeItems(2)} />);
     // Expand the second item (which has no counter_example)
     fireEvent.click(screen.getByText("Concept 2").closest("button")!);
-    expect(screen.getByText("✅ Right idea 2 with enough detail")).toBeInTheDocument();
+    expect(screen.getByText(/Right idea 2 with enough detail/)).toBeInTheDocument();
     // "Counter 2" should not exist
     expect(screen.queryByText("Counter 2")).toBeNull();
   });
@@ -81,7 +81,7 @@ describe("MisconceptionGallery", () => {
     expect(screen.getByText(/正确理解/)).toBeInTheDocument();
     fireEvent.click(btn);
     // After collapsing, correction text should not be visible
-    expect(screen.queryByText("✅ Right idea 1 with enough detail")).toBeNull();
+    expect(screen.queryByText(/Right idea 1 with enough detail/)).toBeNull();
   });
 
   it("renders correct structure labels in expanded view", () => {

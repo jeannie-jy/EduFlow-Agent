@@ -2,29 +2,37 @@
  * SandboxRenderer — 安全 iframe 沙箱渲染器。
  *
  * 将 LLM 生成的 React JSX 代码字符串在隔离的 iframe 中渲染。
- * 防御等级：全局错误捕获 + Babel JSX 编译 + UMD React + 暴力代码清洗。
+ *
+ * 架构（v0.8.1）：
+ * - JSX 编译在「宿主侧」完成（Babel standalone + runtime: classic → 纯 React.createElement），
+ *   iframe 只接收编译后的 JS，不再注入 Babel 运行时 —— 避免 Babel automatic runtime
+ *   在 iframe 内输出 import 语句导致的静默失败
+ * - React/ReactDOM UMD 从 node_modules 本地注入（unpkg CDN 在部分网络不可达，
+ *   脚本加载失败不触发 window.onerror，会造成静默空白）
+ * - Tailwind 仍走 CDN（缺失时只影响样式、不影响渲染）
+ * - 转译错误在宿主侧捕获并显示友好错误面板，运行时错误由 iframe 内 window.onerror 捕获
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+// 本地 React 18 UMD（react 包的 exports 未暴露 ./umd/*，用相对路径绕过）
+import reactUMD from "../../../node_modules/react/umd/react.production.min.js?raw";
+import reactDOMUMD from "../../../node_modules/react-dom/umd/react-dom.production.min.js?raw";
 
 export interface SandboxRendererProps {
   code: string;
 }
 
 // ============================================================================
-// HTML 模板
+// 代码清洗（对齐沙箱约束：无 import / 无 export / 无 markdown 包裹）
 // ============================================================================
 
-function buildHtml(code: string): string {
-  // ═══════════════════════════════════════════════════════
-  // 暴力代码清洗
-  // ═══════════════════════════════════════════════════════
-
+function cleanCode(code: string): string {
   let clean = code
     // 剥离 markdown 代码块
     .replace(/```[a-z]*\n?/gi, "")
     .replace(/```/g, "")
-    // 剥离所有 import 语句（CDN 环境不支持 ESM）
+    // 剥离所有 import 语句（沙箱环境不支持 ESM）
     .replace(/import\s+.*?;?\n/g, "")
     .replace(/import\s+.*?;?$/gm, "")
     // 剥离 export default
@@ -36,15 +44,19 @@ function buildHtml(code: string): string {
     clean = "const InteractiveDemo = () => React.createElement('div', null, '暂无代码');";
   }
 
-  // 确保有个叫 InteractiveDemo 的组件（Babel 编译后变量名就是组件）
+  // 确保有个叫 InteractiveDemo 的组件（编译后变量名就是组件）
   if (!clean.includes("InteractiveDemo")) {
-    clean = `const InteractiveDemo = () => {\n  return (${clean});\n};`;
+    clean = "const InteractiveDemo = () => {\n  return (" + clean + ");\n};";
   }
 
-  // ═══════════════════════════════════════════════════════
-  // HTML 模板
-  // ═══════════════════════════════════════════════════════
+  return clean;
+}
 
+// ============================================================================
+// HTML 模板
+// ============================================================================
+
+function buildHtml(compiledJs: string): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -65,7 +77,10 @@ function buildHtml(code: string): string {
   };
 </script>
 
-<!-- 2. CSS 变量（双主题） -->
+<!-- 2. CSS 变量（双主题）
+     注意：iframe 隔离文档无法继承宿主 CSS 变量，这里的色值与 globals.css 的
+     --background/--card/--interactive/--success/--error 等语义变量同步维护，
+     修改 globals.css 调色板时需同步更新此处。 -->
 <style>
   :root {
     --background: #F3EBD8; --card: #FFF8E8; --secondary: #ECE1C8;
@@ -92,17 +107,16 @@ function buildHtml(code: string): string {
 <body>
   <div id="root"></div>
 
-  <!-- 3. CDN 依赖（按顺序加载） -->
+  <!-- 3. 运行时依赖：React UMD 本地注入（不走 CDN，见文件头注释） -->
+  <script>${reactUMD}</script>
+  <script>${reactDOMUMD}</script>
+
+  <!-- Tailwind Play CDN：仅提供样式，加载失败不影响渲染 -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- 4. React 18 UMD 挂载 -->
-  <script type="text/babel" data-type="module">
-    const { useState, useEffect, useRef, useMemo, useCallback } = React;
-
-    ${clean}
+  <!-- 4. 编译后的组件 JS（宿主侧 Babel 已转译为 React.createElement） -->
+  <script>
+    ${compiledJs}
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(React.createElement(InteractiveDemo));
@@ -116,12 +130,71 @@ function buildHtml(code: string): string {
 // ============================================================================
 
 export function SandboxRenderer({ code }: SandboxRendererProps) {
-  const srcDoc = useMemo(() => buildHtml(code), [code]);
+  const [compiled, setCompiled] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Babel standalone 体积较大（~2.6MB），动态加载拆为独立 chunk，仅渲染时下载
+  useEffect(() => {
+    let cancelled = false;
+    setCompiled(null);
+    setError(null);
+
+    if (!code) return;
+
+    import("@babel/standalone")
+      .then((mod) => {
+        if (cancelled) return;
+        try {
+          const result = mod.default.transform(cleanCode(code), {
+            presets: [["react", { runtime: "classic" }]],
+            filename: "interactive-demo.jsx",
+          });
+          if (!cancelled) setCompiled(result.code ?? "");
+        } catch (err) {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  const srcDoc = useMemo(
+    () => (compiled === null ? "" : buildHtml(compiled)),
+    [compiled],
+  );
 
   if (!code) {
     return (
-      <div className="flex items-center justify-center p-8 text-[var(--muted-foreground)] text-sm">
+      <div className="flex items-center justify-center p-8 text-sm text-[var(--muted-foreground)]">
         暂无演示代码
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-2 rounded-lg border border-[var(--error)] p-4">
+        <p className="text-sm font-medium text-[var(--error)]">演示代码编译失败</p>
+        <pre className="max-h-48 overflow-auto rounded bg-[var(--secondary)] p-3 font-mono text-xs text-[var(--muted-foreground)]">
+          {error}
+        </pre>
+      </div>
+    );
+  }
+
+  if (compiled === null) {
+    return (
+      <div className="flex items-center justify-center p-8 text-sm text-[var(--muted-foreground)]">
+        正在加载交互推演运行环境...
       </div>
     );
   }
@@ -130,7 +203,7 @@ export function SandboxRenderer({ code }: SandboxRendererProps) {
     <iframe
       srcDoc={srcDoc}
       sandbox="allow-scripts"
-      className="w-full min-h-[400px] border-0 rounded-lg bg-[var(--background)]"
+      className="w-full min-h-[400px] rounded-lg border-0 bg-[var(--background)]"
       title="交互推演"
     />
   );

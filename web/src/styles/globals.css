@@ -34,6 +34,9 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-error: var(--error);
+  --color-code-bg: var(--code-bg);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -73,6 +76,9 @@ html[data-theme="light"] {
   --warning: #B67A2B;
   --interactive: #315E59;
   --progress: #B67A2B;
+  --info: #3E6B76;
+  --error: #A8463A;
+  --code-bg: #2A2620;
   --canvas-background: #EEE4CE;
   --canvas-grid: #D5C8AC;
   --graph-line: #8B806C;
@@ -116,6 +122,9 @@ html[data-theme="dark"] {
   --warning: #D6AA5F;
   --interactive: #70A59A;
   --progress: #D6AA5F;
+  --info: #86B4BE;
+  --error: #E18478;
+  --code-bg: #1A1712;
   --canvas-background: #171512;
   --canvas-grid: #353028;
   --graph-line: #827663;

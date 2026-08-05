@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useMemo } from "react";
-import { CheckCircle2, XCircle, Lightbulb, ChevronRight, RotateCcw, Trophy } from "lucide-react";
+import { CheckCircle2, XCircle, Lightbulb, ChevronRight, RotateCcw, Trophy, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -257,7 +257,9 @@ export function QuizPanel({ questions }: QuizPanelProps) {
                 variant={showCorrect ? "default" : showWrong ? "destructive" : isSelected ? "default" : "outline"}
                 className={cn("flex-1", showCorrect && "bg-[var(--success)] hover:bg-[var(--success)]")}
               >
-                {val === "true" ? "✓ 正确" : "✗ 错误"}
+                {val === "true"
+                  ? <><CheckCircle2 size={14} className="inline mr-1 align-[-2px]" /> 正确</>
+                  : <><XCircle size={14} className="inline mr-1 align-[-2px]" /> 错误</>}
               </Button>
             );
           })}
@@ -358,7 +360,7 @@ export function QuizPanel({ questions }: QuizPanelProps) {
 
           {revealed[currentQuestion.id] && (
             <div className="mt-3 rounded-md bg-[var(--card)]/50 p-3 text-sm text-gray-700 dark:bg-[var(--secondary)]/50 dark:text-gray-300">
-              <p className="font-medium mb-1 text-xs text-gray-500">📖 解析</p>
+              <p className="flex items-center gap-1 font-medium mb-1 text-xs text-gray-500"><BookOpen size={12} /> 解析</p>
               {currentQuestion.explanation}
               {currentQuestion.expected_keywords && currentQuestion.expected_keywords.length > 0 && (
                 <div className="mt-2">
