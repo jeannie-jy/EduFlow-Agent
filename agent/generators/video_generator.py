@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 VIDEO_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "schema_version": {"type": "string"},
+        "source_frames_version": {"type": "string"},
         "job_id": {"type": "string"},
         "status": {"type": "string"},
         "config": {"type": "object"},
@@ -94,6 +96,7 @@ class VideoGenerator(BaseGenerator):
 
         if dsl is None:
             return {
+                "schema_version": "1.0",
                 "status": "skipped",
                 "message": "缺少推演脚本（frames），已自动补充。如重复出现请重试",
                 "config": {},
@@ -131,6 +134,8 @@ class VideoGenerator(BaseGenerator):
                 asyncio.create_task(_fallback_export(str(job_id), dsl, config))
 
                 return {
+                    "schema_version": "1.0",
+                    "source_frames_version": str(dsl.get("artifact_version", "")),
                     "job_id": str(job_id),
                     "status": "queued",
                     "config": config,
@@ -140,6 +145,8 @@ class VideoGenerator(BaseGenerator):
         except Exception as exc:
             logger.exception("VideoGenerator 失败")
             return {
+                "schema_version": "1.0",
+                "source_frames_version": str(dsl.get("artifact_version", "")) if dsl else "",
                 "status": "failed",
                 "message": f"视频导出失败: {exc}",
                 "config": {},

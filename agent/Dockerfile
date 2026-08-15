@@ -5,10 +5,20 @@ LABEL description="EduFlow-Agent API Service"
 WORKDIR /app
 
 # 系统依赖
+# RUN apt-get update \
+#     && apt-get install -y --no-install-recommends \
+#         build-essential \
+#         libpq-dev \
+#     && rm -rf /var/lib/apt/lists/*
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
+        libcairo2-dev \
+        libpango1.0-dev \
+        pkg-config \
+        python3-dev \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Python 依赖

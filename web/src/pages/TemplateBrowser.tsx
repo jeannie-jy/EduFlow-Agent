@@ -88,22 +88,22 @@ export function TemplateBrowser() {
   const display = searchResults ?? templates;
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
+    <div className="mx-auto max-w-5xl p-4 sm:p-6">
       <Link
         to="/app"
-        className="mb-6 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+        className="mb-6 inline-flex items-center gap-1.5 text-sm text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
       >
         <ArrowLeft size={17} />
         返回工作台
       </Link>
 
-      <h1 className="text-2xl font-bold text-slate-900 mb-2">知识模板库</h1>
-      <p className="text-sm text-slate-500 mb-6">浏览预设知识点模板，快速开始推演</p>
+      <h1 className="mb-2 text-2xl font-bold text-[var(--foreground)]">知识模板库</h1>
+      <p className="mb-6 text-sm text-[var(--muted-foreground)]">浏览预设知识点模板，快速开始推演</p>
 
       {/* 搜索栏 */}
-      <div className="mb-6 flex gap-2">
+      <div className="mb-6 flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
-          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <Input
             className="pl-10"
             placeholder="搜索知识点...（如：AVL树、Dijkstra、TCP）"
@@ -112,7 +112,7 @@ export function TemplateBrowser() {
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           />
         </div>
-        <Button onClick={handleSearch} disabled={searching || !query.trim()} className="gap-2">
+        <Button onClick={handleSearch} disabled={searching || !query.trim()} className="gap-2 sm:min-w-24">
           <Search size={18} />
           {searching ? "搜索中..." : "搜索"}
         </Button>
@@ -120,7 +120,7 @@ export function TemplateBrowser() {
 
       {/* 学科筛选 */}
       {searchResults === null && (
-        <div className="mb-6 flex gap-2">
+        <div className="mb-6 flex flex-wrap gap-2" aria-label="按学科筛选模板">
           <Button
             variant={subjectFilter === "" ? "default" : "outline"}
             size="sm"
@@ -142,7 +142,7 @@ export function TemplateBrowser() {
       )}
 
       {error && (
-        <div className="mb-6 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-600">
+        <div className="mb-6 flex items-center gap-2 rounded-lg border border-[color-mix(in_oklch,var(--error)_30%,var(--border))] bg-[color-mix(in_oklch,var(--error)_8%,var(--card))] p-3 text-sm text-[var(--error)]">
           <AlertCircle size={16} /> {error}
           <Button variant="ghost" size="sm" onClick={searchResults ? handleSearch : fetchTemplates} className="ml-auto gap-1">
             <RefreshCw size={14} /> 重试
@@ -158,9 +158,9 @@ export function TemplateBrowser() {
           ))}
         </div>
       ) : display.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
-          <BookOpen size={48} className="mx-auto mb-4 text-slate-300" />
-          <p className="text-slate-500">{searchResults !== null ? "未找到匹配的知识点" : "暂无模板"}</p>
+        <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/45 py-16 text-center">
+          <BookOpen size={48} className="mx-auto mb-4 text-[var(--muted-foreground)] opacity-55" />
+          <p className="text-[var(--muted-foreground)]">{searchResults !== null ? "未找到匹配的知识点" : "暂无模板"}</p>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -182,10 +182,10 @@ export function TemplateBrowser() {
               <Link
                 key={id}
                 to={`/app/project/_new?${templateParams.toString()}`}
-                className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all hover:shadow-md hover:border-indigo-200"
+                className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--interactive)_45%,var(--border))] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive)]"
               >
                 <div className="flex items-start justify-between mb-2">
-                  <h3 className="font-semibold text-slate-900">{concept}</h3>
+                  <h3 className="font-semibold text-[var(--foreground)]">{concept}</h3>
                   <div className="flex items-center gap-1">
                     {similarity !== null && (
                       <Badge variant="secondary">
@@ -195,9 +195,9 @@ export function TemplateBrowser() {
                     <Badge variant="outline">{difficultyLabels[difficulty] ?? `L${difficulty}`}</Badge>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-slate-400">
+                <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
                   {subject && <span>{subjectLabels[subject] ?? subject}</span>}
-                  <Sparkles size={12} className="text-indigo-400" />
+                  <Sparkles size={12} className="text-[var(--interactive)]" />
                   <span>点击开始推演</span>
                 </div>
               </Link>

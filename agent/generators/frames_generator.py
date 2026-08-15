@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -230,6 +231,7 @@ class FramesGenerator(BaseGenerator):
 
         # ── 组装完整 DSL（与 coder_node 一致）──
         dsl: dict[str, Any] = {
+            "schema_version": "1.0",
             "project_id": project_id,
             "topic": user_input,
             "audience": teaching_plan.get("target_audience_level", "undergraduate_cs"),
@@ -245,6 +247,11 @@ class FramesGenerator(BaseGenerator):
             "assets": validated_assets,
             "export_targets": ["web", "manim_video"],
         }
+
+        version_payload = json.dumps(
+            dsl["frames"], ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8")
+        dsl["artifact_version"] = hashlib.sha256(version_payload).hexdigest()[:12]
 
         frame_count = len(dsl["frames"])
         logger.info("FramesGenerator: 完成 | frames=%d", frame_count)

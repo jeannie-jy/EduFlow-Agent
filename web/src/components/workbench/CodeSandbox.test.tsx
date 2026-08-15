@@ -38,7 +38,7 @@ describe("CodeSandbox", () => {
 
   it("renders starter code", () => {
     render(<CodeSandbox data={makeData()} />);
-    expect(screen.getByText(/def sort/)).toBeInTheDocument();
+    expect(screen.getByLabelText("练习代码编辑器")).toHaveValue(makeData().starter_code);
   });
 
   it("renders complexity badges", () => {
@@ -74,8 +74,18 @@ describe("CodeSandbox", () => {
 
   it("renders editable params", () => {
     render(<CodeSandbox data={makeData()} />);
-    expect(screen.getByText(/可调参数/)).toBeInTheDocument();
-    expect(screen.getByText(/数组大小: 10/)).toBeInTheDocument();
+    expect(screen.getByText(/测试参数/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("10")).toBeInTheDocument();
+  });
+
+  it("supports editing, static checking, and reset", () => {
+    render(<CodeSandbox data={makeData()} />);
+    const editor = screen.getByLabelText("练习代码编辑器");
+    fireEvent.change(editor, { target: { value: "def sort(arr):\n    return arr" } });
+    fireEvent.click(screen.getByRole("button", { name: "检查练习" }));
+    expect(screen.getByText(/静态检查通过/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重置" }));
+    expect(editor).toHaveValue(makeData().starter_code);
   });
 
   it("renders learning notes", () => {

@@ -1,25 +1,10 @@
-/**
- * QuizPanel — 练习题交互面板。
- *
- * 展示生成的练习题，支持答题、即时反馈和得分统计。
- */
-
-import { useState, useCallback, useMemo } from "react";
-import { CheckCircle2, XCircle, Lightbulb, ChevronRight, RotateCcw, Trophy, BookOpen } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useMemo, useState } from "react";
+import { BookOpen, CheckCircle2, ChevronLeft, ChevronRight, CircleHelp, Lightbulb, RotateCcw, Trophy, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-// ============================================================================
-// 类型
-// ============================================================================
-
-export interface QuizOption {
-  id: string;
-  text: string;
-  is_correct?: boolean;
-}
-
+export interface QuizOption { id: string; text: string; is_correct?: boolean }
 export interface QuizQuestion {
   id: string;
   type: "multiple_choice" | "true_false" | "fill_blank" | "short_answer";
@@ -31,362 +16,143 @@ export interface QuizQuestion {
   related_concept?: string;
   difficulty: number;
 }
+export interface QuizPanelProps { questions: QuizQuestion[] }
 
-export interface QuizPanelProps {
-  questions: QuizQuestion[];
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-const DIFFICULTY_LABELS: Record<number, string> = { 1: "入门", 2: "进阶", 3: "挑战" };
-const DIFFICULTY_COLORS: Record<number, string> = {
-  1: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-  2: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300",
-  3: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+const DIFFICULTY: Record<number, string> = { 1: "入门", 2: "进阶", 3: "挑战" };
+const TYPES: Record<QuizQuestion["type"], string> = {
+  multiple_choice: "选择题", true_false: "判断题", fill_blank: "填空题", short_answer: "简答题",
 };
 
-// ============================================================================
-// 组件
-// ============================================================================
+function grade(question: QuizQuestion, answer: string): boolean | null {
+  if (question.type === "multiple_choice") return answer === question.options?.find((item) => item.is_correct)?.id;
+  if (question.type === "true_false") return answer === question.correct_answer;
+  if (question.type === "fill_blank") {
+    return (question.correct_answer ?? "").split("/").some(
+      (item) => answer.trim().toLocaleLowerCase() === item.trim().toLocaleLowerCase(),
+    );
+  }
+  return null;
+}
 
 export function QuizPanel({ questions }: QuizPanelProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [score, setScore] = useState<{ correct: number; total: number }>({ correct: 0, total: 0 });
   const [done, setDone] = useState(false);
+  const currentQuestion = questions[currentIndex];
+  const results = useMemo(
+    () => questions.map((question) => question.id in answers ? grade(question, answers[question.id]) : undefined),
+    [answers, questions],
+  );
+  const correctCount = results.filter((result) => result === true).length;
+  const gradedCount = results.filter((result) => typeof result === "boolean").length;
+  const answeredCount = Object.keys(answers).length;
 
-  const currentQuestion = questions[currentIndex] ?? null;
-  const totalQuestions = questions.length;
+  const restart = () => {
+    setCurrentIndex(0); setAnswers({}); setDrafts({}); setRevealed({}); setDone(false);
+  };
 
-  // 检查当前题目是否已回答
-  const hasAnswered = useMemo(() => {
-    if (!currentQuestion) return false;
-    return currentQuestion.id in answers;
-  }, [currentQuestion, answers]);
+  if (!currentQuestion) return <div className="p-8 text-center text-[var(--muted-foreground)]">暂无练习题</div>;
 
-  // 判断是否正确
-  const isCorrect = useMemo(() => {
-    if (!currentQuestion || !hasAnswered) return null;
-    const answer = answers[currentQuestion.id];
-    if (currentQuestion.type === "multiple_choice") {
-      const correctOpt = currentQuestion.options?.find((o) => o.is_correct);
-      return answer === correctOpt?.id;
-    }
-    if (currentQuestion.type === "true_false") {
-      return answer === currentQuestion.correct_answer;
-    }
-    if (currentQuestion.type === "fill_blank") {
-      const accepted = (currentQuestion.correct_answer ?? "").split("/");
-      return accepted.some((a) => answer.trim().toLowerCase() === a.trim().toLowerCase());
-    }
-    // short_answer: always show explanation, no auto-grading
-    return null;
-  }, [currentQuestion, hasAnswered, answers]);
-
-  const handleSelect = useCallback((value: string) => {
-    if (!currentQuestion || hasAnswered) return;
-    const newAnswers = { ...answers, [currentQuestion.id]: value };
-    setAnswers(newAnswers);
-
-    // auto-grade
-    let correct = false;
-    if (currentQuestion.type === "multiple_choice") {
-      const correctOpt = currentQuestion.options?.find((o) => o.is_correct);
-      correct = value === correctOpt?.id;
-    } else if (currentQuestion.type === "true_false") {
-      correct = value === currentQuestion.correct_answer;
-    } else if (currentQuestion.type === "fill_blank") {
-      const accepted = (currentQuestion.correct_answer ?? "").split("/");
-      correct = accepted.some((a) => value.trim().toLowerCase() === a.trim().toLowerCase());
-    }
-    setScore((prev) => ({
-      correct: prev.correct + (correct ? 1 : 0),
-      total: prev.total + 1,
-    }));
-  }, [currentQuestion, hasAnswered, answers]);
-
-  const handleReveal = useCallback(() => {
-    if (!currentQuestion) return;
-    setRevealed((prev) => ({ ...prev, [currentQuestion.id]: true }));
-  }, [currentQuestion]);
-
-  const handleNext = useCallback(() => {
-    if (currentIndex < totalQuestions - 1) {
-      setCurrentIndex((prev) => prev + 1);
-    } else {
-      setDone(true);
-    }
-  }, [currentIndex, totalQuestions]);
-
-  const handleRestart = useCallback(() => {
-    setCurrentIndex(0);
-    setAnswers({});
-    setRevealed({});
-    setScore({ correct: 0, total: 0 });
-    setDone(false);
-  }, []);
-
-  // ── 完成页面 ──
   if (done) {
-    const pct = score.total > 0 ? Math.round((score.correct / score.total) * 100) : 0;
+    const percentage = gradedCount ? Math.round(correctCount / gradedCount * 100) : 0;
     return (
-      <div className="flex flex-col items-center gap-6 p-8">
-        <Trophy size={64} className="text-yellow-500" />
-        <div className="text-center">
-          <h3 className="text-xl font-bold text-[var(--foreground)]">练习完成！</h3>
-          <p className="mt-2 text-3xl font-bold text-[var(--interactive)]">
-            {score.correct} / {score.total}
-          </p>
-          <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-            正确率 {pct}%
-          </p>
+      <section className="grid min-h-[31rem] place-items-center bg-[var(--stage-bg)] p-5">
+        <div className="w-full max-w-2xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-sm sm:p-8">
+          <div className="text-center">
+            <span className="mx-auto grid size-16 place-items-center rounded-full bg-[color-mix(in_oklch,var(--warning)_15%,var(--card))] text-[var(--warning)]"><Trophy size={32} /></span>
+            <h3 className="mt-4 font-serif text-2xl font-bold">练习完成！</h3>
+            <p className="mt-2 font-mono text-4xl font-bold text-[var(--interactive)]">{correctCount} / {gradedCount}</p>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">自动评分正确率 {percentage}%</p>
+          </div>
+          <div className="mt-6 grid gap-2 sm:grid-cols-2">
+            {questions.map((question, index) => (
+              <button key={question.id} type="button" onClick={() => { setCurrentIndex(index); setDone(false); }} className="flex items-center gap-3 rounded-lg border border-[var(--border)] p-3 text-left hover:bg-[var(--secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive)]">
+                {results[index] === true ? <CheckCircle2 className="text-[var(--success)]" /> : results[index] === false ? <XCircle className="text-[var(--error)]" /> : <CircleHelp className="text-[var(--interactive)]" />}
+                <span className="min-w-0"><span className="block font-mono text-[9px] text-[var(--muted-foreground)]">题目 {index + 1}</span><span className="block truncate text-xs">{question.question}</span></span>
+              </button>
+            ))}
+          </div>
+          <Button onClick={restart} variant="outline" className="mx-auto mt-6 flex"><RotateCcw />重新开始</Button>
         </div>
-        <Button onClick={handleRestart} variant="outline" className="gap-2">
-          <RotateCcw size={16} /> 重新开始
-        </Button>
-      </div>
+      </section>
     );
   }
 
-  if (!currentQuestion) {
-    return (
-      <div className="flex items-center justify-center p-8 text-[var(--muted-foreground)]">
-        暂无练习题
-      </div>
-    );
-  }
+  const answered = currentQuestion.id in answers;
+  const selectedAnswer = answers[currentQuestion.id];
+  const result = answered ? grade(currentQuestion, selectedAnswer) : null;
+  const draft = drafts[currentQuestion.id] ?? "";
+  const submit = (value: string) => {
+    if (!answered && value.trim()) setAnswers((current) => ({ ...current, [currentQuestion.id]: value }));
+  };
 
-  // ── 题目页面 ──
   return (
-    <div className="flex flex-col gap-4 p-4">
-      {/* 进度条 */}
-      <div className="flex items-center gap-3">
-        <span className="text-sm text-[var(--muted-foreground)]">
-          {currentIndex + 1} / {totalQuestions}
-        </span>
-        <div className="h-1.5 flex-1 rounded-full bg-[var(--border)]/40">
-          <div
-            className="h-full rounded-full bg-[var(--interactive)] transition-all"
-            style={{ width: `${((currentIndex + 1) / totalQuestions) * 100}%` }}
-          />
+    <section className="grid min-h-[34rem] lg:grid-cols-[13rem_minmax(0,1fr)]">
+      <aside className="border-b border-[var(--border)] bg-[var(--secondary)]/25 p-3 lg:border-b-0 lg:border-r">
+        <div className="flex items-center justify-between gap-2 px-1">
+          <div><h3 className="flex items-center gap-2 text-sm font-semibold"><CircleHelp size={16} />小练习</h3><p className="mt-1 text-[10px] text-[var(--muted-foreground)]">{answeredCount} / {questions.length} 已作答</p></div>
+          <span className="font-mono text-[10px] text-[var(--muted-foreground)]">得分 {correctCount}</span>
         </div>
-        <Badge className={cn("text-xs", DIFFICULTY_COLORS[currentQuestion.difficulty] ?? "")}>
-          {DIFFICULTY_LABELS[currentQuestion.difficulty] ?? currentQuestion.difficulty}
-        </Badge>
-      </div>
-
-      {/* 题目类型标签 */}
-      <div className="flex items-center gap-2">
-        <Badge variant="outline" className="text-xs">
-          {currentQuestion.type === "multiple_choice" ? "选择题" :
-           currentQuestion.type === "true_false" ? "判断题" :
-           currentQuestion.type === "fill_blank" ? "填空题" : "简答题"}
-        </Badge>
-        {currentQuestion.related_concept && (
-          <Badge variant="outline" className="text-xs opacity-50">
-            {currentQuestion.related_concept}
-          </Badge>
-        )}
-      </div>
-
-      {/* 题干 */}
-      <h3 className="text-base font-semibold text-[var(--foreground)] leading-relaxed">
-        {currentQuestion.question}
-      </h3>
-
-      {/* 选择题选项 */}
-      {currentQuestion.type === "multiple_choice" && currentQuestion.options && (
-        <div className="flex flex-col gap-2">
-          {currentQuestion.options.map((opt) => {
-            const isSelected = answers[currentQuestion.id] === opt.id;
-            const showCorrect = hasAnswered && opt.is_correct;
-            const showWrong = hasAnswered && isSelected && !opt.is_correct;
-
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-2 lg:flex-col" aria-label="练习题目导航">
+          {questions.map((question, index) => {
+            const questionResult = results[index];
+            const questionAnswered = question.id in answers;
             return (
-              <button
-                key={opt.id}
-                onClick={() => handleSelect(opt.id)}
-                disabled={hasAnswered}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-all",
-                  "hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-700 dark:hover:bg-blue-950",
-                  hasAnswered ? "cursor-default" : "cursor-pointer",
-                  showCorrect && "border-green-400 bg-green-50 dark:border-green-700 dark:bg-green-950",
-                  showWrong && "border-red-400 bg-red-50 dark:border-red-700 dark:bg-red-950",
-                  isSelected && !hasAnswered && "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950",
-                )}
-              >
-                <span className={cn(
-                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm font-medium",
-                  showCorrect && "border-green-500 bg-[var(--success)] text-white",
-                  showWrong && "border-red-500 bg-[var(--error)] text-white",
-                  isSelected && !hasAnswered && "border-blue-500 bg-[var(--interactive)] text-white",
-                  !isSelected && !hasAnswered && "border-gray-300 text-gray-500 dark:border-gray-600",
-                )}>
-                  {showCorrect ? <CheckCircle2 size={14} /> :
-                   showWrong ? <XCircle size={14} /> :
-                   opt.id.toUpperCase()}
+              <button key={question.id} type="button" aria-label={`查看第 ${index + 1} 题`} aria-current={index === currentIndex ? "step" : undefined} disabled={!questionAnswered && index > currentIndex} onClick={() => setCurrentIndex(index)} className={cn(
+                "flex min-w-36 items-center gap-2 rounded-lg border px-3 py-2.5 text-left outline-none transition-[border-color,background-color,transform] hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[var(--interactive)] disabled:cursor-not-allowed disabled:opacity-45 lg:min-w-0",
+                index === currentIndex ? "border-[var(--interactive)] bg-[var(--card)]" : "border-[var(--border)] bg-[var(--card)]/65",
+              )}>
+                <span className={cn("grid size-6 shrink-0 place-items-center rounded-full border font-mono text-[10px]", questionResult === true && "border-[var(--success)] bg-[var(--success)] text-[var(--card)]", questionResult === false && "border-[var(--error)] bg-[var(--error)] text-[var(--card)]", questionResult === null && "border-[var(--interactive)] bg-[var(--interactive)] text-[var(--card)]")}>
+                  {questionAnswered ? questionResult === true ? <CheckCircle2 size={13} /> : questionResult === false ? <XCircle size={13} /> : <CircleHelp size={13} /> : index + 1}
                 </span>
-                <span className={cn(
-                  showCorrect && "text-green-800 dark:text-green-200 font-medium",
-                  showWrong && "text-red-800 dark:text-red-200",
-                )}>
-                  {opt.text}
-                </span>
+                <span><span className="block text-[10px] font-medium">第 {index + 1} 题</span><span className="block text-[9px] text-[var(--muted-foreground)]">{question.related_concept ?? "待作答"}</span></span>
               </button>
             );
           })}
         </div>
-      )}
+      </aside>
 
-      {/* 判断题 */}
-      {currentQuestion.type === "true_false" && (
-        <div className="flex gap-3">
-          {["true", "false"].map((val) => {
-            const isSelected = answers[currentQuestion.id] === val;
-            const showCorrect = hasAnswered && val === currentQuestion.correct_answer;
-            const showWrong = hasAnswered && isSelected && val !== currentQuestion.correct_answer;
-            return (
-              <Button
-                key={val}
-                onClick={() => handleSelect(val)}
-                disabled={hasAnswered}
-                variant={showCorrect ? "default" : showWrong ? "destructive" : isSelected ? "default" : "outline"}
-                className={cn("flex-1", showCorrect && "bg-[var(--success)] hover:bg-[var(--success)]")}
-              >
-                {val === "true"
-                  ? <><CheckCircle2 size={14} className="inline mr-1 align-[-2px]" /> 正确</>
-                  : <><XCircle size={14} className="inline mr-1 align-[-2px]" /> 错误</>}
-              </Button>
-            );
-          })}
+      <main className="min-w-0 bg-[var(--stage-bg)] p-3 sm:p-5">
+        <div className="mx-auto max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm sm:p-7">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex gap-2"><Badge variant="outline" className="font-mono text-[10px]">{currentIndex + 1} / {questions.length}</Badge><Badge variant="outline">{TYPES[currentQuestion.type]}</Badge>{currentQuestion.related_concept && <Badge variant="secondary">{currentQuestion.related_concept}</Badge>}</div>
+            <span className="flex items-center gap-1 text-[10px] text-[var(--muted-foreground)]">难度 <Badge variant="secondary">{DIFFICULTY[currentQuestion.difficulty] ?? currentQuestion.difficulty}</Badge></span>
+          </div>
+          <div className="mt-4 flex gap-1" aria-label="答题进度">{questions.map((question, index) => <span key={question.id} className={cn("h-1.5 flex-1 rounded-full", index === currentIndex ? "bg-[var(--interactive)]" : question.id in answers ? "bg-[var(--success)]/70" : "bg-[var(--border)]")} />)}</div>
+          <h4 className="mt-6 font-serif text-xl font-semibold leading-8">{currentQuestion.question}</h4>
+
+          {currentQuestion.type === "multiple_choice" && currentQuestion.options && (
+            <div className="mt-5 grid gap-2">{currentQuestion.options.map((option) => {
+              const selected = selectedAnswer === option.id;
+              const correct = answered && option.is_correct;
+              const wrong = answered && selected && !option.is_correct;
+              return <button key={option.id} onClick={() => submit(option.id)} disabled={answered} aria-pressed={selected} className={cn(
+                "flex min-h-14 items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm outline-none transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-[var(--interactive)] focus-visible:ring-2 focus-visible:ring-[var(--interactive)] disabled:cursor-default disabled:hover:translate-y-0",
+                correct && "border-[var(--success)] bg-[color-mix(in_oklch,var(--success)_10%,var(--card))]", wrong && "border-[var(--error)] bg-[color-mix(in_oklch,var(--error)_9%,var(--card))]",
+              )}><span className={cn("grid size-8 shrink-0 place-items-center rounded-full border font-mono text-xs", correct && "border-[var(--success)] bg-[var(--success)] text-[var(--card)]", wrong && "border-[var(--error)] bg-[var(--error)] text-[var(--card)]")}>{correct ? <CheckCircle2 size={15} /> : wrong ? <XCircle size={15} /> : option.id.toUpperCase()}</span><span>{option.text}</span></button>;
+            })}</div>
+          )}
+
+          {currentQuestion.type === "true_false" && <div className="mt-5 grid grid-cols-2 gap-3">{[["true", "正确"], ["false", "错误"]].map(([value, label]) => <button key={value} disabled={answered} onClick={() => submit(value)} className={cn("flex min-h-20 items-center justify-center gap-2 rounded-lg border font-semibold hover:border-[var(--interactive)] hover:bg-[var(--secondary)]", answered && value === currentQuestion.correct_answer && "border-[var(--success)] text-[var(--success)]", answered && value === selectedAnswer && value !== currentQuestion.correct_answer && "border-[var(--error)] text-[var(--error)]")}>{value === "true" ? <CheckCircle2 /> : <XCircle />}{label}</button>)}</div>}
+
+          {(currentQuestion.type === "fill_blank" || currentQuestion.type === "short_answer") && <div className="mt-5 space-y-3">
+            {currentQuestion.type === "fill_blank" ? <input value={draft} onChange={(event) => setDrafts((current) => ({ ...current, [currentQuestion.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submit(draft); }} disabled={answered} placeholder="请输入你的答案..." className="h-12 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-4 outline-none focus:border-[var(--interactive)] focus:ring-2 focus:ring-[var(--interactive)]/20" /> : <textarea value={draft} onChange={(event) => setDrafts((current) => ({ ...current, [currentQuestion.id]: event.target.value }))} disabled={answered} rows={5} placeholder="请输入你的答案..." className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-4 py-3 outline-none focus:border-[var(--interactive)] focus:ring-2 focus:ring-[var(--interactive)]/20" />}
+            {!answered && <Button className="w-full" disabled={!draft.trim()} onClick={() => submit(draft)}>{currentQuestion.type === "short_answer" ? "提交答案（教师评阅）" : "提交答案"}</Button>}
+          </div>}
+
+          {answered && <div className={cn("mt-5 rounded-lg border p-4", result === true ? "border-[var(--success)] bg-[color-mix(in_oklch,var(--success)_9%,var(--card))]" : result === false ? "border-[var(--error)] bg-[color-mix(in_oklch,var(--error)_8%,var(--card))]" : "border-[var(--interactive)] bg-[color-mix(in_oklch,var(--interactive)_8%,var(--card))]")}>
+            <p className={cn("flex items-center gap-2 text-sm font-semibold", result === true ? "text-[var(--success)]" : result === false ? "text-[var(--error)]" : "text-[var(--interactive)]")}>{result === true ? <><CheckCircle2 />回答正确！</> : result === false ? <><XCircle />回答错误</> : <><Lightbulb />已提交，请查看参考解析</>}</p>
+            {!revealed[currentQuestion.id] ? <Button variant="ghost" size="sm" className="mt-2" onClick={() => setRevealed((current) => ({ ...current, [currentQuestion.id]: true }))}><Lightbulb />查看解析</Button> : <div className="mt-3 border-t border-[var(--border)] pt-3 text-sm leading-6"><p className="mb-1 flex items-center gap-1 text-xs font-semibold text-[var(--muted-foreground)]"><BookOpen />解析</p><p>{currentQuestion.explanation}</p>{currentQuestion.expected_keywords?.length ? <div className="mt-3 flex flex-wrap gap-1">{currentQuestion.expected_keywords.map((keyword) => <Badge key={keyword} variant="outline">{keyword}</Badge>)}</div> : null}</div>}
+          </div>}
+
+          <div className="mt-5 flex items-center justify-between border-t border-[var(--border)] pt-4">
+            <Button variant="outline" size="sm" disabled={currentIndex === 0} onClick={() => setCurrentIndex((index) => index - 1)}><ChevronLeft />上一题</Button>
+            {answered && <Button onClick={() => currentIndex < questions.length - 1 ? setCurrentIndex((index) => index + 1) : setDone(true)}>{currentIndex < questions.length - 1 ? <>下一题<ChevronRight /></> : <>查看结果<Trophy /></>}</Button>}
+          </div>
         </div>
-      )}
-
-      {/* 填空题 */}
-      {currentQuestion.type === "fill_blank" && (
-        <div className="space-y-3">
-          <input
-            type="text"
-            className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm dark:border-gray-600 dark:bg-gray-800"
-            placeholder="请输入你的答案..."
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                handleSelect((e.target as HTMLInputElement).value);
-              }
-            }}
-            disabled={hasAnswered}
-          />
-          {!hasAnswered && (
-            <Button
-              onClick={() => {
-                const input = document.querySelector("input") as HTMLInputElement;
-                if (input?.value) handleSelect(input.value);
-              }}
-              className="w-full"
-            >
-              提交答案
-            </Button>
-          )}
-        </div>
-      )}
-
-      {/* 简答题 */}
-      {currentQuestion.type === "short_answer" && (
-        <div className="space-y-3">
-          <textarea
-            className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm dark:border-gray-600 dark:bg-gray-800"
-            rows={3}
-            placeholder="请输入你的答案..."
-            disabled={hasAnswered}
-          />
-          {!hasAnswered && (
-            <Button
-              onClick={() => {
-                const input = document.querySelector("textarea") as HTMLTextAreaElement;
-                if (input?.value) handleSelect(input.value);
-              }}
-              className="w-full"
-            >
-              提交答案（教师评阅）
-            </Button>
-          )}
-          {hasAnswered && !revealed[currentQuestion.id] && (
-            <p className="text-xs text-[var(--muted-foreground)]">简答题不自动判分，点击查看参考答案</p>
-          )}
-        </div>
-      )}
-
-      {/* 反馈区域 */}
-      {hasAnswered && (
-        <div className={cn(
-          "rounded-lg border p-4",
-          isCorrect === true && "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950",
-          isCorrect === false && "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950",
-          isCorrect === null && "border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950",
-        )}>
-          {isCorrect === true && (
-            <p className="flex items-center gap-2 text-sm font-medium text-[var(--success)]">
-              <CheckCircle2 size={16} /> 回答正确！
-            </p>
-          )}
-          {isCorrect === false && (
-            <p className="flex items-center gap-2 text-sm font-medium text-[var(--error)]">
-              <XCircle size={16} /> 回答错误
-              {currentQuestion.correct_answer && (
-                <span>（正确答案：{currentQuestion.correct_answer}）</span>
-              )}
-            </p>
-          )}
-          {isCorrect === null && (
-            <p className="flex items-center gap-2 text-sm font-medium text-[var(--interactive)]">
-              <Lightbulb size={16} /> 已提交，请查看参考解析
-            </p>
-          )}
-
-          {!revealed[currentQuestion.id] && (
-            <Button
-              onClick={handleReveal}
-              variant="ghost"
-              size="sm"
-              className="mt-2 gap-1 text-xs"
-            >
-              <Lightbulb size={14} /> 查看解析
-            </Button>
-          )}
-
-          {revealed[currentQuestion.id] && (
-            <div className="mt-3 rounded-md bg-[var(--card)]/50 p-3 text-sm text-gray-700 dark:bg-[var(--secondary)]/50 dark:text-gray-300">
-              <p className="flex items-center gap-1 font-medium mb-1 text-xs text-gray-500"><BookOpen size={12} /> 解析</p>
-              {currentQuestion.explanation}
-              {currentQuestion.expected_keywords && currentQuestion.expected_keywords.length > 0 && (
-                <div className="mt-2">
-                  <p className="text-xs text-gray-500 mb-1">关键词：</p>
-                  <div className="flex flex-wrap gap-1">
-                    {currentQuestion.expected_keywords.map((kw) => (
-                      <Badge key={kw} variant="outline" className="text-xs">{kw}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 下一题按钮 */}
-      {hasAnswered && (
-        <Button onClick={handleNext} className="gap-2 self-end">
-          {currentIndex < totalQuestions - 1 ? (
-            <>下一题 <ChevronRight size={16} /></>
-          ) : (
-            <>查看结果 <Trophy size={16} /></>
-          )}
-        </Button>
-      )}
-    </div>
+      </main>
+    </section>
   );
 }

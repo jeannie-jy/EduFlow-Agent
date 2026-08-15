@@ -220,4 +220,33 @@ describe("QuizPanel", () => {
     expect(screen.getByPlaceholderText("请输入你的答案...")).toBeInTheDocument();
     expect(screen.getByText("简答题")).toBeInTheDocument();
   });
+
+  it("shows answer state in the question rail and allows review", () => {
+    render(<QuizPanel questions={makeMCQuestions(2)} />);
+    fireEvent.click(screen.getByText("Option A0").closest("button")!);
+
+    expect(screen.getByRole("button", { name: "查看第 1 题" })).toHaveAttribute("aria-current", "step");
+    fireEvent.click(screen.getByText(/下一题/).closest("button")!);
+    expect(screen.getByRole("button", { name: "查看第 2 题" })).toHaveAttribute("aria-current", "step");
+
+    fireEvent.click(screen.getByRole("button", { name: "查看第 1 题" }));
+    expect(screen.getByText("Question 1?")).toBeInTheDocument();
+    expect(screen.getByText(/回答正确/)).toBeInTheDocument();
+  });
+
+  it("submits the current fill-in draft without reading other page inputs", () => {
+    const question: QuizQuestion = {
+      id: "fill1",
+      type: "fill_blank",
+      question: "Complexity?",
+      correct_answer: "O(n)",
+      explanation: "Linear.",
+      difficulty: 2,
+    };
+    render(<><input aria-label="other input" defaultValue="wrong" /><QuizPanel questions={[question]} /></>);
+
+    fireEvent.change(screen.getByPlaceholderText("请输入你的答案..."), { target: { value: "O(n)" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交答案" }));
+    expect(screen.getByText(/回答正确/)).toBeInTheDocument();
+  });
 });

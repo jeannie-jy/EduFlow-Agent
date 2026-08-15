@@ -115,9 +115,20 @@ class TtsOutput(BaseModel):
 
 class VideoOutput(BaseModel):
     """Manim 视频模块产出。"""
+    schema_version: str = "1.0"
+    source_frames_version: str = ""
     job_id: str = ""
     status: str = "queued"
     config: dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
+class FramesOutput(BaseModel):
+    """逐帧推演模块产出。"""
+    schema_version: str = "1.0"
+    artifact_version: str = ""
+    frames: list[dict[str, Any]] = Field(default_factory=list)
+    parameters: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExportOutput(BaseModel):

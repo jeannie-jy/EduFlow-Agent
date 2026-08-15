@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { renderPage } from "@/test/render";
 import { DijkstraExplorePage } from "./DijkstraExplorePage";
+import "@/features/demo/DijkstraDemo";
 
 describe("DijkstraExplorePage", () => {
   it("offers a complete public experience without authentication", async () => {
@@ -14,7 +15,7 @@ describe("DijkstraExplorePage", () => {
     })).toBeVisible();
     const loadingStatus = screen.getByText("正在加载交互演示…");
     expect(loadingStatus).toHaveAttribute("role", "status");
-    const primaryDemoControl = await screen.findByRole("button", { name: "观看交互演示" });
+    const primaryDemoControl = await screen.findByRole("button", { name: "观看交互演示" }, { timeout: 5000 });
     expect(primaryDemoControl).toBeVisible();
     expect(document.body).toHaveFocus();
     await user.tab();

@@ -111,5 +111,5 @@ async def recompute_project(
 
     # 触发重新生成（已知限制：当前为完整生成流而非范围重算，见 README「已知局限」）
     return {
-        "stream_url": f"/api/projects/{project_id}/generate/stream",
+        "stream_url": f"/api/projects/{project_id}/generate/regenerate/stream",
     }

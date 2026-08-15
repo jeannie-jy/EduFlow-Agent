@@ -5,7 +5,7 @@
  * 对齐 DESIGN.md：纸本质感、语义色、编辑式排版、章节编号。
  */
 
-import { Brain, Layers, PenTool, Play, Video, GitCompare, AlertTriangle, Map, Code2 } from "lucide-react";
+import { Brain, Layers, PenTool, Play, Video, GitCompare, AlertTriangle, Map, Code2, CheckCircle2, FolderKanban } from "lucide-react";
 import { MisconceptionGallery } from "@/components/workbench/MisconceptionGallery";
 import type { MisconceptionItem } from "@/components/workbench/MisconceptionGallery";
 import { LearningPathway } from "@/components/workbench/LearningPathway";
@@ -17,17 +17,19 @@ import { ComparisonView } from "@/components/workbench/ComparisonView";
 import type { ComparisonData } from "@/components/workbench/ComparisonView";
 import { QuizPanel } from "@/components/workbench/QuizPanel";
 import type { QuizQuestion } from "@/components/workbench/QuizPanel";
-import { KnowledgeCard } from "@/components/workbench/KnowledgeCard";
+import { KnowledgeCardDeck } from "@/components/workbench/KnowledgeCardDeck";
+import type { KnowledgeCardData } from "@/components/workbench/KnowledgeCard";
 import { MindmapView, type MindmapNode } from "@/components/workbench/MindmapView";
 import type { ProjectDetailResponse } from "@/services/projects";
 import { useState, useCallback, useEffect } from "react";
-import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { regenerateModule } from "@/services/generate";
-import { getExportStatus } from "@/services/export";
 import type { SSEModuleDoneEvent } from "@/services/sse";
+import { FrameWorkbench } from "@/features/artifacts/FrameWorkbench";
+import { normalizeFramesArtifact } from "@/features/artifacts/artifact-model";
+import { VideoStudioCard } from "@/features/artifacts/VideoStudioCard";
 
 // ============================================================================
 // 模块配置
@@ -49,15 +51,34 @@ const SECTION_CONFIG: Record<string, { title: string; icon: typeof Brain; order:
 export interface ModuleResultsPanelProps {
   project: ProjectDetailResponse | null;
   onNavigateTab?: (tab: string) => void;
+  onRefreshProject?: () => void | Promise<void>;
 }
 
-export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPanelProps) {
+export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }: ModuleResultsPanelProps) {
   const moduleOutputs = (project?.module_outputs ?? {}) as Record<string, unknown>;
   const [localOutputs, setLocalOutputs] = useState<Record<string, unknown>>(moduleOutputs);
   const [isRegenerating, setIsRegenerating] = useState<Record<string, boolean>>({});
+  const [targetFrameId, setTargetFrameId] = useState<string>();
+  const [navigationMessage, setNavigationMessage] = useState<{ tone: "success" | "error"; text: string }>();
+
+  useEffect(() => {
+    setLocalOutputs((project?.module_outputs ?? {}) as Record<string, unknown>);
+  }, [project?.module_outputs, project?.updated_at]);
 
   const displayedOutputs = { ...moduleOutputs, ...localOutputs };
   const entries = Object.entries(displayedOutputs).filter(([, v]) => v != null);
+  const [activeModule, setActiveModule] = useState<string>(() =>
+    entries.some(([key]) => key === "frames") ? "frames" : entries[0]?.[0] ?? "",
+  );
+  const sorted = entries
+    .map(([key, value]) => ({ key, value, config: SECTION_CONFIG[key] }))
+    .filter((entry) => entry.config)
+    .sort((left, right) => left.config.order - right.config.order);
+  const selected = sorted.find((entry) => entry.key === activeModule) ?? sorted[0];
+
+  useEffect(() => {
+    if (selected && selected.key !== activeModule) setActiveModule(selected.key);
+  }, [activeModule, selected]);
 
   const handleRegenerate = useCallback((moduleId: string) => {
     if (!project?.id || isRegenerating[moduleId]) return;
@@ -73,6 +94,23 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
       },
     });
   }, [project?.id, isRegenerating]);
+
+  const handleFrameNavigate = useCallback((frameId: string) => {
+    const framesArtifact = normalizeFramesArtifact(displayedOutputs.frames);
+    const target = framesArtifact.frames.find((frame) => frame.frame_id === frameId);
+
+    if (!target) {
+      setNavigationMessage({
+        tone: "error",
+        text: `未找到关联帧 ${frameId}，可能需要重新生成推演脚本。`,
+      });
+      return;
+    }
+
+    setTargetFrameId(frameId);
+    setActiveModule("frames");
+    setNavigationMessage({ tone: "success", text: `已定位到 ${frameId} · ${target.title}` });
+  }, [displayedOutputs.frames]);
 
   if (entries.length === 0) {
     return (
@@ -93,247 +131,92 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
     );
   }
 
-  // 按 order 排序
-  const sorted = entries
-    .map(([key, value]) => ({ key, value, config: SECTION_CONFIG[key] }))
-    .filter((e) => e.config)
-    .sort((a, b) => a.config.order - b.config.order);
-
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
-      <div className="mb-2">
-        <h2 className="text-lg font-bold text-[var(--foreground)]">教学成果</h2>
-        <p className="text-sm text-[var(--muted-foreground)]">
-          已生成 {sorted.length} 个模块产物
-        </p>
-      </div>
-
-      {sorted.map(({ key, value, config }) => {
-        const SectionIcon = config.icon;
-        return (
-          <section
-            key={key}
-            className="rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden"
-          >
-            {/* 节标题 */}
-            <div className="flex items-center gap-3 border-b border-[var(--border)] px-6 py-3">
-              <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums">
-                {String(config.order).padStart(2, "0")}
-              </span>
-              <SectionIcon size={16} className="text-[var(--interactive)]" />
-              <span className="text-sm font-semibold text-[var(--foreground)]">{config.title}</span>
-              <div className="ml-auto flex items-center gap-2">
-                {/* 重新生成按钮 + 并发锁 */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 gap-1 text-xs"
-                  disabled={isRegenerating[key]}
-                  onClick={() => handleRegenerate(key)}
-                >
-                  <RefreshCw size={12} className={isRegenerating[key] ? "animate-spin" : ""} />
-                  {isRegenerating[key] ? "生成中" : "重生成"}
-                </Button>
-              </div>
-              <Badge variant="outline" className="text-xs text-[var(--muted-foreground)]">
-                已生成
-              </Badge>
-            </div>
-            {/* 内容 */}
-            <div>
-              {renderModuleContent(key, value)}
-            </div>
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-// ============================================================================
-// VideoExportCard — 视频导出状态轮询 + 播放器
-// ============================================================================
-
-function VideoExportCard({ value }: { value: Record<string, unknown> }) {
-  const jobId = value?.job_id as string | undefined;
-  const [status, setStatus] = useState<string>(value?.status as string ?? "queued");
-  const [progress, setProgress] = useState<number>(0);
-  const [artifacts, setArtifacts] = useState<Array<{ type: string; url: string; size_bytes: number }> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!jobId) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const res = await getExportStatus(jobId);
-        if (cancelled) return;
-        setStatus(res.status);
-        setProgress(res.progress_pct ?? 0);
-        if (res.status === "completed" && res.artifacts) setArtifacts(res.artifacts);
-        if (res.status === "failed") setError(res.error_log ?? "渲染失败");
-        if (res.status === "completed" || res.status === "failed") return;
-      } catch {
-        if (!cancelled) setTimeout(poll, 5000);
-        return;
-      }
-      if (!cancelled) setTimeout(poll, 3000);
-    };
-    poll();
-    return () => { cancelled = true; };
-  }, [jobId]);
-
-  const mp4 = artifacts?.find((a) => a.type === "mp4");
-
-  return (
-    <div className="p-4 space-y-3">
-      {!jobId ? (
-        <p className="text-sm text-[var(--muted-foreground)]">缺少导出任务 ID</p>
-      ) : status === "queued" || status === "rendering" ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--interactive)] border-t-transparent" />
-            <span className="text-sm text-[var(--muted-foreground)]">
-              {status === "queued" ? "排队中..." : `渲染中 ${progress}%`}
-            </span>
+    <div className="grid min-h-full bg-[var(--background)] lg:grid-cols-[15rem_minmax(0,1fr)]">
+      <aside className="border-b border-[var(--border)] bg-[var(--card)] lg:border-b-0 lg:border-r">
+        <div className="border-b border-[var(--border)] px-4 py-4">
+          <div className="flex items-center gap-2">
+            <FolderKanban size={16} className="text-[var(--interactive)]" />
+            <h2 className="text-sm font-bold">教学成果</h2>
           </div>
-          <Progress value={progress} className="h-1.5" />
+          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{sorted.length} 个模块已生成</p>
         </div>
-      ) : status === "completed" && mp4 ? (
-        <div className="space-y-3">
-          <video controls className="w-full rounded-lg" src={mp4.url}>
-            您的浏览器不支持视频播放
-          </video>
-          {artifacts && artifacts.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {artifacts.map((a) => (
-                <a key={a.type} href={a.url} download className="inline-flex items-center gap-1 rounded border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--interactive)] hover:bg-[var(--interactive)]/10">
-                  {a.type === "mp4" ? "下载视频" : a.type === "manim_source" ? "Manim 源码" : "字幕 SRT"}
-                </a>
-              ))}
+        <nav aria-label="成果模块" className="flex gap-1 overflow-x-auto p-2 lg:block lg:space-y-1">
+          {sorted.map(({ key, config }) => {
+            const SectionIcon = config.icon;
+            const active = selected?.key === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveModule(key)}
+                className={`flex min-w-max items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors lg:w-full ${
+                  active
+                    ? "bg-[var(--interactive)]/10 font-semibold text-[var(--interactive)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+                }`}
+              >
+                <SectionIcon size={15} />
+                <span className="flex-1">{config.title}</span>
+                {isRegenerating[key] ? <RefreshCw size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      {selected && (
+        <main className="min-w-0">
+          <header className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3">
+            <selected.config.icon size={17} className="text-[var(--interactive)]" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold">{selected.config.title}</h2>
+              <p className="text-[11px] text-[var(--muted-foreground)]">成果工作区 · 可检查并重新生成当前模块</p>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px]">已生成</Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isRegenerating[selected.key]}
+                onClick={() => handleRegenerate(selected.key)}
+              >
+                <RefreshCw className={isRegenerating[selected.key] ? "animate-spin" : ""} />
+                {isRegenerating[selected.key] ? "生成中" : "重新生成"}
+              </Button>
+            </div>
+          </header>
+          {navigationMessage && (
+            <div
+              role="status"
+              className={`flex items-center justify-between gap-3 border-b px-4 py-2 text-xs ${
+                navigationMessage.tone === "error"
+                  ? "border-[color-mix(in_oklch,var(--error)_25%,var(--border))] bg-[color-mix(in_oklch,var(--error)_8%,var(--card))] text-[var(--error)]"
+                  : "border-[color-mix(in_oklch,var(--success)_25%,var(--border))] bg-[color-mix(in_oklch,var(--success)_8%,var(--card))] text-[var(--foreground)]"
+              }`}
+            >
+              <span>{navigationMessage.text}</span>
+              <button
+                type="button"
+                className="shrink-0 rounded px-2 py-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive)]"
+                onClick={() => setNavigationMessage(undefined)}
+              >
+                关闭
+              </button>
             </div>
           )}
-        </div>
-      ) : status === "failed" ? (
-        <div className="space-y-2">
-          <p className="text-sm text-[var(--error)] font-medium">导出失败</p>
-          <p className="text-xs text-[var(--muted-foreground)]">{error ?? "未知错误"}</p>
-        </div>
-      ) : status === "skipped" ? (
-        <p className="text-sm text-[var(--muted-foreground)]">{value?.message as string ?? "已跳过"}</p>
-      ) : (
-        <p className="text-sm text-[var(--muted-foreground)]">状态: {status} — {value?.message as string ?? ""}</p>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// FramesPlayer — 交互式逐帧播放器
-// ============================================================================
-
-function FramesPlayer({ value }: { value: Record<string, unknown> }) {
-  const frames = (value?.frames ?? []) as Array<Record<string, unknown>>;
-  const frameCount = frames.length;
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  // 帧数变化时复位（重生成后防止越界）
-  useEffect(() => { setActiveIndex(0); }, [frameCount]);
-
-  if (frameCount === 0) {
-    return <p className="p-4 text-sm text-[var(--muted-foreground)]">推演帧已生成，暂无帧数据</p>;
-  }
-
-  const frame = frames[activeIndex];
-  const vos = (frame?.visual_objects ?? []) as Array<Record<string, unknown>>;
-  const voTypes = [...new Set(vos.map((v) => String(v?.type ?? "")).values())].filter(Boolean);
-  const isFirst = activeIndex === 0;
-  const isLast = activeIndex === frameCount - 1;
-  const pct = Math.round(((activeIndex + 1) / frameCount) * 100);
-
-  // 键盘导航
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowLeft" && !isFirst) setActiveIndex((i) => i - 1);
-    if (e.key === "ArrowRight" && !isLast) setActiveIndex((i) => i + 1);
-  };
-
-  return (
-    <div className="space-y-4 p-4" tabIndex={0} onKeyDown={handleKeyDown}>
-      {/* 进度条 + 序号 */}
-      <div className="flex items-center gap-3">
-        <Progress value={pct} className="h-1.5 flex-1" />
-        <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums shrink-0">
-          {activeIndex + 1} / {frameCount}
-        </span>
-      </div>
-
-      {/* 当前帧内容 */}
-      <div className="rounded-lg border border-[var(--border)] p-4 space-y-3">
-        {/* 帧编号 + 标题 */}
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-[var(--muted-foreground)] tabular-nums">
-            {String(frame?.frame_id ?? `f_${activeIndex + 1}`)}
-          </span>
-          <span className="text-sm font-semibold text-[var(--foreground)]">
-            {String(frame?.title ?? "")}
-          </span>
-        </div>
-
-        {/* 学习目标 */}
-        {frame?.learning_goal ? (
-          <p className="text-xs text-[var(--muted-foreground)]">
-            目标：{String(frame.learning_goal)}
-          </p>
-        ) : null}
-
-        {/* 旁白 */}
-        {frame?.narration ? (
-          <p className="text-sm leading-relaxed text-[var(--foreground)]/80">
-            {String(frame.narration)}
-          </p>
-        ) : null}
-
-        {/* 可视化对象类型标签 */}
-        {voTypes.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {voTypes.map((t) => (
-              <span
-                key={t}
-                className="inline-block rounded border border-[var(--border)] bg-[var(--secondary)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]"
-              >
-                {t}
-              </span>
-            ))}
+          <div className="min-w-0">
+            {renderModuleContent(
+              selected.key,
+              selected.value,
+              displayedOutputs.frames,
+              project?.id,
+              onRefreshProject,
+              handleFrameNavigate,
+              targetFrameId,
+            )}
           </div>
-        )}
-      </div>
-
-      {/* 导航按钮 */}
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isFirst}
-          onClick={() => setActiveIndex((i) => i - 1)}
-          className="gap-1"
-        >
-          <ChevronLeft size={14} />
-          上一帧
-        </Button>
-        <span className="text-xs text-[var(--muted-foreground)] tabular-nums">
-          {pct}%
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isLast}
-          onClick={() => setActiveIndex((i) => i + 1)}
-          className="gap-1"
-        >
-          下一帧
-          <ChevronRight size={14} />
-        </Button>
-      </div>
+        </main>
+      )}
     </div>
   );
 }
@@ -341,38 +224,37 @@ function FramesPlayer({ value }: { value: Record<string, unknown> }) {
 function renderModuleContent(
   moduleId: string,
   value: unknown,
+  framesValue?: unknown,
+  projectId?: string,
+  onRefreshProject?: () => void | Promise<void>,
+  onFrameNavigate?: (frameId: string) => void,
+  targetFrameId?: string,
 ): React.ReactNode {
   switch (moduleId) {
     case "mindmap":
       // root 结构由 LLM 产出，运行时由 MindmapView 递归渲染；此处仅做类型断言
-      return <MindmapView root={(value as { root?: MindmapNode })?.root as MindmapNode} />;
+      return <MindmapView root={normalizeMindmapNode((value as { root?: Record<string, unknown> })?.root)} onFrameClick={onFrameNavigate} />;
     case "cards":
-      return (
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {((value as { cards?: Array<Record<string, unknown>> })?.cards ?? []).map(
-            (card, i) => (
-              <KnowledgeCard key={card.id as string ?? i} card={{
-                id: card.id as string,
-                title: card.title as string,
-                definition: card.definition as string,
-                intuition: card.intuition as string,
-                pitfalls: (card.pitfalls as string[]) ?? [],
-                formula: (card.formula as string | null) ?? undefined,
-                pseudocode: (card.pseudocode as string | null) ?? undefined,
-                relatedFrameIds: card.related_frame_ids as string[],
-                category: card.category as string,
-                difficulty: card.difficulty as number,
-              }} />
-            )
-          )}
-        </div>
-      );
+      return <KnowledgeCardDeck cards={((value as { cards?: Array<Record<string, unknown>> })?.cards ?? []).map(
+        (card, index): KnowledgeCardData => ({
+          id: String(card.id ?? `card-${index + 1}`),
+          title: String(card.title ?? `知识卡片 ${index + 1}`),
+          definition: card.definition ? String(card.definition) : undefined,
+          intuition: card.intuition ? String(card.intuition) : undefined,
+          pitfalls: Array.isArray(card.pitfalls) ? card.pitfalls.map(String) : [],
+          formula: card.formula ? String(card.formula) : undefined,
+          pseudocode: card.pseudocode ? String(card.pseudocode) : undefined,
+          relatedFrameIds: Array.isArray(card.related_frame_ids) ? card.related_frame_ids.map(String) : [],
+          category: card.category ? String(card.category) : undefined,
+          difficulty: typeof card.difficulty === "number" ? card.difficulty : undefined,
+        })
+      )} onFrameClick={onFrameNavigate} />;
     case "quiz":
       return <QuizPanel questions={(value as { questions?: QuizQuestion[] })?.questions ?? []} />;
     case "frames":
-      return <FramesPlayer value={value as Record<string, unknown>} />;
+      return <FrameWorkbench value={value} projectId={projectId} onRecomputed={onRefreshProject} targetFrameId={targetFrameId} />;
     case "video":
-      return <VideoExportCard value={value as Record<string, unknown>} />;
+      return <VideoStudioCard videoValue={value} framesValue={framesValue} projectId={projectId} />;
     case "comparison":
       return <ComparisonView data={value as ComparisonData} />;
     case "misconception":
@@ -390,4 +272,23 @@ function renderModuleContent(
         </div>
       );
   }
+}
+
+function normalizeMindmapNode(source?: Record<string, unknown>): MindmapNode {
+  const children = Array.isArray(source?.children)
+    ? source.children.map((child) => normalizeMindmapNode(child as Record<string, unknown>))
+    : [];
+  const relatedFrameIds = Array.isArray(source?.related_frame_ids)
+    ? source.related_frame_ids.map(String)
+    : Array.isArray(source?.relatedFrameIds)
+      ? source.relatedFrameIds.map(String)
+      : [];
+
+  return {
+    id: String(source?.id ?? "mindmap-root"),
+    name: String(source?.name ?? source?.label ?? "知识导图"),
+    type: source?.type ? String(source.type) : undefined,
+    relatedFrameIds,
+    children,
+  };
 }

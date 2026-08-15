@@ -5,7 +5,6 @@
  */
 
 import { memo } from "react";
-import { TreePine, BarChart3 } from "lucide-react";
 import type { DSLVisualObject } from "../simulation-model";
 import { NodeObject } from "./NodeObject";
 import { EdgeObject } from "./EdgeObject";
@@ -19,12 +18,18 @@ import { ProcessObject } from "./ProcessObject";
 import { TimelineObject } from "./TimelineObject";
 import { CardObject } from "./CardObject";
 import { MindmapObject } from "./MindmapObject";
+import { StructureGraphObject } from "./StructureGraphObject";
 
 export type VisualObjectRendererProps = {
   object: DSLVisualObject;
   /** 之前的值映射（用于 change detection） */
   previousValues?: Record<string, unknown>;
   onFrameClick?: (frameId: string) => void;
+  interactionMode?: "browse" | "edit";
+  selectedNodeId?: string;
+  selectedCodeLine?: number;
+  onNodeSelect?: (nodeId: string) => void;
+  onCodeLineSelect?: (line: number) => void;
   className?: string;
 };
 
@@ -44,6 +49,11 @@ export const VisualObjectRenderer = memo(function VisualObjectRenderer({
   object,
   previousValues,
   onFrameClick,
+  interactionMode = "browse",
+  selectedNodeId,
+  selectedCodeLine,
+  onNodeSelect,
+  onCodeLineSelect,
   className,
 }: VisualObjectRendererProps) {
   const objType = object.type ?? "";
@@ -68,30 +78,29 @@ export const VisualObjectRenderer = memo(function VisualObjectRenderer({
       return <LinkedListObject object={object} className={className} />;
 
     case "tree":
-      // Tree 使用简化节点渲染，完整树用 Graph 或自定义布局
-      return (
-        <div className={className} aria-label={object.label ?? "树结构"}>
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <TreePine size={13} aria-label="树" /> {(object.label as string) ?? "Tree"} ({((object.nodes as unknown[])?.length ?? 0)} 节点)
-          </span>
-        </div>
-      );
-
     case "graph":
-      // Graph 需要 ReactFlow，回退到描述文本
       return (
-        <div className={className} aria-label={object.label ?? "图结构"}>
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <BarChart3 size={13} aria-label="图" /> {(object.label as string) ?? "Graph"} ({((object.nodes as unknown[])?.length ?? 0)} 节点, {((object.graph_edges as unknown[])?.length ?? 0)} 边)
-          </span>
-        </div>
+        <StructureGraphObject
+          object={object}
+          interactionMode={interactionMode}
+          selectedNodeId={selectedNodeId}
+          onNodeSelect={onNodeSelect}
+          className={className ?? "h-72 w-full"}
+        />
       );
 
     case "table":
       return <TableObject object={object} className={className} />;
 
     case "code_block":
-      return <CodeBlockObject object={object} className={className} />;
+      return (
+        <CodeBlockObject
+          object={object}
+          selectedLine={selectedCodeLine}
+          onLineSelect={onCodeLineSelect}
+          className={className}
+        />
+      );
 
     case "formula":
       return <FormulaObject object={object} className={className} />;

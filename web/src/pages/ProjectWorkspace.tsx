@@ -113,7 +113,7 @@ export function ProjectWorkspace() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-full flex-col">
       {/* 顶部栏 */}
       <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
@@ -143,10 +143,11 @@ export function ProjectWorkspace() {
       <StepIndicator current={currentStep} completed={completedSteps} />
 
       {/* 内容区 */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1">
         {projectId && currentStep === "results" && (
           <ModuleResultsPanel
             project={project}
+            onRefreshProject={refreshProject}
           />
         )}
         {projectId && currentStep !== "results" && (

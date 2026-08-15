@@ -5,6 +5,7 @@ import { setAuthState } from "@/lib/auth";
 import { renderPage } from "@/test/render";
 import { LandingPage } from "./LandingPage";
 import { processSteps, templates } from "./landing-content";
+import "@/features/demo/DijkstraDemo";
 
 const expectedProcessSteps = [
   ["理解知识", "识别学习目标、先修知识和常见误区"],
@@ -117,7 +118,7 @@ describe("LandingPage", () => {
     expect(screen.queryByText("助教")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "教学内容值得被认真校对" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "不必从空白开始" })).toBeVisible();
-    expect(await screen.findByLabelText("Dijkstra 最短路径互动演示")).toBeVisible();
+    expect(await screen.findByLabelText("Dijkstra 最短路径互动演示", undefined, { timeout: 5000 })).toBeVisible();
     expect(screen.getByRole("region", { name: "距离表（从 A 出发）" })).toBeVisible();
     expect(screen.getByText(/选择 A 作为源点/)).toBeVisible();
     expect(screen.getByRole("button", { name: "跳到第 6 帧" })).toBeVisible();

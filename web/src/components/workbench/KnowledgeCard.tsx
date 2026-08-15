@@ -29,25 +29,28 @@ export type KnowledgeCardData = {
 export type KnowledgeCardProps = {
   card: KnowledgeCardData;
   onFrameClick?: (frameId: string) => void;
+  featured?: boolean;
   className?: string;
 };
 
 export const KnowledgeCard = memo(function KnowledgeCard({
   card,
   onFrameClick,
+  featured = false,
   className,
 }: KnowledgeCardProps) {
   return (
     <div
       className={cn(
         "rounded-xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md",
+        featured && "knowledge-card--featured p-5 sm:p-7",
         className,
       )}
     >
       {/* 头部 */}
       <div className="flex items-start justify-between gap-2 mb-3">
-        <h4 className="font-semibold text-sm flex items-center gap-1.5">
-          <BookOpen size={14} className="text-primary shrink-0" />
+        <h4 className={cn("font-semibold text-sm flex items-center gap-1.5", featured && "font-serif text-xl leading-7")}>
+          <BookOpen size={featured ? 18 : 14} className="text-primary shrink-0" />
           {card.title}
         </h4>
         {card.category && (
@@ -59,7 +62,7 @@ export const KnowledgeCard = memo(function KnowledgeCard({
 
       {/* 定义 */}
       {card.definition && (
-        <p className="text-sm text-muted-foreground mb-3 leading-relaxed">
+        <p className={cn("text-sm text-muted-foreground mb-3 leading-relaxed", featured && "text-[15px] leading-7 text-[var(--foreground)]/80")}>
           {card.definition}
         </p>
       )}
