@@ -25,10 +25,11 @@ export interface ModuleCardProps {
   selected: boolean;
   onToggle: () => void;
   status?: ModuleStatus;
+  required?: boolean;
 }
 
-export function ModuleCard({ info, selected, onToggle, status = "available" }: ModuleCardProps) {
-  const isDisabled = status === "running" || status === "done";
+export function ModuleCard({ info, selected, onToggle, status = "available", required = false }: ModuleCardProps) {
+  const isDisabled = required || status === "running" || status === "done";
   const IconComponent = ICON_MAP[info.icon] ?? Box;
 
   return (
@@ -66,6 +67,7 @@ export function ModuleCard({ info, selected, onToggle, status = "available" }: M
 
       <IconComponent size={24} className="text-[var(--interactive)]" />
       <span className="text-sm font-semibold text-[var(--foreground)]">{info.display_name}</span>
+      {required && <span className="text-[10px] font-semibold text-[var(--interactive)]">所有主题必备</span>}
       <span className="text-xs text-[var(--muted-foreground)] line-clamp-2">{info.description}</span>
       <span className="mt-auto text-xs text-[var(--muted-foreground)]/60">
         {CATEGORY_LABELS[info.category] ?? info.category}

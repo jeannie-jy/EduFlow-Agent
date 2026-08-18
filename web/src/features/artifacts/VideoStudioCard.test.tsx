@@ -58,4 +58,23 @@ describe("VideoStudioCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "上一个镜头" }));
     expect(screen.getByRole("button", { name: "选择镜头 1：建立初始状态" })).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("opens a requested script frame inside the video storyboard", () => {
+    render(
+      <VideoStudioCard
+        projectId="project-1"
+        videoValue={{ status: "idle", config: {} }}
+        targetFrameId="f2"
+        framesValue={{
+          artifact_version: "v1",
+          frames: [
+            { frame_id: "f1", title: "建立初始状态", narration: "观察初始数组", visual_objects: [] },
+            { frame_id: "f2", title: "执行交换", narration: "交换两个元素", visual_objects: [] },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "选择镜头 2：执行交换" })).toHaveAttribute("aria-pressed", "true");
+  });
 });

@@ -138,7 +138,20 @@ class BaseGenerator(ABC):
         """
         from agents.llm_client import call_llm_structured
 
-        user_message = json.dumps(context, ensure_ascii=False, indent=2)
+        # Keep every module grounded in the current project. Several module
+        # prompts contain Dijkstra-shaped JSON solely to document their output
+        # format; without an explicit boundary, models can copy that sample for
+        # unrelated or user-defined algorithms.
+        grounded_request = {
+            "generation_rules": [
+                "The topic field below is authoritative for this project.",
+                "Generate every fact, label, example, test case, and visualization for that topic only.",
+                "Examples in the system prompt describe output shape only; never copy their subject matter when it differs from the current topic.",
+                "Support user-defined algorithms from their supplied description; do not replace them with a built-in algorithm.",
+            ],
+            "project_context": context,
+        }
+        user_message = json.dumps(grounded_request, ensure_ascii=False, indent=2)
 
         try:
             result = await call_llm_structured(

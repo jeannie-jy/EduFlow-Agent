@@ -12,7 +12,6 @@ import { LearningPathway } from "@/components/workbench/LearningPathway";
 import type { PathwayData } from "@/components/workbench/LearningPathway";
 import { CodeSandbox } from "@/components/workbench/CodeSandbox";
 import type { SandboxData } from "@/components/workbench/CodeSandbox";
-import { SandboxRenderer } from "@/components/workbench/SandboxRenderer";
 import { ComparisonView } from "@/components/workbench/ComparisonView";
 import type { ComparisonData } from "@/components/workbench/ComparisonView";
 import { QuizPanel } from "@/components/workbench/QuizPanel";
@@ -27,9 +26,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { regenerateModule } from "@/services/generate";
 import type { SSEModuleDoneEvent } from "@/services/sse";
-import { FrameWorkbench } from "@/features/artifacts/FrameWorkbench";
 import { normalizeFramesArtifact } from "@/features/artifacts/artifact-model";
 import { VideoStudioCard } from "@/features/artifacts/VideoStudioCard";
+import { InteractiveExperience } from "@/features/artifacts/InteractiveExperience";
+import { toUserFacingError } from "@/lib/user-facing-error";
 
 // ============================================================================
 // 模块配置
@@ -38,13 +38,12 @@ import { VideoStudioCard } from "@/features/artifacts/VideoStudioCard";
 const SECTION_CONFIG: Record<string, { title: string; icon: typeof Brain; order: number }> = {
   mindmap:   { title: "思维导图",   icon: Brain,          order: 1 },
   cards:     { title: "知识卡片",   icon: Layers,         order: 2 },
-  frames:    { title: "推演脚本",   icon: Play,           order: 3 },
   quiz:      { title: "小练习",     icon: PenTool,        order: 4 },
-  comparison:{ title: "算法对比",   icon: GitCompare,     order: 5 },
+  comparison:{ title: "对比分析",   icon: GitCompare,     order: 5 },
   misconception: { title: "常见误区", icon: AlertTriangle, order: 6 },
   pathway:   { title: "学习路径",   icon: Map,            order: 7 },
   sandbox:   { title: "代码沙箱",   icon: Code2,          order: 8 },
-  interactive_demo: { title: "交互推演", icon: Play,     order: 9 },
+  interactive_demo: { title: "交互推演", icon: Play, order: 3 },
   video:     { title: "教学视频",   icon: Video,          order: 10 },
 };
 
@@ -54,24 +53,33 @@ export interface ModuleResultsPanelProps {
   onRefreshProject?: () => void | Promise<void>;
 }
 
-export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }: ModuleResultsPanelProps) {
+export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPanelProps) {
   const moduleOutputs = (project?.module_outputs ?? {}) as Record<string, unknown>;
+  const persistedErrors = ((project?.dsl?.module_errors ?? {}) as Record<string, unknown>);
   const [localOutputs, setLocalOutputs] = useState<Record<string, unknown>>(moduleOutputs);
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(persistedErrors).map(([key, value]) => [key, String(value)])),
+  );
   const [isRegenerating, setIsRegenerating] = useState<Record<string, boolean>>({});
   const [targetFrameId, setTargetFrameId] = useState<string>();
   const [navigationMessage, setNavigationMessage] = useState<{ tone: "success" | "error"; text: string }>();
 
   useEffect(() => {
     setLocalOutputs((project?.module_outputs ?? {}) as Record<string, unknown>);
+    const errors = ((project?.dsl?.module_errors ?? {}) as Record<string, unknown>);
+    setLocalErrors(Object.fromEntries(Object.entries(errors).map(([key, value]) => [key, String(value)])));
   }, [project?.module_outputs, project?.updated_at]);
 
   const displayedOutputs = { ...moduleOutputs, ...localOutputs };
-  const entries = Object.entries(displayedOutputs).filter(([, v]) => v != null);
-  const [activeModule, setActiveModule] = useState<string>(() =>
-    entries.some(([key]) => key === "frames") ? "frames" : entries[0]?.[0] ?? "",
-  );
+  const visibleKeys = new Set([
+    ...Object.keys(displayedOutputs),
+    ...Object.keys(localErrors),
+    ...(project?.selected_modules ?? []),
+  ]);
+  const entries = [...visibleKeys].map((key) => [key, displayedOutputs[key]] as const);
+  const [activeModule, setActiveModule] = useState<string>(() => entries[0]?.[0] ?? "");
   const sorted = entries
-    .map(([key, value]) => ({ key, value, config: SECTION_CONFIG[key] }))
+    .map(([key, value]) => ({ key, value, error: localErrors[key], config: SECTION_CONFIG[key] }))
     .filter((entry) => entry.config)
     .sort((left, right) => left.config.order - right.config.order);
   const selected = sorted.find((entry) => entry.key === activeModule) ?? sorted[0];
@@ -87,9 +95,15 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
     regenerateModule(project.id, moduleId, {
       onModuleDone: (event: SSEModuleDoneEvent) => {
         setLocalOutputs((prev) => ({ ...prev, [event.module_id]: event.output }));
+        setLocalErrors((prev) => {
+          const next = { ...prev };
+          delete next[event.module_id];
+          return next;
+        });
         setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
       },
-      onModuleError: () => {
+      onModuleError: (event) => {
+        setLocalErrors((prev) => ({ ...prev, [event.module_id]: event.error }));
         setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
       },
     });
@@ -107,12 +121,17 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
       return;
     }
 
-    setTargetFrameId(frameId);
-    setActiveModule("frames");
-    setNavigationMessage({ tone: "success", text: `已定位到 ${frameId} · ${target.title}` });
-  }, [displayedOutputs.frames]);
+    if (!displayedOutputs.video) {
+      setNavigationMessage({ tone: "error", text: "教学视频尚未生成，暂时无法打开关联分镜。" });
+      return;
+    }
 
-  if (entries.length === 0) {
+    setTargetFrameId(frameId);
+    setActiveModule("video");
+    setNavigationMessage({ tone: "success", text: `已在教学视频中定位到 ${frameId} · ${target.title}` });
+  }, [displayedOutputs.frames, displayedOutputs.video]);
+
+  if (sorted.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 p-12 text-center">
         <Layers size={48} className="text-[var(--muted-foreground)]" />
@@ -139,7 +158,10 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
             <FolderKanban size={16} className="text-[var(--interactive)]" />
             <h2 className="text-sm font-bold">教学成果</h2>
           </div>
-          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{sorted.length} 个模块已生成</p>
+          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+            {sorted.filter((entry) => entry.value != null).length} 个已生成
+            {sorted.some((entry) => entry.error) && ` · ${sorted.filter((entry) => entry.error).length} 个失败`}
+          </p>
         </div>
         <nav aria-label="成果模块" className="flex gap-1 overflow-x-auto p-2 lg:block lg:space-y-1">
           {sorted.map(({ key, config }) => {
@@ -157,7 +179,11 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
               >
                 <SectionIcon size={15} />
                 <span className="flex-1">{config.title}</span>
-                {isRegenerating[key] ? <RefreshCw size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                {isRegenerating[key]
+                  ? <RefreshCw size={12} className="animate-spin" />
+                  : localErrors[key]
+                    ? <AlertTriangle size={12} className="text-[var(--error)]" />
+                    : <CheckCircle2 size={12} />}
               </button>
             );
           })}
@@ -173,7 +199,7 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
               <p className="text-[11px] text-[var(--muted-foreground)]">成果工作区 · 可检查并重新生成当前模块</p>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px]">已生成</Badge>
+              <Badge variant="outline" className="text-[10px]">{selected.error ? "生成失败" : "已生成"}</Badge>
               <Button
                 variant="outline"
                 size="sm"
@@ -205,14 +231,27 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
             </div>
           )}
           <div className="min-w-0">
-            {renderModuleContent(
+            {selected.error ? (() => {
+              const friendlyError = toUserFacingError(selected.error);
+              return (
+              <div className="m-4 rounded-lg border border-[color-mix(in_oklch,var(--error)_30%,var(--border))] bg-[color-mix(in_oklch,var(--error)_6%,var(--card))] p-6">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 shrink-0 text-[var(--error)]" size={20} />
+                  <div>
+                    <h3 className="font-semibold">{friendlyError.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">{friendlyError.message}</p>
+                    <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">{friendlyError.suggestion}</p>
+                  </div>
+                </div>
+              </div>);
+            })() : renderModuleContent(
               selected.key,
               selected.value,
               displayedOutputs.frames,
               project?.id,
-              onRefreshProject,
               handleFrameNavigate,
               targetFrameId,
+              project?.title,
             )}
           </div>
         </main>
@@ -226,9 +265,9 @@ function renderModuleContent(
   value: unknown,
   framesValue?: unknown,
   projectId?: string,
-  onRefreshProject?: () => void | Promise<void>,
   onFrameNavigate?: (frameId: string) => void,
   targetFrameId?: string,
+  projectTitle?: string,
 ): React.ReactNode {
   switch (moduleId) {
     case "mindmap":
@@ -251,10 +290,8 @@ function renderModuleContent(
       )} onFrameClick={onFrameNavigate} />;
     case "quiz":
       return <QuizPanel questions={(value as { questions?: QuizQuestion[] })?.questions ?? []} />;
-    case "frames":
-      return <FrameWorkbench value={value} projectId={projectId} onRecomputed={onRefreshProject} targetFrameId={targetFrameId} />;
     case "video":
-      return <VideoStudioCard videoValue={value} framesValue={framesValue} projectId={projectId} />;
+      return <VideoStudioCard videoValue={value} framesValue={framesValue} projectId={projectId} targetFrameId={targetFrameId} />;
     case "comparison":
       return <ComparisonView data={value as ComparisonData} />;
     case "misconception":
@@ -264,7 +301,7 @@ function renderModuleContent(
     case "sandbox":
       return <CodeSandbox data={value as SandboxData} />;
     case "interactive_demo":
-      return <SandboxRenderer code={String((value as Record<string, unknown>)?.code ?? "")} />;
+      return renderInteractiveDemo(value, projectTitle);
     default:
       return (
         <div className="p-4 text-sm text-[var(--muted-foreground)]">
@@ -272,6 +309,11 @@ function renderModuleContent(
         </div>
       );
   }
+}
+
+function renderInteractiveDemo(value: unknown, projectTitle?: string): React.ReactNode {
+  const code = String((value as Record<string, unknown>)?.code ?? "");
+  return <InteractiveExperience code={code} topic={projectTitle} />;
 }
 
 function normalizeMindmapNode(source?: Record<string, unknown>): MindmapNode {

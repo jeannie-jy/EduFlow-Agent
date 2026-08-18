@@ -109,9 +109,8 @@ describe("ModuleProgress", () => {
       { id: "mod_a", name: "A", status: "error", error: "LLM调用超时" },
     ]);
     render(<ModuleProgress modules={items} totalPct={50} />);
-    // Error text uses title attribute for tooltip (CSS truncates display)
-    const errorText = document.querySelector("[title='LLM调用超时']");
-    expect(errorText).toBeTruthy();
+    expect(screen.getByText("生成服务暂时无法连接")).toBeInTheDocument();
+    expect(screen.queryByText("LLM调用超时")).not.toBeInTheDocument();
   });
 
   it("renders progress bar with correct width", () => {

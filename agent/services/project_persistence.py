@@ -78,6 +78,7 @@ def merge_dsl_snapshot(
     module_outputs: dict[str, Any] | None = None,
     module_errors: dict[str, Any] | None = None,
     knowledge_graph: dict[str, Any] | None = None,
+    selected_modules: list[str] | None = None,
 ) -> dict[str, Any]:
     """合并生成产物到 dsl_snapshot（返回新字典以触发 JSONB 变更检测）。
 
@@ -94,6 +95,8 @@ def merge_dsl_snapshot(
         snap["quality_report"] = quality_report
     if knowledge_graph is not None:
         snap["knowledge_graph"] = knowledge_graph
+    if selected_modules is not None:
+        snap["selected_modules"] = list(dict.fromkeys(selected_modules))
     if module_outputs is not None:
         # 合并而非覆盖：保留已有模块产出，只更新本次生成的模块
         existing_mods = dict(snap.get("module_outputs", {}))
@@ -102,5 +105,8 @@ def merge_dsl_snapshot(
     if module_errors is not None:
         existing_errs = dict(snap.get("module_errors", {}))
         existing_errs.update(module_errors)
+        # A successful retry supersedes a historical error for that module.
+        for module_id in (module_outputs or {}):
+            existing_errs.pop(module_id, None)
         snap["module_errors"] = existing_errs
     return snap

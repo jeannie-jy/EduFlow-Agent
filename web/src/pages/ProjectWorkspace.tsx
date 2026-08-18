@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toUserFacingError } from "@/lib/user-facing-error";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -87,9 +88,14 @@ export function ProjectWorkspace() {
   useEffect(() => {
     if (isNew) return;
     if (!project?.status) return;
-    if (project.status === "done") {
+    const hasOutputs = Object.keys(project.module_outputs ?? {}).length > 0;
+    const hasErrors = Object.keys((project.dsl?.module_errors as Record<string, unknown> | undefined) ?? {}).length > 0;
+    if (project.status === "done" && (hasOutputs || hasErrors)) {
       setCurrentStep("results");
       setCompletedSteps(["select", "plan"]);
+    } else {
+      setCurrentStep("select");
+      setCompletedSteps([]);
     }
   }, [project?.status, project?.module_outputs, isNew]);
 
@@ -148,6 +154,7 @@ export function ProjectWorkspace() {
           <ModuleResultsPanel
             project={project}
             onRefreshProject={refreshProject}
+            onNavigateTab={(step) => setCurrentStep(step as StepId)}
           />
         )}
         {projectId && currentStep !== "results" && (
@@ -212,7 +219,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   // 模块选择状态（Phase A）
   const [availableModules, setAvailableModules] = useState<ModuleInfo[]>([]);
   const [selectedModules, setSelectedModules] = useState<string[]>([
-    "mindmap", "cards", "frames", "quiz", "comparison", "misconception", "pathway", "sandbox",
+    "mindmap", "cards", "quiz", "comparison", "misconception", "pathway", "sandbox",
     "interactive_demo", "video",
   ]);
   const [moduleStatuses, setModuleStatuses] = useState<Map<string, ModuleProgressItem>>(new Map());
@@ -227,9 +234,8 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         setAvailableModules([
           { module_id: "mindmap", display_name: "思维导图", description: "知识概念导图", icon: "mindmap", category: "visual", priority: 1, estimated_seconds: 15 },
           { module_id: "cards", display_name: "知识卡片", description: "概念知识卡片", icon: "cards", category: "visual", priority: 2, estimated_seconds: 20 },
-          { module_id: "frames", display_name: "推演脚本", description: "结构化教学推演脚本（逐帧DSL）", icon: "play", category: "interactive", priority: 3, estimated_seconds: 40 },
           { module_id: "quiz", display_name: "小练习", description: "自动生成练习题", icon: "quiz", category: "interactive", priority: 4, estimated_seconds: 25 },
-          { module_id: "comparison", display_name: "算法对比", description: "多维度算法对比", icon: "comparison", category: "visual", priority: 5, estimated_seconds: 30 },
+          { module_id: "comparison", display_name: "对比分析", description: "按当前主题生成多维度对比", icon: "comparison", category: "visual", priority: 5, estimated_seconds: 30 },
         ]);
       });
   }, [projectId]);
@@ -594,7 +600,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
             <CheckCircle2 size={48} className="mx-auto mb-4 text-green-500" />
             <h3 className="font-semibold text-green-800 mb-2">生成完成</h3>
-            <p className="text-sm text-green-600">教学计划和推演帧已生成完毕</p>
+            <p className="text-sm text-green-600">教学计划和所选成果已生成完毕</p>
           </div>
           {qualityReport && (
             <div className="rounded-xl border p-6">
@@ -610,8 +616,9 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       {phase === "error" && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
           <AlertTriangle size={48} className="mx-auto mb-4 text-red-400" />
-          <h3 className="font-semibold text-red-800 mb-2">生成失败</h3>
-          <p className="text-sm text-red-600 mb-6">{errorMsg}</p>
+          <h3 className="font-semibold text-red-800 mb-2">{toUserFacingError(errorMsg).title}</h3>
+          <p className="text-sm text-red-600 mb-2">{toUserFacingError(errorMsg).message}</p>
+          <p className="text-xs text-red-500 mb-6">{toUserFacingError(errorMsg).suggestion}</p>
           <Button variant="outline" onClick={() => { setPhase("idle"); startedRef.current = false; }} className="gap-2">
             <RefreshCw size={16} /> 重试
           </Button>

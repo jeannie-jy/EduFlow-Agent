@@ -15,12 +15,14 @@ from .registry import register_generator
 logger = logging.getLogger(__name__)
 
 
-COMPARISON_SYSTEM_PROMPT = """你是一位算法分析专家，擅长对同类算法进行多维度对比分析。
+COMPARISON_SYSTEM_PROMPT = """你是一位教学对比分析专家，擅长对同类算法、概念、机制、协议阶段或解决方案进行多维度对比。
 
 ## 你的任务
 
-根据教学主题和知识图谱，识别该问题域中的 2-3 种典型算法，
-从多个维度进行对比分析，帮助学生理解各算法的适用场景和取舍。
+根据当前教学主题和知识图谱识别 2-3 个最值得比较的对象，并从适合该主题的维度进行比较。
+算法主题比较算法；协议主题可以比较阶段、报文或相近协议；数据结构主题比较结构或操作；
+用户自定义主题则严格依据用户描述选择比较对象。输出中的 algorithms 字段是兼容字段，
+可承载任意“比较对象”，不得为了套用示例把非算法主题替换成 Dijkstra 等算法。
 
 ## 对比维度
 
@@ -148,8 +150,8 @@ class ComparisonGenerator(BaseGenerator):
     """
 
     module_id = "comparison"
-    display_name = "算法对比"
-    description = "对同类算法进行多维度对比分析，生成并排对比表和场景推荐"
+    display_name = "对比分析"
+    description = "按当前主题对算法、概念、机制、协议阶段或方案进行多维对比"
     icon = "comparison"
     category = "visual"
     priority = 6

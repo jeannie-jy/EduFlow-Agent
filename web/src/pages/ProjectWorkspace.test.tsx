@@ -44,9 +44,9 @@ describe("ProjectWorkspace", () => {
   it("renders results step for a completed project", async () => {
     renderWorkspace(`/app/project/${PROJECT_ID}`);
 
-    // 默认 MSW handler 返回 done 项目（无模块产出）→ 渲染成果空态
+    // done 但没有任何产物的历史项目应恢复到模块选择，而不是进入空成果页。
     await waitFor(() => {
-      expect(screen.getByText("尚未生成模块产物")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "选择模块" })).toBeInTheDocument();
     });
   });
 });

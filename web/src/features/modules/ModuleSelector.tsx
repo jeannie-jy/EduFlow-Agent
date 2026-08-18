@@ -36,8 +36,9 @@ export function ModuleSelector({
   defaultSelected,
   showStartButton = true,
 }: ModuleSelectorProps) {
+  const visibleModules = modules.filter((module) => module.module_id !== "frames");
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(defaultSelected ?? ["frames"])
+    () => new Set((defaultSelected ?? []).filter((moduleId) => moduleId !== "frames"))
   );
 
   const toggle = useCallback((moduleId: string) => {
@@ -72,7 +73,7 @@ export function ModuleSelector({
 
       {/* 模块卡片网格 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {modules.map((mod) => (
+        {visibleModules.map((mod) => (
           <ModuleCard
             key={mod.module_id}
             info={mod}
@@ -86,7 +87,7 @@ export function ModuleSelector({
       {showStartButton && (
       <div className="flex items-center justify-between border-t border-gray-200 pt-4 dark:border-gray-700">
         <span className="text-sm text-gray-500 dark:text-gray-400">
-          已选择 {selected.size} 个模块
+          已选择 {selected.size} 个成果
         </span>
         <Button
           onClick={handleStart}

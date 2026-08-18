@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { VisualObjectRenderer } from "@/components/workbench/visual-objects/VisualObjectRenderer";
 import { cn } from "@/lib/utils";
+import { toUserFacingError } from "@/lib/user-facing-error";
 import { createExportJob, getExportStatus, type ExportArtifact, type ExportManimRequest } from "@/services/export";
 import { normalizeFramesArtifact, normalizeVideoArtifact } from "./artifact-model";
 
@@ -39,10 +40,12 @@ export function VideoStudioCard({
   videoValue,
   framesValue,
   projectId,
+  targetFrameId,
 }: {
   videoValue: unknown;
   framesValue: unknown;
   projectId?: string;
+  targetFrameId?: string;
 }) {
   const video = useMemo(() => normalizeVideoArtifact(videoValue), [videoValue]);
   const frames = useMemo(() => normalizeFramesArtifact(framesValue), [framesValue]);
@@ -123,10 +126,17 @@ export function VideoStudioCard({
     : status === "rendering"
       ? Math.min(2, Math.max(1, Math.floor(progress / 40) + 1))
       : status === "completed" ? 3 : -1;
+  const friendlyError = error ? toUserFacingError(error) : null;
 
   useEffect(() => {
     setSelectedFrameIndex((current) => Math.min(current, Math.max(frames.frames.length - 1, 0)));
   }, [frames.frames.length]);
+
+  useEffect(() => {
+    if (!targetFrameId) return;
+    const targetIndex = frames.frames.findIndex((frame) => frame.frame_id === targetFrameId);
+    if (targetIndex >= 0) setSelectedFrameIndex(targetIndex);
+  }, [frames.frames, targetFrameId]);
 
   return (
     <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -136,11 +146,11 @@ export function VideoStudioCard({
             <div>
               <h3 className="flex items-center gap-2 text-sm font-bold"><Film size={16} />视频分镜</h3>
               <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                {frames.frames.length} 个镜头 · 预计 {totalSeconds || 0} 秒 · 来源于当前推演脚本
+                {frames.frames.length} 个镜头 · 预计 {totalSeconds || 0} 秒 · 已结合讲解内容与画面脚本
               </p>
             </div>
             {stale ? (
-              <Badge variant="destructive"><AlertTriangle />脚本已更新</Badge>
+              <Badge variant="destructive"><AlertTriangle />分镜已更新</Badge>
             ) : (
               <Badge variant="outline"><CheckCircle2 />版本一致</Badge>
             )}
@@ -241,7 +251,7 @@ export function VideoStudioCard({
             </div>
           ) : (
             <p className="rounded-lg border border-dashed p-8 text-center text-sm text-[var(--muted-foreground)]">
-              暂无推演帧，生成脚本后会自动形成视频分镜。
+              暂无视频分镜，重新生成教学视频后会自动补充讲解画面。
             </p>
           )}
         </section>
@@ -256,13 +266,13 @@ export function VideoStudioCard({
 
       <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
         <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
-          <p className="text-xs font-semibold text-[var(--muted-foreground)]">渲染状态</p>
+          <p className="text-xs font-semibold text-[var(--muted-foreground)]">视频制作状态</p>
           <div className="mt-3 flex items-center gap-2">
             {(status === "queued" || status === "rendering") && <LoaderCircle className="animate-spin text-[var(--interactive)]" size={18} />}
             {status === "completed" && <CheckCircle2 className="text-[var(--success)]" size={18} />}
             {status === "failed" && <AlertTriangle className="text-[var(--error)]" size={18} />}
             <span className="text-sm font-semibold">
-              {status === "queued" ? "等待渲染" : status === "rendering" ? "正在渲染" : status === "completed" ? "渲染完成" : status === "failed" ? "渲染失败" : status}
+              {status === "queued" ? "等待制作" : status === "rendering" ? "正在制作" : status === "completed" ? "视频已完成" : status === "failed" ? "视频制作未完成" : "尚未开始制作"}
             </span>
           </div>
           {renderActive && (
@@ -286,9 +296,14 @@ export function VideoStudioCard({
               <p className="text-right font-mono text-[10px] tabular-nums text-[var(--muted-foreground)]">{Math.round(progress)}%</p>
             </div>
           )}
-          {error && <p className="mt-3 text-xs leading-5 text-[var(--error)]">{error}</p>}
+          {friendlyError && (
+            <div className="mt-3 rounded-md bg-[color-mix(in_oklch,var(--error)_7%,var(--card))] p-3">
+              <p className="text-xs font-semibold text-[var(--error)]">{friendlyError.title}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{friendlyError.message} {friendlyError.suggestion}</p>
+            </div>
+          )}
           {!jobId && <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">配置输出选项后即可创建新的渲染任务。</p>}
-          {stale && <p className="mt-3 text-xs leading-5 text-[var(--error)]">当前视频基于旧版推演脚本，建议重新生成后再导出。</p>}
+          {stale && <p className="mt-3 text-xs leading-5 text-[var(--error)]">讲解分镜已有更新，建议重新制作视频后再导出。</p>}
         </section>
 
         <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">

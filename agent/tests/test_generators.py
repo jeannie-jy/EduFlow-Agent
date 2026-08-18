@@ -651,6 +651,6 @@ class TestDispatcherWithRealGenerators:
             e for e in events
             if e["event"] == "module_done" or e["event"] == "done"
         ]
-        # 2 module_done + 1 done
-        assert len([e for e in done_events if e["event"] == "module_done"]) == 2
+        # 2 selected modules + the universally required interactive walkthrough.
+        assert len([e for e in done_events if e["event"] == "module_done"]) == 3
         assert any(e["event"] == "done" for e in events)

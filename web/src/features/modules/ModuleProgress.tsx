@@ -6,6 +6,7 @@
  */
 
 import { CheckCircle2, XCircle, Loader2, Clock } from "lucide-react";
+import { toUserFacingError } from "@/lib/user-facing-error";
 
 // ============================================================================
 // 类型
@@ -96,9 +97,9 @@ export function ModuleProgress({ modules, totalPct = 0 }: ModuleProgressProps) {
             {mod.status === "error" && mod.error && (
               <span
                 className="max-w-[200px] truncate text-xs text-red-400"
-                title={mod.error}
+                title={toUserFacingError(mod.error).suggestion}
               >
-                {mod.error}
+                {toUserFacingError(mod.error).title}
               </span>
             )}
           </li>

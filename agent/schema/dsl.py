@@ -9,8 +9,17 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Annotated, Any, Literal
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10 and earlier
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Compatibility implementation of Python 3.11's enum.StrEnum."""
+
+        def __str__(self) -> str:
+            return str(self.value)
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -279,20 +288,11 @@ class MindmapObject(VisualObjectBase):
 
 # discriminated union
 VisualObject = Annotated[
-    NodeObject
-    | EdgeObject
-    | ArrayObject
-    | LinkedListObject
-    | TreeObject
-    | GraphObject
-    | TableObject
-    | CodeBlockObject
-    | MemoryBlockObject
-    | ProcessObject
-    | TimelineObject
-    | FormulaObject
-    | CardObject
-    | MindmapObject,
+    Union[
+        NodeObject, EdgeObject, ArrayObject, LinkedListObject, TreeObject,
+        GraphObject, TableObject, CodeBlockObject, MemoryBlockObject,
+        ProcessObject, TimelineObject, FormulaObject, CardObject, MindmapObject,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -386,22 +386,13 @@ class UnlockAnimation(AnimationBase):
 
 # discriminated union
 Animation = Annotated[
-    AppearAnimation
-    | DisappearAnimation
-    | HighlightAnimation
-    | TransformAnimation
-    | MoveAnimation
-    | UpdateValueAnimation
-    | CompareAnimation
-    | SwapAnimation
-    | RelaxEdgeAnimation
-    | EnqueueAnimation
-    | DequeueAnimation
-    | SplitAnimation
-    | MergeAnimation
-    | ScheduleAnimation
-    | LockAnimation
-    | UnlockAnimation,
+    Union[
+        AppearAnimation, DisappearAnimation, HighlightAnimation,
+        TransformAnimation, MoveAnimation, UpdateValueAnimation,
+        CompareAnimation, SwapAnimation, RelaxEdgeAnimation,
+        EnqueueAnimation, DequeueAnimation, SplitAnimation, MergeAnimation,
+        ScheduleAnimation, LockAnimation, UnlockAnimation,
+    ],
     Field(discriminator="type"),
 ]
 

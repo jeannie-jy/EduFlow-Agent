@@ -26,7 +26,7 @@ INTERACTIVE_DEMO_SYSTEM_PROMPT = """你是一位高级前端可视化工程师�
 
 **状态管理：** 使用 `useState`、`useEffect` 等 Hook 管理交互状态。
 
-**样式方案：** 使用 Tailwind CSS class 控制布局和样式。
+**样式方案：** 必须使用下方 EduFlow 语义化 class。这些 class 由运行环境内置样式，不得依赖 Tailwind CDN，不得仅用 Tailwind utility class 构建核心布局。
 
 **颜色规范（必须严格遵守）：**
 - 主交互色：`var(--interactive)` — 用于按钮、链接、选中态
@@ -68,9 +68,40 @@ const InteractiveDemo = () => {
 - 禁止 import/require 语句
 - 代码不要用 markdown 代码块包裹（```），直接输出纯 JSX 代码
 
+## 统一界面结构（必须逐层使用）
+
+```jsx
+<div className="eduflow-demo">
+  <header className="eduflow-demo__header">
+    <div><p className="eduflow-demo__eyebrow">交互案例 · 类型</p><h2>主题标题</h2></div>
+    <span className="eduflow-demo__mode">准备体验</span>
+  </header>
+  <div className="eduflow-demo__stage">
+    <section className="eduflow-demo__visual">...</section>
+    <aside className="eduflow-demo__status">
+      <p className="eduflow-demo__eyebrow">实时状态</p><h3>当前状态</h3>...
+    </aside>
+  </div>
+  <section className="eduflow-demo__explanation">
+    <div className="eduflow-demo__narration"><p className="eduflow-demo__eyebrow">当前步骤</p><p>讲解文案</p></div>
+    <div className="eduflow-demo__controls">...</div>
+  </section>
+  <section className="eduflow-demo__timeline">
+    <div className="eduflow-demo__timeline-header"><p className="eduflow-demo__eyebrow">推演进度</p><output>01 / 14</output></div>
+    <ol className="eduflow-demo__timeline-track">...</ol>
+  </section>
+</div>
+```
+
+- 右侧实时状态必须使用表格、队列、栈、变量表或关键指标中最适合当前主题的形式，并与主可视化同步更新。
+- 时间轴使用 `eduflow-demo__timeline-item`，当前步骤增加 `is-current`，已完成步骤增加 `is-complete`；每个步骤都是可点击 button。
+- 按钮统一使用 `eduflow-demo__button`；主操作叠加 `is-primary`，纯图标式上一步/下一步叠加 `is-icon`。禁止使用 Emoji 作为图标，图标按钮使用文字 `上一步` / `下一步` 的 `aria-label`。
+- 数据元素使用 `eduflow-demo__data-item`；当前操作叠加 `is-active`，已完成叠加 `is-complete`，错误叠加 `is-error`。
+- 必须在 360px 到 1600px 宽度下可用；小屏时主可视化和状态面板改为单列。
+
 ## 视觉与交互规范（必须遵守，这是界面质量的硬性要求）
 
-1. **三段式布局**：顶部「状态与提示区」（步骤进度 + 当前操作说明）→ 中部「核心可视化区」→ 底部「控制面板」。
+1. **四段式布局**：顶部标题与模式 → 中部「核心可视化 + 实时状态」两列 → 讲解与播放控制 → 底部可点击时间轴。
 2. **高信息密度**：紧凑、干净，去除一切装饰性图片/缩略图，视觉重心完全放在数据与算法逻辑上。
 3. **可视化区**：
    - 数组/列表类：使用**水平排列的卡片（Card）或柱状条**，绝不用垂直纯文本列表；每个元素数值用 `font-mono` 大字显示，索引用小号浅色文字（`text-[var(--muted-foreground)]`）标注在下方。

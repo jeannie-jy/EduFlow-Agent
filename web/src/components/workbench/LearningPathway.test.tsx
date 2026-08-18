@@ -36,6 +36,14 @@ describe("LearningPathway", () => {
     expect(screen.getByText("暂无学习路径数据")).toBeInTheDocument();
   });
 
+  it("renders empty state when data or nodes are missing", () => {
+    const { rerender } = render(<LearningPathway data={undefined} />);
+    expect(screen.getByText("暂无学习路径数据")).toBeInTheDocument();
+
+    rerender(<LearningPathway data={{ current_topic: "Dijkstra" }} />);
+    expect(screen.getByText("暂无学习路径数据")).toBeInTheDocument();
+  });
+
   it("renders topic title", () => {
     render(<LearningPathway data={makeData()} />);
     expect(screen.getByText(/Dijkstra 最短路径/)).toBeInTheDocument();
@@ -71,6 +79,13 @@ describe("LearningPathway", () => {
     const extendsElements = screen.getAllByText(/extends/);
     expect(dependsOnElements.length).toBeGreaterThanOrEqual(2);
     expect(extendsElements.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders nodes when edges are missing", () => {
+    const { edges: _edges, ...dataWithoutEdges } = makeData();
+    render(<LearningPathway data={dataWithoutEdges} />);
+    expect(screen.getByText("Dijkstra")).toBeInTheDocument();
+    expect(screen.queryByText(/依赖关系/)).toBeNull();
   });
 
   it("renders learning tips", () => {

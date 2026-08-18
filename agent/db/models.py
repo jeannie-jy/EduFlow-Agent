@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -41,14 +41,14 @@ class Project(Base):
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
-    topic: Mapped[str | None] = mapped_column(String(300))
-    subject: Mapped[str | None] = mapped_column(String(200))
-    course: Mapped[str | None] = mapped_column(String(300))
+    topic: Mapped[Optional[str]] = mapped_column(String(300))
+    subject: Mapped[Optional[str]] = mapped_column(String(200))
+    course: Mapped[Optional[str]] = mapped_column(String(300))
     audience: Mapped[str] = mapped_column(String(100), default="undergraduate_cs")
     difficulty: Mapped[str] = mapped_column(String(50), default="intermediate")
-    owner_id: Mapped[str | None] = mapped_column(String(200))
+    owner_id: Mapped[Optional[str]] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(50), default="draft")
-    dsl_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    dsl_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -84,14 +84,14 @@ class Frame(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     frame_id: Mapped[str] = mapped_column(String(50), nullable=False)
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    title: Mapped[str | None] = mapped_column(String(500))
-    learning_goal: Mapped[str | None] = mapped_column(Text)
-    narration: Mapped[str | None] = mapped_column(Text)
-    visual_objects: Mapped[list[dict] | None] = mapped_column(JSONB)
-    state_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    animations: Mapped[list[dict] | None] = mapped_column(JSONB)
-    interaction_hooks: Mapped[list[dict] | None] = mapped_column(JSONB)
-    checks: Mapped[list[dict] | None] = mapped_column(JSONB)
+    title: Mapped[Optional[str]] = mapped_column(String(500))
+    learning_goal: Mapped[Optional[str]] = mapped_column(Text)
+    narration: Mapped[Optional[str]] = mapped_column(Text)
+    visual_objects: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    state_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    animations: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    interaction_hooks: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    checks: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
     quality_status: Mapped[str] = mapped_column(String(50), default="pending")
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -126,11 +126,11 @@ class ParameterModel(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     key: Mapped[str] = mapped_column(String(200), nullable=False)
-    label: Mapped[str | None] = mapped_column(String(500))
+    label: Mapped[Optional[str]] = mapped_column(String(500))
     param_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    default_value: Mapped[dict | None] = mapped_column(JSONB)
-    current_value: Mapped[dict | None] = mapped_column(JSONB)
-    constraints: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    default_value: Mapped[Optional[dict]] = mapped_column(JSONB)
+    current_value: Mapped[Optional[dict]] = mapped_column(JSONB)
+    constraints: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     visibility: Mapped[str] = mapped_column(String(50), default="student")
     recompute_scope: Mapped[str] = mapped_column(String(50), default="all_frames")
     created_at: Mapped[datetime] = mapped_column(
@@ -159,9 +159,9 @@ class QualityReportModel(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     version: Mapped[int] = mapped_column(Integer, default=1)
-    scores: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    issues: Mapped[list[dict] | None] = mapped_column(JSONB)
-    suggestions: Mapped[list[dict] | None] = mapped_column(JSONB)
+    scores: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    issues: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    suggestions: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
     is_blocking: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -184,14 +184,14 @@ class ExportJobModel(Base):
     )
     target: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="queued")
-    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    config: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
-    artifacts: Mapped[list[dict] | None] = mapped_column(JSONB)
-    error_log: Mapped[str | None] = mapped_column(Text)
+    artifacts: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    error_log: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 # ============================================================================
@@ -208,12 +208,12 @@ class Feedback(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    frame_id: Mapped[uuid.UUID | None] = mapped_column(
+    frame_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("frames.id", ondelete="SET NULL")
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)   # rating / correction / suggestion
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    rating: Mapped[int | None] = mapped_column(Integer)
+    rating: Mapped[Optional[int]] = mapped_column(Integer)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -235,11 +235,11 @@ class SourceMaterial(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)   # pdf / ppt / markdown / text / code
-    filename: Mapped[str | None] = mapped_column(String(500))
-    content_text: Mapped[str | None] = mapped_column(Text)
-    parsed_result: Mapped[dict | None] = mapped_column(JSONB)
-    size_bytes: Mapped[int | None] = mapped_column()
-    storage_path: Mapped[str | None] = mapped_column(String(1000))
+    filename: Mapped[Optional[str]] = mapped_column(String(500))
+    content_text: Mapped[Optional[str]] = mapped_column(Text)
+    parsed_result: Mapped[Optional[dict]] = mapped_column(JSONB)
+    size_bytes: Mapped[Optional[int]] = mapped_column()
+    storage_path: Mapped[Optional[str]] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -264,7 +264,7 @@ class ProjectVersion(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     dsl_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    change_summary: Mapped[str | None] = mapped_column(Text)
+    change_summary: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

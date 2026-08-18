@@ -42,8 +42,10 @@ async def dispatch_modules(
 
     module_outputs: dict[str, Any] = {}
     module_errors: dict[str, str] = {}
-    # video 依赖 frames → 自动补充 frames + 强制排在最后
-    if "video" in selected_modules and "frames" not in selected_modules:
+    # 通用逐帧 DSL 是所有主题（包括用户自定义算法）的基础交互产物。
+    # API 调用方即使没有显式选择，也自动补充；注册检查保留单元测试和
+    # 可裁剪部署中不加载 frames generator 的兼容性。
+    if "frames" not in selected_modules and get_generator("frames") is not None:
         selected_modules = list(selected_modules) + ["frames"]
     if "video" in selected_modules:
         selected_modules = [m for m in selected_modules if m != "video"] + ["video"]
@@ -165,8 +167,9 @@ async def dispatch_modules(
                         None,  # dsl=None，仅更新 module_outputs + module_errors + knowledge_graph
                         teaching_plan=teaching_plan,
                         module_outputs=module_outputs,
-                        module_errors=module_errors or None,
+                        module_errors=module_errors,
                         knowledge_graph=kg,
+                        selected_modules=selected_modules,
                     )
                     # frames 模块产出同步写入 frames 表（与 generate_service 路径一致，
                     # 消除「模块流不落表 → frames API 双真源」问题）
