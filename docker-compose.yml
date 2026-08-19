@@ -12,6 +12,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:-changeme}@postgres:5432/eduflow
       - REDIS_URL=redis://redis:6379
+      - EXPORT_DIR=/app/data/exports
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
       - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
       - LLM_API_KEY=${LLM_API_KEY}
