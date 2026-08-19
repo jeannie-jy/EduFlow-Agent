@@ -48,7 +48,7 @@ agent/
 │   ├── router.py             # 路由聚合注册
 │   ├── projects.py           # 项目 CRUD（POST/GET 列表/GET 详情）
 │   ├── generate.py           # 生成流程（POST start / SSE stream / POST regenerate）
-│   ├── frames.py             # 帧操作（GET 列表 / PUT 编辑 / POST lock）
+│   ├── frames.py             # 帧操作（GET 列表 / PUT 编辑 / POST lock；历史快照帧编辑兜底）
 │   ├── parameters.py         # 参数（GET 列表 / POST recompute）
 │   ├── export.py             # 导出（POST manim 任务 / GET 状态 / GET 下载）
 │   ├── knowledge.py          # 知识库（POST search / GET templates）
@@ -62,7 +62,7 @@ agent/
 ├── schema/                   # Pydantic 数据模型
 │   ├── dsl.py                # DSL Schema（renderScript / Frame / VisualObject×14 / Animation×16）
 │   ├── project.py            # API Request/Response 模型
-│   └── modules.py            # 各模块产出格式
+│   └── modules.py            # 各模块产出格式（Frames/Video 含版本追踪字段）
 │
 ├── db/                       # 数据库层
 │   ├── database.py           # AsyncSession 工厂
@@ -71,7 +71,7 @@ agent/
 ├── services/                 # 业务服务层
 │   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度 + 统一持久化）
 │   ├── module_dispatcher.py  # 模块生成调度器（串行调度 + 失败落库 + frames 表同步）
-│   ├── project_persistence.py# DSL snapshot 合并 + frames 表持久化
+│   ├── project_persistence.py# DSL snapshot 合并 + frames 表持久化 + module_errors 收敛
 │   └── knowledge_service.py  # pgvector 语义检索 + embedding 播种
 │
 ├── tools/                    # 确定性工具（节点直接异步调用）
@@ -91,8 +91,9 @@ agent/
 │
 ├── generators/               # 模块化生成器（10 个，registry 注册，main.py 启动时导入）
 │   ├── registry.py           # 注册表 + get_generator
-│   ├── base.py               # BaseGenerator（LLM 调用 + 校验骨架）
+│   ├── base.py               # BaseGenerator（LLM 调用 + 校验骨架 + 主题权威防漂移）
 │   └── *_generator.py        # mindmap/card/frames/quiz/comparison/misconception/pathway/sandbox/video/interactive_demo
+│                             #   frames 为所有主题自动生成的基础成果（携带 artifact_version）
 │
 ├── scripts/                  # 运维脚本
 │   └── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector，幂等）
@@ -100,7 +101,7 @@ agent/
 ├── data/                     # 静态数据
 │   └── seed_knowledge.json   # 22 个知识点种子数据
 │
-├── tests/                    # 测试（694 个）
+├── tests/                    # 测试（719 个，31 个文件）
 │   ├── test_agent_nodes.py   # 5 个 Agent 节点 + Graph 拓扑
 │   ├── test_api_integration.py  # API 集成测试
 │   ├── test_db_integration.py   # 数据库 CRUD
@@ -210,7 +211,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-测试统计: 373 个测试（15 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程。
+测试统计: 719 个测试（31 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程、模块调度、生成器可靠性、提示注入防护。
 
 ## 数据流
 
@@ -223,8 +224,10 @@ python -m pytest tests/ --cov=. --cov-report=html
    ├── coder     → dsl (frames + parameters + assets)
    ├── quality   → quality_report
    └── reflection → 修订（循环上限 3 次）
-4. GET  /{id}                   → 获取最终 DSL
-5. POST /{id}/export/manim      → 导出视频（异步队列）
+4. 模块调度（module_dispatcher）→ module_outputs + module_errors 落库
+   └── frames 为所有主题自动生成的基础成果（携带 artifact_version 版本哈希）
+5. GET  /{id}                   → 获取最终 DSL（含 module_outputs / selected_modules）
+6. POST /{id}/export/manim      → 导出视频（异步队列）
 ```
 
 ## 错误响应格式

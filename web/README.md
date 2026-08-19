@@ -1,7 +1,8 @@
 # EduFlow Web 前端
 
 `web/` 目录包含 EduFlow 的 React 前端。已交付：全新 Landing 叙事页、Dijkstra 公开探索页、
-统一项目工作台（三步流程：选择模块 → 教学计划审批 → 成果预览）、纸张质感主题系统（明暗双主题）、
+统一项目工作台（三步流程：选择模块 → 教学计划审批 → 成果预览）、统一成果体验
+（交互推演学习外壳、视频分镜联动、失败模块场景化提示）、纸张质感主题系统（明暗双主题）、
 完整的 FastAPI 后端对接层。
 
 ## 环境要求
@@ -39,7 +40,7 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 npm run typecheck    # TypeScript 类型检查（tsc -b，真实门禁）
-npm run test         # Vitest（228 个测试，26 个文件）
+npm run test         # Vitest（268 个测试，38 个文件）
 npm run lint         # oxlint
 npm run build        # 生产构建
 ```
@@ -57,22 +58,25 @@ src/
 ├─ app/                    路由（React Router）+ 应用级 Provider
 ├─ components/
 │  ├─ layout/              应用外壳、页眉、侧边栏、主题切换
-│  ├─ ui/                  通用 Base UI 组件（25+ 个）
-│  ├─ workbench/           推演工作台组件
-│  │   ├─ visual-objects/  DSL 视觉对象渲染器（14 种：数组/表格/代码块/节点/边/状态表/公式/链表等）
-│  │   ├─ SandboxRenderer.tsx  交互推演 iframe 沙箱（宿主侧 Babel 编译 + React UMD 本地注入）
-│  │   └─ StepIndicator.tsx    三步流程步骤指示器
-│  └─ effects/             特效组件（生成边框等）
+│  ├─ brand/               品牌标识组件（EduFlowBrand）
+│  ├─ ui/                  通用 Base UI 组件（26 个）
+│  └─ workbench/           推演工作台与模块视图组件
+│     ├─ visual-objects/   DSL 视觉对象渲染器（14 种：数组/表格/代码块/节点/边/状态表/公式/链表等）
+│     ├─ SandboxRenderer.tsx  交互推演 iframe 沙箱（宿主侧 Babel 编译 + Tailwind 本地编译 + React UMD 本地注入）
+│     ├─ SimulationGraph.tsx  Dijkstra 演示图渲染（React Flow @xyflow/react）
+│     ├─ StepIndicator.tsx    三步流程步骤指示器
+│     └─ 模块视图：思维导图 / 知识卡片 / 小练习 / 对比分析 / 常见误区 / 学习路径 / 代码沙箱
 ├─ features/
+│  ├─ artifacts/           教学成果组件（FrameWorkbench / ParameterExperiment / VideoStudioCard / InteractiveExperience + artifact-model 数据归一化）
 │  ├─ auth/                认证（登录/注册，当前为临时占位）
 │  ├─ demo/                Dijkstra 交互演示（状态机 + 播放器 + 时间线）
 │  ├─ explore/             公开探索页（/explore/dijkstra）
 │  ├─ landing/             首页（叙事结构 / 产品原理 / 交互案例 / 使用场景 / 模板库）
-│  └─ modules/             模块化产出（选择器 / 进度 / 结果面板：思维导图/卡片/推演/小练习/对比/误区/路径/沙箱/视频）
+│  └─ modules/             模块化产出（选择器 / 进度 / 结果面板）
 ├─ pages/                  4 个路由页面（Dashboard / ProjectWorkspace / TemplateBrowser / NotFound）
 ├─ templates/              交互推演沙箱模板（冒泡排序等，供测试与 LLM 生成参考）
 ├─ services/               API 客户端 + SSE + 8 个服务模块
-├─ lib/                    工具函数库（auth 模块 + utils）
+├─ lib/                    工具函数库（auth 模块 + user-facing-error 场景化错误提示 + utils）
 ├─ styles/                 全局样式（纸张主题 tokens + 推演舞台动画 + reduced-motion）
 ├─ test/                   公共测试配置和 MSW Mock 处理器
 ├─ types/                  第三方库类型声明（@babel/standalone 等）
@@ -86,7 +90,7 @@ src/
 | 服务 | 端点 |
 |---------|-----------|
 | `projects.ts` | `POST /api/projects`、`GET /api/projects`、`GET /api/projects/{id}` |
-| `generate.ts` | `POST /generate`（action=full/plan_only/modules）、SSE 流、HITL approve/reject、模块列表/单模块重生成 |
+| `generate.ts` | `POST /generate`（action=full/plan_only/modules）、SSE 流、HITL approve/reject、模块列表/单模块重生成（frames 为基础成果自动补充） |
 | `frames.ts` | `GET frames`、`PUT frames/{fid}`、`POST lock` |
 | `parameters.ts` | `GET parameters`、`POST recompute` |
 | `export.ts` | `POST export/manim`、`GET /api/export/{job_id}`、`GET download/{filename}` |
@@ -112,10 +116,15 @@ src/
 
 ## 交互推演（interactive_demo 模块）
 
+- 统一学习外壳 `InteractiveExperience`（features/artifacts/）：按主题语义推断体验类型
+  （关系网络/层级结构/过程时序/数据变化/状态演化/代码执行/概念探索），提供标签与操作引导
 - LLM 生成的 React JSX 代码在 `SandboxRenderer` 的 iframe 沙箱中运行
 - JSX 编译在**宿主侧**完成（Babel standalone，classic runtime），iframe 只接收编译后的 JS；
-  React UMD 从 node_modules 本地注入（不依赖 unpkg CDN，规避网络不可达导致的空白）
-- 模板参考：`src/templates/bubbleSortDemo.ts`（三段式布局 + 水平柱状图 + 状态色 + 按钮组）
+  React UMD 从 node_modules 本地注入（不依赖 unpkg CDN）
+- Tailwind 在宿主侧按产物实际使用的 class 本地编译（含 preflight 与沙箱主题），不依赖 CDN
+- 内置 `eduflow-demo` 语义化演示样式（四段式布局 / 状态面板 / 时间轴 / 数据元素），
+  遗留模板控件自动打磨为设计系统风格；运行时错误显示学习者友好提示，不暴露原始报错
+- 模板参考：`src/templates/bubbleSortDemo.ts`
 
 ## 主题行为
 
