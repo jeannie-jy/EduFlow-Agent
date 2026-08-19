@@ -31,7 +31,7 @@
 - 🛡️ **数据库初始化落地**：Alembic 基线迁移（8 张业务表 + knowledge_base），agent-api 启动时自动 `alembic upgrade head`，不再依赖 init.sql 建表
 - 🔧 **前端类型门禁**：`npm run typecheck` 改为 `tsc -b`（此前对 solution tsconfig 是空操作），34 个存量 TS 错误清零；修复 SSE 模块事件回调解构缺失（模块进度此前被静默丢弃）
 - 🎬 **视频导出单轨化**：废弃从未跑通的独立 manim-worker 容器，统一走 API 进程内渲染；修复导出失败时 DB 状态同步顺序
-- 🧪 **测试覆盖扩展**：719 个后端测试 + 268 个前端测试全绿（含生成器可靠性/冒烟/成果体验测试）
+- 🧪 **测试覆盖扩展**：731 个后端测试 + 278 个前端测试全绿（含生成器可靠性/冒烟/成果体验测试）
 - 🎁 **成果体验统一**：交互推演升级为统一学习外壳（按主题语义匹配 7 种体验类型）；教学视频支持从推演帧直接定位分镜；失败模块以场景化友好提示呈现（额度不足/接入失效/限流/网络/渲染失败），可在成果页直接重生成
 - 🖥️ **交互推演沙箱升级**：Tailwind 在宿主侧按产物实际使用的 class 本地编译（彻底移除 CDN 依赖），内置 `eduflow-demo` 统一演示样式，遗留模板控件自动打磨为设计系统风格
 - 🧬 **成果版本追踪**：推演脚本产出携带 `artifact_version`（SHA-256），视频产出记录 `source_frames_version`；帧编辑同步快照与模块产出两处副本，分镜过期时提示「分镜已更新」
@@ -206,12 +206,12 @@ python -m scripts.seed_embeddings
 ```bash
 # 后端测试（agent/ 目录下）
 cd agent
-python -m pytest tests/ -v           # 运行全部 719 个测试
+python -m pytest tests/ -v           # 运行全部 731 个测试
 python -m pytest tests/ --cov=.      # 带覆盖率报告
 
 # 前端测试（web/ 目录下）
 cd web
-npm test                             # 运行 Vitest（268 个测试，38 个文件）
+npm test                             # 运行 Vitest（278 个测试，39 个文件）
 npm run typecheck                    # TypeScript 类型检查（tsc -b，真实门禁）
 npm run verify                       # 完整验证（类型 + 测试 + 构建）
 npm run build                        # 生产构建

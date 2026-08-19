@@ -183,3 +183,67 @@ class C(Scene):
         issues = validate_script(script)
         errs = [i for i in issues if i["severity"] == "error"]
         assert not any(i["rule"] == "undefined-name" for i in errs)
+
+
+class TestUnknownSceneMethodCheck:
+    """unknown-scene-method 检查：LLM 幻觉的 Scene 方法名（如 clear_current）。"""
+
+    def test_clear_current_caught(self):
+        script = """
+from manim import *
+
+class DemoScene(Scene):
+    def construct(self):
+        t = Text("hello")
+        self.clear_current()
+        self.play(FadeIn(t))
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert any(
+            i["rule"] == "unknown-scene-method" and "clear_current" in i["detail"]
+            for i in errs
+        )
+
+    def test_valid_scene_methods_ok(self):
+        script = """
+from manim import *
+
+class DemoScene(Scene):
+    def construct(self):
+        t = Text("hello")
+        self.play(FadeIn(t))
+        self.wait(1)
+        self.clear()
+"""
+        issues = validate_script(script)
+        assert not any(i["rule"] == "unknown-scene-method" for i in issues)
+
+    def test_class_defined_method_ok(self):
+        script = """
+from manim import *
+
+class DemoScene(Scene):
+    def make_header(self, text):
+        return Text(text).to_edge(UP)
+
+    def construct(self):
+        self.add(self.make_header("title"))
+"""
+        issues = validate_script(script)
+        assert not any(i["rule"] == "unknown-scene-method" for i in issues)
+
+    def test_non_scene_class_ignored(self):
+        script = """
+from manim import *
+
+class Helper:
+    def work(self):
+        self.internal_call()
+
+class DemoScene(Scene):
+    def construct(self):
+        Helper().work()
+"""
+        issues = validate_script(script)
+        assert not any(i["rule"] == "unknown-scene-method" for i in issues)

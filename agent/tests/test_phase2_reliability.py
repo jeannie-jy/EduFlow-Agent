@@ -1,9 +1,11 @@
 """阶段 2 可靠性测试。
 
-覆盖 v0.8 修复中的三组正确性保障：
+覆盖 v0.8 修复中的五组正确性保障：
 1. manim_llm_adapter 字段白名单 — 图结构数据不再被剥光
 2. dispatcher 全失败落库 — project.status 卡死与 module_errors 丢失问题
 3. 生成器 validate 畸形输入 — LLM 输出非预期类型不再崩溃
+4. frames 快照顶层提升 + resolve_export_dsl — 模块流项目可直接导出
+5. Scene 幻觉方法确定性修复 — clear_current 等不存在方法渲染崩溃前置拦截
 """
 
 from __future__ import annotations
@@ -63,6 +65,29 @@ class TestManimLLMAdapterWhitelist:
         assert '"nodes"' in msg
         assert '"root"' in msg
         assert '"children"' in msg
+
+
+class TestSceneMethodFixes:
+    """LLM 幻觉的 Scene 方法名确定性修复（clear_current → clear）。"""
+
+    def test_clear_current_replaced(self):
+        from adapters.manim_llm_adapter import _fix_scene_methods
+
+        code = (
+            "        formula_intro.next_to(graph, DOWN, buff=0.6)\n"
+            "        self.clear_current()\n"
+            "        self.play(FadeIn(graph))"
+        )
+        fixed = _fix_scene_methods(code)
+        assert "self.clear()" in fixed
+        assert "clear_current" not in fixed
+        assert "self.play(FadeIn(graph))" in fixed
+
+    def test_real_scene_methods_untouched(self):
+        from adapters.manim_llm_adapter import _fix_scene_methods
+
+        code = "self.play(FadeIn(t))\nself.wait(1)\nself.clear()"
+        assert _fix_scene_methods(code) == code
 
 
 # ============================================================================
@@ -252,3 +277,129 @@ class TestGeneratorValidateMalformed:
         issues = gen.validate(output)
         assert any(i.get("type") == expected_issue_type for i in issues), \
             f"期望 issue type={expected_issue_type}，实际: {[i.get('type') for i in issues]}"
+
+
+# ============================================================================
+# 4. frames 快照顶层提升 + resolve_export_dsl — 模块流项目可直接导出
+# ============================================================================
+
+
+class _FramesGen:
+    """产出完整 DSL 的 frames 模块（模拟 frames_generator）。"""
+
+    module_id = "frames"
+    display_name = "推演脚本"
+    description = "Mock frames"
+    icon = "frames"
+    category = "visual"
+    priority = 1
+    version = "1.0.0"
+
+    async def generate(self, **kwargs):
+        return {
+            "topic": "Test topic",
+            "frames": [{"frame_id": "f_001", "title": "初始", "narration": "n"}],
+            "parameters": [{"id": "speed", "label": "速度", "value": 1.0}],
+            "artifact_version": "abcd1234abcd",
+            "schema_version": "1.0",
+        }
+
+    def validate(self, output):
+        return []
+
+    def get_output_schema(self):
+        return {"type": "object"}
+
+    def get_system_prompt(self):
+        return "OK."
+
+
+class TestFramesSnapshotPromotion:
+    """模块流的 frames 产出必须提升到 dsl_snapshot 顶层（导出 API 读取处）。"""
+
+    async def test_dispatch_promotes_frames_to_snapshot_top_level(self):
+        from services.module_dispatcher import dispatch_modules
+
+        register_generator(_FramesGen())
+
+        mock_project = MagicMock()
+        mock_project.dsl_snapshot = {}
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_project)
+        mock_session.execute = AsyncMock(return_value=MagicMock())
+        mock_session.flush = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("db.database.async_session_factory", return_value=mock_cm):
+            async for _ in dispatch_modules(PROJECT_ID, _make_state(), ["frames"]):
+                pass
+
+        snapshot = mock_project.dsl_snapshot
+        assert mock_project.status == "done"
+        # frames 完整 DSL 提升到顶层，导出 API 不再 400
+        assert snapshot["frames"] == [
+            {"frame_id": "f_001", "title": "初始", "narration": "n"}
+        ]
+        assert snapshot["parameters"][0]["id"] == "speed"
+        assert snapshot["artifact_version"] == "abcd1234abcd"
+        assert snapshot["topic"] == "Test topic"
+        # module_outputs.frames 副本仍在（视频分镜、成果页读取处）
+        assert snapshot["module_outputs"]["frames"]["frames"]
+
+        # frames 表同步写入（persist_frames_to_table 内 session.add(Frame)）
+        added_frame_ids = [
+            c.args[0].frame_id for c in mock_session.add.call_args_list if c.args
+        ]
+        assert "f_001" in added_frame_ids
+
+
+class TestResolveExportDsl:
+    """resolve_export_dsl 兼容顶层 frames 与 module_outputs.frames 两种快照形态。"""
+
+    def test_top_level_frames_returned_as_is(self):
+        from services.project_persistence import resolve_export_dsl
+
+        snap = {"frames": [{"frame_id": "f_001"}], "topic": "T"}
+        assert resolve_export_dsl(snap) is snap
+
+    def test_module_outputs_frames_fallback_merged(self):
+        from services.project_persistence import resolve_export_dsl
+
+        snap = {
+            "topic": "T",
+            "module_outputs": {
+                "frames": {
+                    "topic": "T2",
+                    "frames": [{"frame_id": "f_001"}],
+                    "parameters": [{"id": "p1"}],
+                    "artifact_version": "abcd1234abcd",
+                }
+            },
+        }
+        resolved = resolve_export_dsl(snap)
+        assert resolved is not None
+        assert resolved["frames"] == [{"frame_id": "f_001"}]
+        # module_outputs.frames 是完整 DSL → 合并后补齐导出所需字段
+        assert resolved["parameters"][0]["id"] == "p1"
+        assert resolved["artifact_version"] == "abcd1234abcd"
+        # 顶层字段保留，frames 产出字段优先
+        assert resolved["topic"] == "T2"
+        assert resolved["module_outputs"]["frames"]["frames"]
+
+    def test_returns_none_when_no_frames_anywhere(self):
+        from services.project_persistence import resolve_export_dsl
+
+        assert resolve_export_dsl(None) is None
+        assert resolve_export_dsl({}) is None
+        assert resolve_export_dsl({"frames": []}) is None
+        assert resolve_export_dsl({"module_outputs": {"frames": {"frames": []}}}) is None
+
+    def test_skipped_frames_output_not_used(self):
+        from services.project_persistence import resolve_export_dsl
+
+        assert resolve_export_dsl(
+            {"module_outputs": {"frames": {"status": "skipped"}}}
+        ) is None

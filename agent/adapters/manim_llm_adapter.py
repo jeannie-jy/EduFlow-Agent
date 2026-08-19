@@ -73,6 +73,24 @@ def _fix_empty_fadeout(code: str) -> str:
     )
 
 
+_SCENE_METHOD_FIXES: dict[str, str] = {
+    # LLM 幻觉的 Scene 方法名 → 语义一致的真实 API
+    # 例：clear_current()（「清空当前帧画面」）在 Manim 中不存在，正确 API 是 clear()
+    "clear_current": "clear",
+}
+
+
+def _fix_scene_methods(code: str) -> str:
+    """修复 LLM 幻觉的 Scene 方法名 — 直接映射到语义一致的真实 API。
+
+    其余同类幻觉（如 reset_scene）由 validator 的 unknown-scene-method 规则
+    拦截并触发 LLM 反馈重试，这里只放语义明确可无损替换的映射。
+    """
+    for bad, good in _SCENE_METHOD_FIXES.items():
+        code = re.sub(rf"self\.{bad}\s*\(", f"self.{good}(", code)
+    return code
+
+
 def _fix_code_indexing(code: str) -> str:
     """修复 LLM 对 Code 对象索引的幻觉。
 
@@ -202,6 +220,7 @@ async def convert_dsl_to_manim_llm(
         main_py = _fix_code_indexing(main_py)
         main_py = _fix_camera_animate(main_py)
         main_py = _fix_empty_fadeout(main_py)
+        main_py = _fix_scene_methods(main_py)
         for bad in ("pseudocode", "plaintext", "csharp", "typescript", "go", "rust"):
             main_py = main_py.replace(f"language='{bad}'", "language='text'")
             main_py = main_py.replace(f'language="{bad}"', 'language="text"')

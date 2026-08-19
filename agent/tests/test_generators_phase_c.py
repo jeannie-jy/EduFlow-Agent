@@ -291,7 +291,7 @@ class TestComparisonGenerator:
 
     def test_basic_metadata(self, gen):
         assert gen.module_id == "comparison"
-        assert gen.display_name == "算法对比"
+        assert gen.display_name == "对比分析"
         assert gen.category == "visual"
 
     def test_output_schema_structure(self, gen):

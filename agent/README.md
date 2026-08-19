@@ -101,7 +101,7 @@ agent/
 ├── data/                     # 静态数据
 │   └── seed_knowledge.json   # 22 个知识点种子数据
 │
-├── tests/                    # 测试（719 个，31 个文件）
+├── tests/                    # 测试（731 个，31 个文件）
 │   ├── test_agent_nodes.py   # 5 个 Agent 节点 + Graph 拓扑
 │   ├── test_api_integration.py  # API 集成测试
 │   ├── test_db_integration.py   # 数据库 CRUD
@@ -211,7 +211,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-测试统计: 719 个测试（31 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程、模块调度、生成器可靠性、提示注入防护。
+测试统计: 731 个测试（31 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程、模块调度、生成器可靠性、提示注入防护。
 
 ## 数据流
 

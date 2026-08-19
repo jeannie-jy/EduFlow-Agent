@@ -115,7 +115,9 @@ class TestGeneratorRegistration:
     def test_all_four_registered(self):
         gens = list_generators()
         ids = {g.module_id for g in gens}
-        assert ids == {"mindmap", "cards", "frames", "video"}
+        # 其他测试文件（如 test_interactive_demo_contract）在收集期 import 生成器模块
+        # 即会注册额外生成器，这里只断言四个基础生成器均已注册
+        assert {"mindmap", "cards", "frames", "video"} <= ids
 
     def test_mindmap_metadata(self):
         from generators.registry import get_generator

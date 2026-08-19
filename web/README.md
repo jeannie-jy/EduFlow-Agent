@@ -40,7 +40,7 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 npm run typecheck    # TypeScript 类型检查（tsc -b，真实门禁）
-npm run test         # Vitest（268 个测试，38 个文件）
+npm run test         # Vitest（278 个测试，39 个文件）
 npm run lint         # oxlint
 npm run build        # 生产构建
 ```

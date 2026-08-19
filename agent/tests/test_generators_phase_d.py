@@ -256,8 +256,10 @@ class TestPhaseDIntegration:
             events.append(evt)
 
         import json
-        done_ids = {json.loads(e["data"])["module_id"] for e in events if e["event"] == "module_done"}
-        assert done_ids == {"misconception", "pathway", "sandbox"}
+        done_ids = [json.loads(e["data"])["module_id"] for e in events if e["event"] == "module_done"]
+        # frames 是调度器自动补充的基础模块（注册表含 frames 生成器时追加），
+        # 不属于本用例验证范围——过滤后断言三个模块按序完成
+        assert [m for m in done_ids if m != "frames"] == ["misconception", "pathway", "sandbox"]
 
 
 # ============================================================================

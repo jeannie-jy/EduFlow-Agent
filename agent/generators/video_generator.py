@@ -75,17 +75,17 @@ class VideoGenerator(BaseGenerator):
             if isinstance(frames_output, dict) and frames_output.get("frames"):
                 dsl = frames_output
 
-        # 回退到 DB 读取（向后兼容）
+        # 回退到 DB 读取（向后兼容，兼容 frames 在顶层或 module_outputs.frames 两种形态）
         if dsl is None:
             try:
                 from db.database import async_session_factory
                 from db.models import Project as ProjectModel
                 from api.deps import parse_project_id
+                from services.project_persistence import resolve_export_dsl
 
                 async with async_session_factory() as db_session:
                     project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                    if project and project.dsl_snapshot and project.dsl_snapshot.get("frames"):
-                        dsl = project.dsl_snapshot
+                    dsl = resolve_export_dsl(project.dsl_snapshot) if project else None
             except Exception:
                 pass
 

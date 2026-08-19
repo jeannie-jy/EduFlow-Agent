@@ -43,6 +43,7 @@ def validate_script(script: str) -> list[dict[str, Any]]:
     issues.extend(_check_print_in_construct(script))
     issues.extend(_check_undefined_names(script))
     issues.extend(_check_invalid_kwargs(script))
+    issues.extend(_check_unknown_scene_methods(script))
 
     return issues
 
@@ -180,6 +181,99 @@ def _check_invalid_kwargs(script: str) -> list[dict]:
                     "detail": (
                         f"{node.func.id}() 不支持参数 '{kw.arg}'"
                         f"（manim 0.20，该参数属于 Code），请移除"
+                    ),
+                })
+    return issues
+
+
+# ═══════════════════════════════════════════════════════════════
+# Scene 幻觉方法检测（运行时 AttributeError 的静态前置检查）
+# ═══════════════════════════════════════════════════════════════
+
+# manim.Scene 的真实 API（dir 含继承链：Container → Mobject）
+_SCENE_ATTRS: frozenset[str] | None = None
+
+
+def _get_scene_attrs() -> frozenset[str]:
+    """动态获取 manim.Scene 的实际属性名（与 _get_manim_exports 同一内省模式）。"""
+    global _SCENE_ATTRS
+    if _SCENE_ATTRS is None:
+        try:
+            import manim as _manim
+            _SCENE_ATTRS = frozenset(
+                n for n in dir(_manim.Scene) if not n.startswith("_")
+            )
+        except Exception:
+            _SCENE_ATTRS = frozenset()
+    return _SCENE_ATTRS
+
+
+def _check_unknown_scene_methods(script: str) -> list[dict]:
+    """Scene 子类中调用 self.<未知方法>() → 渲染期 AttributeError。
+
+    LLM 常幻觉出不存在的 Scene 方法（如 clear_current → AttributeError:
+    'EduFlow_Scene' object has no attribute 'clear_current'）。静态拦截：
+    找出 Scene 子类方法内的 self.xxx() 调用，与 dir(manim.Scene) 对比。
+    脚本内自定义（含脚本内继承链）的方法名视为合法，非 Scene 类忽略。
+    """
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return []  # 语法错误由 _check_syntax 负责
+
+    scene_attrs = _get_scene_attrs()
+    if not scene_attrs:
+        return []  # manim 不可用的环境（如纯语法测试）跳过
+
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+
+    # 直接继承 Scene/ThreeDScene/MovingCameraScene 等的类；脚本内继承链传递闭包
+    scene_like: set[str] = {
+        cls.name for cls in classes
+        if any(
+            isinstance(b, ast.Name) and (b.id == "Scene" or b.id.endswith("Scene"))
+            for b in cls.bases
+        )
+    }
+    changed = True
+    while changed:
+        changed = False
+        for cls in classes:
+            if cls.name in scene_like:
+                continue
+            if any(isinstance(b, ast.Name) and b.id in scene_like for b in cls.bases):
+                scene_like.add(cls.name)
+                changed = True
+
+    issues: list[dict] = []
+    for cls in classes:
+        if cls.name not in scene_like:
+            continue
+        allowed = set(scene_attrs)
+        # 类自身与脚本内直接基类定义的方法不算幻觉
+        for c in classes:
+            if c.name == cls.name or any(
+                isinstance(b, ast.Name) and b.id == c.name for b in cls.bases
+            ):
+                for n in c.body:
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        allowed.add(n.name)
+
+        for node in ast.walk(cls):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+                and node.func.attr not in allowed
+            ):
+                issues.append({
+                    "rule": "unknown-scene-method",
+                    "severity": "error",
+                    "line": getattr(node, "lineno", None),
+                    "detail": (
+                        f"Scene 对象调用了不存在的方法 self.{node.func.attr}()，"
+                        "请改用 manim.Scene 的真实 API（如 clear()/remove()）"
                     ),
                 })
     return issues

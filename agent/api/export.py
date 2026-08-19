@@ -72,7 +72,11 @@ async def create_export_job(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if not project.dsl_snapshot or not project.dsl_snapshot.get("frames"):
+    from services.project_persistence import resolve_export_dsl
+
+    # frames 可能在快照顶层（全量流）或 module_outputs.frames（模块流）
+    dsl = resolve_export_dsl(project.dsl_snapshot)
+    if dsl is None:
         raise HTTPException(status_code=400, detail="Project has no frames to export")
 
     job_id = uuid.uuid4()
@@ -95,7 +99,7 @@ async def create_export_job(
     await session.commit()
 
     # 单轨导出：无独立 Worker，直接由进程内后台任务渲染（见 README「已知局限与后续可拓展思路」）
-    asyncio.create_task(_fallback_export(str(job_id), project.dsl_snapshot, export_job.config))
+    asyncio.create_task(_fallback_export(str(job_id), dsl, export_job.config))
 
     return {
         "job_id": str(job_id),

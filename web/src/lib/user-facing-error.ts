@@ -37,6 +37,13 @@ export function toUserFacingError(error: unknown): UserFacingError {
       suggestion: "请检查网络和服务状态，稍后重新生成。",
     };
   }
+  if (/no frames|has no frames|缺少.*(推演|帧)|无.*帧/.test(text)) {
+    return {
+      title: "缺少推演脚本",
+      message: "这个项目还没有可导出的逐帧推演内容，因此暂时无法制作视频。",
+      suggestion: "请先重新生成推演脚本，再开始视频制作。",
+    };
+  }
   if (/render|compile|syntax|unexpected token|渲染|编译|脚本/.test(text)) {
     return {
       title: "互动内容暂时无法展示",

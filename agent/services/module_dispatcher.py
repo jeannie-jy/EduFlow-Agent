@@ -162,9 +162,17 @@ async def dispatch_modules(
             async with async_session_factory() as db_session:
                 project = await db_session.get(ProjectModel, parse_project_id(project_id))
                 if project is not None:
+                    # frames 模块产出的是完整 DSL 对象 → 提升到快照顶层，
+                    # 与 generate_service 全量流一致（导出 API 从顶层读 frames）
+                    frames_out = module_outputs.get("frames")
+                    frames_dsl = (
+                        frames_out
+                        if isinstance(frames_out, dict) and frames_out.get("frames")
+                        else None
+                    )
                     project.dsl_snapshot = merge_dsl_snapshot(
                         project.dsl_snapshot,
-                        None,  # dsl=None，仅更新 module_outputs + module_errors + knowledge_graph
+                        frames_dsl,  # 无 frames 产出时为 None，仅更新 module_outputs 等
                         teaching_plan=teaching_plan,
                         module_outputs=module_outputs,
                         module_errors=module_errors,
@@ -173,10 +181,9 @@ async def dispatch_modules(
                     )
                     # frames 模块产出同步写入 frames 表（与 generate_service 路径一致，
                     # 消除「模块流不落表 → frames API 双真源」问题）
-                    frames_out = module_outputs.get("frames")
-                    if isinstance(frames_out, dict) and frames_out.get("frames"):
+                    if frames_dsl is not None:
                         await persist_frames_to_table(
-                            project_id, frames_out.get("frames", []), db_session
+                            project_id, frames_dsl.get("frames", []), db_session
                         )
                     # 状态机：有产出 → done；全部失败 → failed；均无 → 维持原状态
                     if module_outputs:

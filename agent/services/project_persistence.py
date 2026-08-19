@@ -110,3 +110,23 @@ def merge_dsl_snapshot(
             existing_errs.pop(module_id, None)
         snap["module_errors"] = existing_errs
     return snap
+
+
+def resolve_export_dsl(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """解析导出（视频/推演）所用的完整 DSL（含 frames）。
+
+    兼容两种快照形态：
+    - 全量生成流：frames 直接位于 dsl_snapshot 顶层；
+    - 模块流（v0.8 早期落库形态）：frames 只存在于 module_outputs.frames。
+      模块流的 frames 产出本身是完整 DSL 对象，以快照为底、帧产出为顶合并补齐。
+
+    Returns:
+        含非空 frames 的完整 DSL；两者都没有 frames 时返回 None。
+    """
+    snap = snapshot or {}
+    if snap.get("frames"):
+        return snap
+    frames_dsl = (snap.get("module_outputs") or {}).get("frames")
+    if isinstance(frames_dsl, dict) and frames_dsl.get("frames"):
+        return {**snap, **frames_dsl}
+    return None
