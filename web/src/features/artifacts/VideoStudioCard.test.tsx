@@ -40,7 +40,7 @@ describe("VideoStudioCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "视频画质 720p" }));
     fireEvent.click(screen.getByRole("button", { name: "视频帧率 24 fps" }));
-    fireEvent.click(screen.getByRole("button", { name: "开始制作视频" }));
+    fireEvent.click(screen.getByRole("button", { name: "按当前设置开始制作" }));
 
     await waitFor(() => expect(exportMocks.createExportJob).toHaveBeenCalledWith("project-1", expect.objectContaining({
       quality: "m",
@@ -67,7 +67,7 @@ describe("VideoStudioCard", () => {
     expect(exportMocks.createExportJob).not.toHaveBeenCalled();
     expect(screen.getByText("视频尚未开始制作。请先检查分镜并配置输出选项。")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "开始制作视频" }));
+    fireEvent.click(screen.getByRole("button", { name: "按当前设置开始制作" }));
     await waitFor(() => expect(exportMocks.getExportStatus).toHaveBeenCalledWith("job-new"));
     await waitFor(() => expect(window.localStorage.getItem("eduflow:video-job:project-resume")).toContain("job-new"));
     first.unmount();

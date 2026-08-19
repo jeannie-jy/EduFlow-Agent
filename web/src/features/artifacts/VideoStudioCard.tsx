@@ -446,7 +446,7 @@ export function VideoStudioCard({
             >
               {creatingJob && <LoaderCircle className="animate-spin" />}
               {!creatingJob && <MonitorPlay />}
-              {jobId ? "按当前设置重新制作" : "开始制作视频"}
+              按当前设置开始制作
             </Button>
           </div>
         </section>
