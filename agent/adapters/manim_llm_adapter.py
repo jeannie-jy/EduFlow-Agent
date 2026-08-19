@@ -34,6 +34,80 @@ def _strip_font_size_from_code(code: str) -> str:
     return re.sub(r",?\s*font_size\s*=\s*\d+\s*", "", code)
 
 
+def _fix_code_object_access(code: str) -> str:
+    """修复 LLM 幻觉的 .code 属性 — Manim Code 是 VGroup，没有 .code。"""
+    # code_block.code.set_color(X) -> for _cl in code_block: _cl.set_color(X)
+    code = re.sub(
+        r'(\b\w+)\.code\.set_color\(',
+        r'for _cl in \1: _cl.set_color(',
+        code,
+    )
+    # len(xxx.code) -> len(xxx)
+    code = re.sub(r'len\((\w+)\.code\)', r'len(\1)', code)
+    # xxx.code[  ->  xxx[
+    code = re.sub(r'(\w+)\.code\[', r'\1[', code)
+    return code
+
+
+def _fix_set_stroke_args(code: str) -> str:
+    """移除 set_stroke() 中不存在的 fill_color/fill_opacity 参数。"""
+    # set_stroke(..., fill_color=XXX, ...) -> 移除 fill_color=XXX
+    code = re.sub(r',?\s*fill_color\s*=\s*"[^"]*"', '', code)
+    # set_stroke(..., fill_opacity=0.3, ...) -> 移除 fill_opacity=N
+    code = re.sub(r',?\s*fill_opacity\s*=\s*[\d.]+', '', code)
+    return code
+
+
+def _fix_camera_animate(code: str) -> str:
+    """删除 self.camera.animate.* 调用 — Manim Camera 没有 .animate 属性。"""
+    return re.sub(r'^\s*self\.play\(\s*self\.camera\.animate\.[^)]+\),?\s*run_time=[^)]*\)\s*$', '', code, flags=re.MULTILINE)
+
+
+def _fix_empty_fadeout(code: str) -> str:
+    """为 FadeOut(*self.mobjects) 添加空值保护，防止第一帧空场景崩溃。"""
+    return re.sub(
+        r'^(\s+)(self\.play\(FadeOut\(\*self\.mobjects,\s*run_time=[\d.]+\)\))',
+        r'\1if self.mobjects:\n\1    \2',
+        code,
+        flags=re.MULTILINE,
+    )
+
+
+_SCENE_METHOD_FIXES: dict[str, str] = {
+    # LLM 幻觉的 Scene 方法名 → 语义一致的真实 API
+    # 例：clear_current()（「清空当前帧画面」）在 Manim 中不存在，正确 API 是 clear()
+    "clear_current": "clear",
+}
+
+
+def _fix_scene_methods(code: str) -> str:
+    """修复 LLM 幻觉的 Scene 方法名 — 直接映射到语义一致的真实 API。
+
+    其余同类幻觉（如 reset_scene）由 validator 的 unknown-scene-method 规则
+    拦截并触发 LLM 反馈重试，这里只放语义明确可无损替换的映射。
+    """
+    for bad, good in _SCENE_METHOD_FIXES.items():
+        code = re.sub(rf"self\.{bad}\s*\(", f"self.{good}(", code)
+    return code
+
+
+def _fix_code_indexing(code: str) -> str:
+    """修复 LLM 对 Code 对象索引的幻觉。
+
+    Manim Code 只有 2 个元素：[0]=背景, [1]=Paragraph。
+    第 N 行需通过 code_block[1][N-1] 访问，不是 code_block[N]。
+    只修复 code_block[*] / code_obj[*] / code[*] 的整数字面量索引。
+    """
+    def _replace(m):
+        var = m.group(1)
+        n = int(m.group(2))
+        if n >= 2:
+            return f"{var}[1][{n - 1}]"
+        return m.group(0)
+
+    return re.sub(r'\b(code_block|code_obj|code_display)\[(\d+)\]', _replace, code)
+
+
 def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | None) -> str:
     """构建发送给 LLM 的上下文消息。"""
     compact_frames = []
@@ -48,14 +122,28 @@ def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | Non
         if snap:
             cf["state_snapshot"] = snap
 
-        # 精简 visual_objects：保留所有字段，LLM 自主决定如何使用
+        # 精简 visual_objects：保留全部 14 种 VisualObject 的结构字段（对齐 schema/dsl.py:175-275），
+        # LLM 自主决定如何使用。白名单而非黑名单，避免 style.extras 等自由 JSON 噪声泄漏。
         vos = []
         for vo in f.get("visual_objects", []):
             vos.append({
                 k: v for k, v in vo.items()
-                if k in ("id", "type", "label", "code", "language",
-                         "latex", "headers", "rows", "cells", "values",
-                         "position", "style", "directed")
+                if k in ("id", "type", "label", "position", "style",
+                         # node
+                         "node_type",
+                         # edge（图结构数据：边/权重，缺了 LLM 无法还原图）
+                         "source", "target", "directed", "weight",
+                         # array / linked_list / tree / graph / table / memory_block / timeline / mindmap
+                         "cells", "nodes", "root_id", "edges", "graph_edges",
+                         "headers", "rows", "blocks", "events",
+                         "root", "children",
+                         # code_block / formula / card
+                         "code", "language", "highlight_lines", "latex",
+                         "title", "content", "category",
+                         # process
+                         "pid", "state", "attributes",
+                         # 兼容历史字段
+                         "values")
             })
         cf["visual_objects"] = vos
 
@@ -127,6 +215,12 @@ async def convert_dsl_to_manim_llm(
         # ── 自动修正 ──
         main_py = re.sub(r"\bCode\(\s*code\s*=\s*", "Code(code_string=", main_py)
         main_py = _strip_font_size_from_code(main_py)
+        main_py = _fix_code_object_access(main_py)
+        main_py = _fix_set_stroke_args(main_py)
+        main_py = _fix_code_indexing(main_py)
+        main_py = _fix_camera_animate(main_py)
+        main_py = _fix_empty_fadeout(main_py)
+        main_py = _fix_scene_methods(main_py)
         for bad in ("pseudocode", "plaintext", "csharp", "typescript", "go", "rust"):
             main_py = main_py.replace(f"language='{bad}'", "language='text'")
             main_py = main_py.replace(f'language="{bad}"', 'language="text"')

@@ -143,4 +143,14 @@ describe("Dashboard page", () => {
       expect(screen.getByText("14 帧")).toBeInTheDocument();
     });
   });
+
+  it("uses theme-aware surfaces for the dashboard and project cards", async () => {
+    renderPage(<Dashboard />);
+
+    const heading = await screen.findByRole("heading", { name: "我的推演" });
+    const projectLink = await screen.findByRole("link", { name: /Dijkstra 最短路径/ });
+
+    expect(heading).toHaveClass("text-[var(--foreground)]");
+    expect(projectLink.parentElement).toHaveClass("bg-[var(--card)]", "border-[var(--border)]");
+  });
 });

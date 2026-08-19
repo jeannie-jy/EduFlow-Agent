@@ -14,11 +14,30 @@ import { connectSSE, type SSEOptions } from "./sse";
 // ============================================================================
 
 export interface GenerateRequest {
-  action?: "full" | "plan_only" | "frames_only";
+  action?: "full" | "plan_only" | "modules";
+  modules?: string[];
 }
 
 export interface GenerateResponse {
   stream_url: string;
+}
+
+export interface ModuleInfo {
+  module_id: string;
+  display_name: string;
+  description: string;
+  icon: string;
+  category: "visual" | "interactive" | "export";
+  priority: number;
+  estimated_seconds: number;
+}
+
+export interface ModuleSelectRequest {
+  modules: string[];
+}
+
+export interface ApprovePlanRequest {
+  modules?: string[];
 }
 
 export interface RegenerateRequest {
@@ -33,10 +52,10 @@ export interface RegenerateRequest {
 // 方法
 // ============================================================================
 
-export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full") {
-  return api.post<GenerateResponse>(`/projects/${projectId}/generate`, {
-    action,
-  } as GenerateRequest);
+export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full", modules?: string[]) {
+  const body: GenerateRequest = { action };
+  if (modules !== undefined) body.modules = modules;
+  return api.post<GenerateResponse>(`/projects/${projectId}/generate`, body);
 }
 
 export function streamGeneration(projectId: string, options: SSEOptions) {
@@ -62,12 +81,55 @@ export function regenerate(projectId: string, scope: RegenerateRequest["scope"])
   } as RegenerateRequest);
 }
 
-export function approvePlan(projectId: string) {
-  return api.post<GenerateResponse>(`/projects/${projectId}/generate/approve`);
+// ============================================================================
+// 模块生成（Phase A）
+// ============================================================================
+
+/** 获取可用模块列表 */
+export function listModules(projectId: string) {
+  return api.get<{ modules: ModuleInfo[] }>(`/projects/${projectId}/generate/modules`);
+}
+
+/** 提交模块选择，开始生成 */
+export function startModuleGeneration(projectId: string, modules: string[]) {
+  return api.post<GenerateResponse>(`/projects/${projectId}/generate/modules`, {
+    modules,
+  } as ModuleSelectRequest);
+}
+
+/** 连接模块生成 SSE 流 */
+export function streamModuleGeneration(projectId: string, options: SSEOptions) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+  return connectSSE(`${baseUrl}/projects/${projectId}/generate/modules/stream`, options);
+}
+
+// ============================================================================
+// HITL 审批
+// ============================================================================
+
+export interface ApprovePlanResponse {
+  stream_url: string;
+  available_modules?: ModuleInfo[];
+}
+
+export function approvePlan(projectId: string, modules?: string[]) {
+  return api.post<ApprovePlanResponse>(`/projects/${projectId}/generate/approve`, {
+    modules: modules ?? null,
+  } as ApprovePlanRequest);
 }
 
 export function rejectPlan(projectId: string, feedback: string) {
   return api.post<GenerateResponse>(`/projects/${projectId}/generate/reject`, {
     feedback,
   });
+}
+
+// ============================================================================
+// 单模块重新生成（Phase F）
+// ============================================================================
+
+/** 重新生成单个模块（SSE 流） */
+export function regenerateModule(projectId: string, moduleId: string, options: SSEOptions) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+  return connectSSE(`${baseUrl}/projects/${projectId}/generate/module/${moduleId}/stream`, options);
 }

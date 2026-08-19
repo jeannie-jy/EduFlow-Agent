@@ -21,7 +21,7 @@ export function FinalActionSection() {
         <p>给出一个概念、一个目标，或从模板库拿起第一份底稿；其余的步骤会按教学逻辑展开。</p>
       </div>
       <div className="landing-final-action__actions">
-        <Link to="/app/new" className="landing-action landing-action--primary interactive-lift">开始一场新推演 <ArrowRight aria-hidden="true" /></Link>
+        <Link to="/app/project/_new" className="landing-action landing-action--primary interactive-lift">开始一场新推演 <ArrowRight aria-hidden="true" /></Link>
         <Link to="/explore/dijkstra" className="landing-text-link">先体验一个案例 <ArrowRight aria-hidden="true" /></Link>
       </div>
     </motion.section>

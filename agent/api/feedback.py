@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session
 from schema.project import FeedbackRequest
-from .deps import parse_project_id, safe_project_uuid
+from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +78,26 @@ async def submit_feedback(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 持久化反馈（safe_project_uuid 避免非法 UUID → 500）
+    # 持久化反馈。body.frame_id 是 DSL 帧 ID（如 "f_001"），需映射到 frames 表的行 UUID；
+    # 之前误用 safe_project_uuid 解析，DSL 帧 ID 永远解析失败 → 关联丢失。
+    frame_row_id = None
+    if body.frame_id:
+        from db.models import Frame
+
+        frame_query = select(Frame.id).where(
+            Frame.project_id == pid,
+            Frame.frame_id == body.frame_id,
+        ).limit(1)
+        row = (await session.execute(frame_query)).first()
+        if row is not None:
+            frame_row_id = row[0]
+        else:
+            logger.warning("反馈关联的帧不存在，frame 关联置空: frame=%s", body.frame_id)
+
     feedback = Feedback(
         id=uuid.uuid4(),
         project_id=pid,
-        frame_id=safe_project_uuid(body.frame_id) if body.frame_id else None,
+        frame_id=frame_row_id,
         type=body.type,
         content=body.content,
         rating=body.rating,

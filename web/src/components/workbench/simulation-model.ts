@@ -359,11 +359,14 @@ export function getDistanceLabel(distance: number) {
 export interface ApiFrameData {
   frame_id: string;
   title: string;
+  learning_goal?: string;
   narration: string;
   visual_objects: DSLVisualObject[];
   state_snapshot: Record<string, unknown>;
   animations: DSLAnimation[];
   interaction_hooks: { type: string; param: string; [key: string]: unknown }[];
+  checks?: Array<Record<string, unknown>>;
+  duration_ms?: number;
 }
 
 /**

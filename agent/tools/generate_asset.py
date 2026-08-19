@@ -11,35 +11,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TOOL_DEF_GENERATE_ASSET = {
-    "name": "generate_asset",
-    "description": "根据资源类型和上下文生成多模态教学资源：知识卡片、思维导图、状态表、伪代码区块。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "asset_type": {
-                "type": "string",
-                "description": "资源类型: card / mindmap / table / code_snippet",
-                "enum": ["card", "mindmap", "table", "code_snippet"],
-            },
-            "context": {
-                "type": "object",
-                "description": "生成上下文：概念名称、知识点描述、关联帧 ID 等",
-            },
-        },
-        "required": ["asset_type", "context"],
-    },
-    "returns": {
-        "type": "object",
-        "properties": {
-            "asset": {"type": "object"},
-        },
-    },
-    "errors": [],
-    "retryable": True,
-    "timeout_ms": 30_000,
-}
-
 
 async def generate_asset(
     asset_type: str,

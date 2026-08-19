@@ -2,6 +2,7 @@
  * 参数 API 服务。
  *
  * GET    /api/projects/{id}/parameters    参数列表
+ * POST   /api/projects/{id}/recompute     参数变更并重算
  */
 
 import { api } from "./api-client";
@@ -31,4 +32,10 @@ export interface ParameterListResponse {
 
 export function listParameters(projectId: string) {
   return api.get<ParameterListResponse>(`/projects/${projectId}/parameters`);
+}
+
+export function recomputeProject(projectId: string, changedParams: Record<string, unknown>) {
+  return api.post<{ stream_url: string }>(`/projects/${projectId}/recompute`, {
+    changed_params: changedParams,
+  });
 }

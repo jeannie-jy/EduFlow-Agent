@@ -2,10 +2,12 @@
  * FormulaObject — LaTeX 公式可视化。
  * DSL VisualObject type="formula"
  *
- * 当前使用纯文本渲染，后续可集成 KaTeX。
+ * 使用 KaTeX 渲染，并在异常输入时回退为可读文本。
  */
 
-import { memo } from "react";
+import { memo, useMemo } from "react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import type { DSLVisualObject } from "../simulation-model";
 
@@ -20,6 +22,21 @@ export const FormulaObject = memo(function FormulaObject({
 }: FormulaObjectProps) {
   const latex = (object.latex as string) ?? "";
   const label = object.label ?? "";
+  const expression = latex || label;
+  const renderedFormula = useMemo(() => {
+    if (!expression) return "";
+    try {
+      return katex.renderToString(expression, {
+        displayMode: true,
+        output: "htmlAndMathml",
+        strict: "ignore",
+        throwOnError: false,
+        trust: false,
+      });
+    } catch {
+      return "";
+    }
+  }, [expression]);
 
   if (!latex && !label) {
     return (
@@ -29,16 +46,23 @@ export const FormulaObject = memo(function FormulaObject({
     );
   }
 
+  if (!renderedFormula) {
+    return (
+      <div className={cn("max-w-full overflow-x-auto rounded-md border bg-muted/30 px-3 py-2 font-mono text-sm", className)}>
+        {expression}
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
-        "inline-block rounded-md border bg-muted/30 px-3 py-1.5 font-mono text-sm",
+        "formula-object max-w-full overflow-x-auto rounded-md border bg-muted/30 px-3 py-2 text-center text-sm",
         className,
       )}
-      aria-label={label || `公式: ${latex}`}
-    >
-      {latex || label}
-    </div>
+      aria-label={label || "数学公式"}
+      dangerouslySetInnerHTML={{ __html: renderedFormula }}
+    />
   );
 });
 

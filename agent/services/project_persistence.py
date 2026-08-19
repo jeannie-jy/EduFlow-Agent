@@ -71,21 +71,62 @@ async def persist_frames_to_table(
 
 def merge_dsl_snapshot(
     existing: dict[str, Any] | None,
-    dsl: dict[str, Any],
+    dsl: dict[str, Any] | None = None,
     *,
     quality_report: dict[str, Any] | None = None,
     teaching_plan: dict[str, Any] | None = None,
+    module_outputs: dict[str, Any] | None = None,
+    module_errors: dict[str, Any] | None = None,
+    knowledge_graph: dict[str, Any] | None = None,
+    selected_modules: list[str] | None = None,
 ) -> dict[str, Any]:
     """合并生成产物到 dsl_snapshot（返回新字典以触发 JSONB 变更检测）。
 
     保留 existing 中的用户输入字段（input_content/input_type/constraints/material_ids），
     叠加完整 DSL（frames/parameters/knowledge_graph/teaching_strategy 等），
-    并写入 teaching_plan / quality_report 供 getProject 读取。
+    并写入 teaching_plan / quality_report / module_outputs / module_errors 供 getProject 读取。
     """
     snap: dict[str, Any] = dict(existing or {})
-    snap.update(dsl)
+    if dsl is not None:
+        snap.update(dsl)
     if teaching_plan is not None:
         snap["teaching_plan"] = teaching_plan
     if quality_report is not None:
         snap["quality_report"] = quality_report
+    if knowledge_graph is not None:
+        snap["knowledge_graph"] = knowledge_graph
+    if selected_modules is not None:
+        snap["selected_modules"] = list(dict.fromkeys(selected_modules))
+    if module_outputs is not None:
+        # 合并而非覆盖：保留已有模块产出，只更新本次生成的模块
+        existing_mods = dict(snap.get("module_outputs", {}))
+        existing_mods.update(module_outputs)
+        snap["module_outputs"] = existing_mods
+    if module_errors is not None:
+        existing_errs = dict(snap.get("module_errors", {}))
+        existing_errs.update(module_errors)
+        # A successful retry supersedes a historical error for that module.
+        for module_id in (module_outputs or {}):
+            existing_errs.pop(module_id, None)
+        snap["module_errors"] = existing_errs
     return snap
+
+
+def resolve_export_dsl(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """解析导出（视频/推演）所用的完整 DSL（含 frames）。
+
+    兼容两种快照形态：
+    - 全量生成流：frames 直接位于 dsl_snapshot 顶层；
+    - 模块流（v0.8 早期落库形态）：frames 只存在于 module_outputs.frames。
+      模块流的 frames 产出本身是完整 DSL 对象，以快照为底、帧产出为顶合并补齐。
+
+    Returns:
+        含非空 frames 的完整 DSL；两者都没有 frames 时返回 None。
+    """
+    snap = snapshot or {}
+    if snap.get("frames"):
+        return snap
+    frames_dsl = (snap.get("module_outputs") or {}).get("frames")
+    if isinstance(frames_dsl, dict) and frames_dsl.get("frames"):
+        return {**snap, **frames_dsl}
+    return None

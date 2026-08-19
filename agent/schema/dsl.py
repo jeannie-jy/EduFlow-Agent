@@ -3,13 +3,23 @@
 教学推演中间表示（RenderScript）的完整类型定义。
 这是前后端共享的数据契约，也是 Agent 产出的目标格式。
 
-对齐设计文档 v1.0 第 5 节 + 开发任务第 4 节。
+本文件是 DSL 的唯一真源（设计文档相关章节为「目标态」描述，
+联调以本文件与 docs/开发任务与接口规范.md 第 4 节速查为准）。
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Annotated, Any, Literal
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10 and earlier
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Compatibility implementation of Python 3.11's enum.StrEnum."""
+
+        def __str__(self) -> str:
+            return str(self.value)
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -114,6 +124,7 @@ class ProjectStatus(StrEnum):
     GENERATING = "generating"
     REVIEWING = "reviewing"
     DONE = "done"
+    FAILED = "failed"  # 模块生成全部失败（module_errors 落库）
 
 
 class ExportStatus(StrEnum):
@@ -277,20 +288,11 @@ class MindmapObject(VisualObjectBase):
 
 # discriminated union
 VisualObject = Annotated[
-    NodeObject
-    | EdgeObject
-    | ArrayObject
-    | LinkedListObject
-    | TreeObject
-    | GraphObject
-    | TableObject
-    | CodeBlockObject
-    | MemoryBlockObject
-    | ProcessObject
-    | TimelineObject
-    | FormulaObject
-    | CardObject
-    | MindmapObject,
+    Union[
+        NodeObject, EdgeObject, ArrayObject, LinkedListObject, TreeObject,
+        GraphObject, TableObject, CodeBlockObject, MemoryBlockObject,
+        ProcessObject, TimelineObject, FormulaObject, CardObject, MindmapObject,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -384,22 +386,13 @@ class UnlockAnimation(AnimationBase):
 
 # discriminated union
 Animation = Annotated[
-    AppearAnimation
-    | DisappearAnimation
-    | HighlightAnimation
-    | TransformAnimation
-    | MoveAnimation
-    | UpdateValueAnimation
-    | CompareAnimation
-    | SwapAnimation
-    | RelaxEdgeAnimation
-    | EnqueueAnimation
-    | DequeueAnimation
-    | SplitAnimation
-    | MergeAnimation
-    | ScheduleAnimation
-    | LockAnimation
-    | UnlockAnimation,
+    Union[
+        AppearAnimation, DisappearAnimation, HighlightAnimation,
+        TransformAnimation, MoveAnimation, UpdateValueAnimation,
+        CompareAnimation, SwapAnimation, RelaxEdgeAnimation,
+        EnqueueAnimation, DequeueAnimation, SplitAnimation, MergeAnimation,
+        ScheduleAnimation, LockAnimation, UnlockAnimation,
+    ],
     Field(discriminator="type"),
 ]
 

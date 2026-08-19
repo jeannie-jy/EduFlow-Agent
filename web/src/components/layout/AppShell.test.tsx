@@ -46,12 +46,8 @@ it("navigates from the shell to an implemented business route", async () => {
   )!;
   await userEvent.click(sidebarLink);
 
-  expect(screen.getByRole("heading", { name: "新建推演" })).toBeVisible();
-  expect(
-    within(screen.getByRole("navigation", { name: "breadcrumb" })).getByText(
-      "新建推演",
-    ),
-  ).toBeVisible();
+  // /app/new 重定向到 /app/project/_new（ProjectWorkspace 新建模式）
+  expect(screen.getByRole("heading", { name: "选择模块" })).toBeVisible();
 });
 
 it("keeps mobile navigation targets at least 44 pixels tall", () => {

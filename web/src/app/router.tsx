@@ -9,7 +9,6 @@ import { RegisterPage } from "@/features/auth/RegisterPage";
 
 // 应用页面
 import { Dashboard } from "@/pages/Dashboard";
-import { NewProject } from "@/pages/NewProject";
 import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
 import { TemplateBrowser } from "@/pages/TemplateBrowser";
 import { NotFound } from "@/pages/NotFound";
@@ -58,7 +57,7 @@ export const appRoutes: RouteObject[] = [
     element: <AppLayout />,
     children: [
       { index: true, element: <Dashboard /> },
-      { path: "new", element: <NewProject /> },
+      { path: "new", element: <Navigate to="/app/project/_new" replace /> },
       { path: "templates", element: <TemplateBrowser /> },
 
       // 统一项目工作区

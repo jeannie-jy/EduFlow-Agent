@@ -5,7 +5,7 @@ import { renderWithProviders } from "@/test/render";
 
 const routes = [
   ["/app", "我的推演"],
-  ["/app/new", "新建推演"],
+  ["/app/project/_new", "选择模块"],
   ["/login", "欢迎回来"],
   ["/register", "创建你的学习空间"],
   ["/explore/dijkstra", "Dijkstra 最短路径交互推演"],

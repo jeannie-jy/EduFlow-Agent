@@ -43,6 +43,11 @@ class AgentState(TypedDict, total=False):
     plan_rejected: bool                # 教学计划被拒绝 → 结束流程等前端重启
     user_feedback: dict | None         # 用户反馈
 
+    # ── 模块选择（Phase A: 模块化生成器）─────────────────
+    selected_modules: list[str]         # 用户选择的模块列表: ["mindmap","cards","frames"]
+    module_outputs: dict[str, dict]     # module_id → 模块产出字典
+    module_errors: dict[str, str]       # module_id → 错误信息
+
     # ── 元信息 ───────────────────────────────────────────
     project_id: str
     status: str                        # drafting / planning / generating / reviewing / done

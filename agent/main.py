@@ -30,6 +30,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _setup_logging(settings)
     logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
+    # 注册模块生成器（Phase A: 模块化生成器架构）
+    try:
+        import generators.mindmap_generator   # noqa: F401 — 触发 register_generator
+        import generators.card_generator      # noqa: F401
+        import generators.frames_generator    # noqa: F401
+        import generators.video_generator     # noqa: F401
+        import generators.quiz_generator      # noqa: F401
+        import generators.comparison_generator  # noqa: F401
+        import generators.misconception_generator  # noqa: F401
+        import generators.pathway_generator  # noqa: F401
+        import generators.sandbox_generator  # noqa: F401
+        import generators.interactive_demo_generator  # noqa: F401
+        from generators.registry import list_generators
+        logger.info("已注册 %d 个模块生成器", len(list_generators()))
+    except Exception as exc:
+        logger.warning("模块生成器注册失败: %s", exc)
+
     # TODO: 初始化 DB 连接池、Redis 客户端
     yield
 
@@ -63,10 +80,11 @@ def _setup_logging(settings) -> None:
 
 def create_app() -> FastAPI:
     """工厂函数：创建并配置 FastAPI 实例。"""
+    settings = get_settings()
     app = FastAPI(
         title="EduFlow-Agent API",
         description="面向计算机科学教育的自主 Agent 教学推演系统",
-        version="0.1.0",
+        version=settings.app_version,
         lifespan=lifespan,
     )
 
@@ -108,4 +126,5 @@ app = create_app()
 @app.get("/api/health", tags=["system"])
 async def health_check() -> dict[str, str]:
     """健康检查端点。"""
-    return {"status": "ok", "version": "0.1.0"}
+    settings = get_settings()
+    return {"status": "ok", "version": settings.app_version}

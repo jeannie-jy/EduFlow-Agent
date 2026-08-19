@@ -394,6 +394,15 @@ Code(code_string="for i in range(n):", language="python", tab_width=4,
      add_line_numbers=False, background="window")
 # language 仅支持：python, cpp, java, javascript, bash, text
 # 不要用 pseudocode、csharp、typescript 等，不支持！
+
+# ⚠️ Code 对象内部只有 2 个元素：
+#   code_block[0] = 背景矩形(SurroundingRectangle)
+#   code_block[1] = Paragraph（所有代码行）
+# 访问第 N 行：code_block[1][N-1] （N 从 1 开始，N-1 是 Paragraph 内索引）
+# 遍历行：for line in code_block[1]: ...
+# 总行数：len(code_block[1])
+# 不要写 code_block.code ！
+# 不要写 code_block[N] 直接取行（N>1 时越界）！
 ```
 
 ### 表格
@@ -426,9 +435,17 @@ self.play(obj.animate.set_color(RED))   # 变色
 self.wait(0.5)                   # 暂停
 ```
 
+⚠️ **set_stroke() 只接受 stroke_width 和 color**，不要传 fill_color / fill_opacity！
+   fill 属性用 set_fill()：
+```python
+box.animate.set_stroke(color="#F4D03F", width=3)              # 正确
+box.animate.set_fill(color="#F4D03F", opacity=0.3)           # 正确
+box.animate.set_stroke(color="#F4D03F", fill_color="...")    # 错误！
+```
+
 ## 配色方案
 
-- 背景：`self.camera.background_color = "#1A1A2E"`
+- 背景：`self.camera.background_color = "#1A1A2E"`（直接赋值即可，**不要**用 `self.camera.animate`——Camera 没有 animate 属性！）
 - 数据结构主体（数组框、节点）：`"#5DADE2"`（天蓝）
 - 辅助数据（标签、标注）：`"#AED6F1"`（浅蓝）
 - 高亮/当前操作元素：`"#F4D03F"`（金黄）或 `"#E74C3C"`（珊瑚红）

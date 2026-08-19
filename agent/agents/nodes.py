@@ -30,21 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Helper: clean JSON from LLM output
-# ============================================================================
-
-
-def _extract_json(text: str) -> dict[str, Any]:
-    """从 LLM 文本回复中提取 JSON。处理 markdown code block 包裹。"""
-    text = text.strip()
-    # 去掉 markdown code block 标记
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    return json.loads(text)
-
-
-# ============================================================================
 # Helpers
 # ============================================================================
 
@@ -98,6 +83,24 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
         context_parts.append(
             f"<teacher_constraints>\n{json.dumps(constraints, ensure_ascii=False, indent=2)}\n</teacher_constraints>"
         )
+
+    # 模块感知提示（Phase E: 全量规划 + 加法标注）
+    selected_modules = state.get("selected_modules", [])
+    if selected_modules:
+        modules_hint = (
+            f"\n<selected_modules>\n"
+            f"用户选择了以下产出方式（outline 仍需完整规划，以下提示仅用于额外标注）：\n"
+            f"{', '.join(selected_modules)}\n"
+            f"- outline 必须包含完整的 step/key_points/estimated_frames（不论是否选了 frames）\n"
+        )
+        if "quiz" in selected_modules:
+            modules_hint += "- 在 key_points 中用「⚡练习点: xxx」标注适合出题的知识点\n"
+        if "mindmap" in selected_modules or "cards" in selected_modules:
+            modules_hint += "- 在 key_points 中补充每个概念的核心定义\n"
+        if "comparison" in selected_modules:
+            modules_hint += "- 在 risk_notes 中标注可与哪些算法对比\n"
+        modules_hint += "</selected_modules>\n"
+        context_parts.append(modules_hint)
 
     context_parts.append(
         "\n请严格按照上述用户提供的内容进行教学规划。"
@@ -670,12 +673,14 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         det_overall = schema_score * 0.3 + consistency_score * 0.7
         final_overall = round(det_overall * 0.4 + llm_overall * 0.6, 2)
         scores = llm_scores.get("scores", {})
-        if schema_score > scores.get("renderability", 0.7):
-            logger.debug("renderability: LLM=%.2f 被确定性 schema_score=%.2f 覆盖",
+        # 确定性分数作为对应维度的上限约束：校验失败必须压低 LLM 的乐观评分，
+        # 校验通过则不干预（上限 1.0 无约束）。
+        if schema_score < scores.get("renderability", 0.7):
+            logger.debug("renderability: LLM=%.2f 被确定性 schema_score=%.2f 压低",
                          scores.get("renderability", 0.7), schema_score)
             scores["renderability"] = schema_score
-        if consistency_score > scores.get("coherence", 0.7):
-            logger.debug("coherence: LLM=%.2f 被确定性 consistency_score=%.2f 覆盖",
+        if consistency_score < scores.get("coherence", 0.7):
+            logger.debug("coherence: LLM=%.2f 被确定性 consistency_score=%.2f 压低",
                          scores.get("coherence", 0.7), consistency_score)
             scores["coherence"] = consistency_score
         suggestions = llm_scores.get("suggestions", [])

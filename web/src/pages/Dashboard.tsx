@@ -94,12 +94,12 @@ export function Dashboard() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 sm:p-6">
       {/* 头部 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">我的推演</h1>
-          <p className="text-sm text-slate-500 mt-1">管理和创建你的教学推演项目</p>
+          <h1 className="text-2xl font-bold text-[var(--foreground)]">我的推演</h1>
+          <p className="mt-1 text-sm text-[var(--muted-foreground)]">管理和创建你的教学推演项目</p>
         </div>
         <Link to="/app/new">
           <Button className="gap-2">
@@ -110,7 +110,7 @@ export function Dashboard() {
       </div>
 
       {/* 状态筛选 */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2" aria-label="按项目状态筛选">
         <Button
           variant={statusFilter === "" ? "default" : "outline"}
           size="sm"
@@ -152,7 +152,7 @@ export function Dashboard() {
           {/* 分页 */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between">
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-[var(--muted-foreground)]">
                 共 {total} 个项目，第 {page}/{totalPages} 页
               </p>
               <div className="flex gap-2">
@@ -202,29 +202,29 @@ function ProjectCard({ project, onDelete }: { project: ProjectListItem; onDelete
   };
 
   return (
-    <div className="group relative rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md hover:border-indigo-200">
+    <div className="group relative rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-sm transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--interactive)_45%,var(--border))] hover:shadow-md">
       <Link to={`/app/project/${project.id}`} className="block p-5">
         <div className="flex items-start justify-between mb-3">
-          <h3 className="font-semibold text-slate-900 truncate flex-1 mr-2">
+          <h3 className="mr-2 min-w-0 flex-1 truncate font-semibold text-[var(--foreground)]">
             {project.title}
           </h3>
           <Badge variant={statusVariants[project.status] ?? "secondary"}>
             {statusLabels[project.status] ?? project.status}
           </Badge>
         </div>
-        <div className="flex items-center gap-4 text-xs text-slate-400">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted-foreground)]">
           {project.topic && <span>{project.topic}</span>}
           <span>{project.difficulty === "intermediate" ? "中级" : project.difficulty}</span>
           <span>{project.frame_count} 帧</span>
         </div>
-        <div className="mt-3 text-xs text-slate-400">
+        <div className="mt-3 text-xs text-[var(--muted-foreground)]">
           {project.updated_at ? new Date(project.updated_at).toLocaleDateString("zh-CN") : ""}
         </div>
       </Link>
       <button
         onClick={handleDelete}
         disabled={deleting}
-        className="absolute bottom-3 right-3 p-1.5 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-100"
+        className="absolute bottom-3 right-3 rounded-md p-1.5 text-[var(--muted-foreground)] opacity-65 transition-colors hover:bg-[color-mix(in_oklch,var(--error)_12%,var(--card))] hover:text-[var(--error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive)] disabled:opacity-100"
         title="删除项目"
       >
         {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
@@ -241,7 +241,7 @@ function LoadingSkeleton() {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-slate-200 bg-white p-5">
+        <div key={i} className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
           <Skeleton className="h-5 w-3/4 mb-3" />
           <Skeleton className="h-3 w-1/2 mb-2" />
           <Skeleton className="h-3 w-1/4" />
@@ -257,12 +257,12 @@ function LoadingSkeleton() {
 
 function EmptyState({ statusFilter }: { statusFilter: string }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 py-20">
-      <FolderOpen size={48} className="text-slate-300 mb-4" />
-      <p className="text-slate-500 mb-2">
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/45 px-6 py-20 text-center">
+      <FolderOpen size={48} className="mb-4 text-[var(--muted-foreground)] opacity-55" />
+      <p className="mb-2 text-[var(--foreground)]">
         {statusFilter ? `没有 "${statusLabels[statusFilter] ?? statusFilter}" 状态的项目` : "还没有推演项目"}
       </p>
-      <p className="text-sm text-slate-400 mb-4">创建一个推演，开始你的交互式教学体验</p>
+      <p className="mb-4 text-sm text-[var(--muted-foreground)]">创建一个推演，开始你的交互式教学体验</p>
       <Link to="/app/new">
         <Button variant="outline" className="gap-2">
           <Plus size={16} />
@@ -279,9 +279,9 @@ function EmptyState({ statusFilter }: { statusFilter: string }) {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-20">
-      <AlertCircle size={48} className="text-red-300 mb-4" />
-      <p className="text-red-600 mb-2">{message}</p>
+    <div className="flex flex-col items-center justify-center rounded-xl border border-[color-mix(in_oklch,var(--error)_35%,var(--border))] bg-[color-mix(in_oklch,var(--error)_8%,var(--card))] px-6 py-20 text-center">
+      <AlertCircle size={48} className="mb-4 text-[var(--error)] opacity-65" />
+      <p className="mb-2 text-[var(--error)]">{message}</p>
       <Button variant="outline" size="sm" onClick={onRetry} className="gap-2">
         <RefreshCw size={16} />
         重试

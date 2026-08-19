@@ -15,6 +15,8 @@ export type CodeBlockObjectProps = {
   object: DSLVisualObject;
   /** 高亮行号集合（1-indexed） */
   highlightLines?: Set<number>;
+  selectedLine?: number;
+  onLineSelect?: (line: number) => void;
   className?: string;
 };
 
@@ -22,7 +24,14 @@ export type CodeBlockObjectProps = {
  * 简单的关键词语法高亮（无外部依赖）。
  * 支持 Python/C/Java/伪代码 的常见关键词。
  */
-function highlightSyntax(code: string, language: string): string {
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function highlightSyntaxLine(line: string, language: string): string {
   const KEYWORDS: Record<string, string[]> = {
     python: [
       "def", "class", "return", "if", "elif", "else", "for", "while",
@@ -47,36 +56,46 @@ function highlightSyntax(code: string, language: string): string {
   const escaped = keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const pattern = new RegExp(`\\b(${escaped.join("|")})\\b`, "g");
 
-  return code
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    // 字符串
-    .replace(/(["'`])(?:(?!\1|\\).|\\.)*\1/g, '<span class="text-success">$&</span>')
-    // 注释
-    .replace(/(#.*$|\/\/.*$)/gm, '<span class="text-muted-foreground/70 italic">$&</span>')
-    // 数字
-    .replace(/\b(\d+\.?\d*)\b/g, '<span class="text-info">$1</span>')
-    // 关键词
-    .replace(pattern, '<span class="text-primary font-medium">$1</span>');
+  const tokenPattern = /(["'`])(?:(?!\1|\\).|\\.)*\1|#.*$|\/\/.*$|\b\d+\.?\d*\b|\b[A-Za-z_]\w*\b/g;
+
+  let output = "";
+  let cursor = 0;
+  for (const match of line.matchAll(tokenPattern)) {
+    const token = match[0];
+    const index = match.index ?? 0;
+    output += escapeHtml(line.slice(cursor, index));
+    if (/^["'`]/.test(token)) {
+      output += `<span class="text-success">${escapeHtml(token)}</span>`;
+    } else if (token.startsWith("#") || token.startsWith("//")) {
+      output += `<span class="text-muted-foreground/70 italic">${escapeHtml(token)}</span>`;
+    } else if (/^\d/.test(token)) {
+      output += `<span class="text-info">${escapeHtml(token)}</span>`;
+    } else if (pattern.test(token)) {
+      output += `<span class="text-primary font-medium">${escapeHtml(token)}</span>`;
+      pattern.lastIndex = 0;
+    } else {
+      output += escapeHtml(token);
+    }
+    cursor = index + token.length;
+  }
+  output += escapeHtml(line.slice(cursor));
+  return output;
 }
 
 export const CodeBlockObject = memo(function CodeBlockObject({
   object,
   highlightLines,
+  selectedLine,
+  onLineSelect,
   className,
 }: CodeBlockObjectProps) {
   const code = object.code ?? "";
   const language = object.language ?? "python";
   const lines = useMemo(() => code.split("\n"), [code]);
 
-  const highlightedHtml = useMemo(
-    () => highlightSyntax(code, language),
-    [code, language],
-  );
   const highlightedLines = useMemo(
-    () => highlightedHtml.split("\n"),
-    [highlightedHtml],
+    () => lines.map((line) => highlightSyntaxLine(line, language)),
+    [language, lines],
   );
 
   if (!code) {
@@ -90,7 +109,7 @@ export const CodeBlockObject = memo(function CodeBlockObject({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border bg-[#0d1117] font-mono text-sm",
+        "overflow-hidden rounded-lg border bg-code-bg font-mono text-sm",
         className,
       )}
     >
@@ -110,14 +129,29 @@ export const CodeBlockObject = memo(function CodeBlockObject({
           <tbody>
             {lines.map((_line, idx) => {
               const lineNum = idx + 1;
-              const isHighlighted = highlightLines?.has(lineNum);
+              const configuredHighlights = highlightLines ?? new Set(object.highlight_lines ?? []);
+              const isHighlighted = configuredHighlights.has(lineNum);
 
               return (
                 <tr
                   key={lineNum}
+                  tabIndex={onLineSelect ? 0 : undefined}
+                  aria-label={onLineSelect ? `代码第 ${lineNum} 行` : undefined}
+                  aria-selected={selectedLine === lineNum || undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onLineSelect?.(lineNum);
+                  }}
+                  onKeyDown={(event) => {
+                    if (!onLineSelect || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    onLineSelect(lineNum);
+                  }}
                   className={cn(
                     "transition-colors",
+                    onLineSelect && "cursor-pointer outline-none hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/70",
                     isHighlighted && "bg-primary/15 ring-1 ring-primary/30",
+                    selectedLine === lineNum && "bg-primary/25 ring-1 ring-inset ring-primary/70",
                   )}
                 >
                   {/* 行号 */}
