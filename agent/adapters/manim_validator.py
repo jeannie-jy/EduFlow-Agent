@@ -195,7 +195,10 @@ _SCENE_ATTRS: frozenset[str] | None = None
 
 
 def _get_scene_attrs() -> frozenset[str]:
-    """动态获取 manim.Scene 的实际属性名（与 _get_manim_exports 同一内省模式）。"""
+    """动态获取 manim.Scene 的实际属性名（与 _get_manim_exports 同一内省模式）。
+
+    manim 不可用时（CI 无渲染依赖）回退到静态名称表，保持检查可用。
+    """
     global _SCENE_ATTRS
     if _SCENE_ATTRS is None:
         try:
@@ -204,7 +207,8 @@ def _get_scene_attrs() -> frozenset[str]:
                 n for n in dir(_manim.Scene) if not n.startswith("_")
             )
         except Exception:
-            _SCENE_ATTRS = frozenset()
+            from adapters._manim_static_names import SCENE_PUBLIC_ATTRS
+            _SCENE_ATTRS = SCENE_PUBLIC_ATTRS
     return _SCENE_ATTRS
 
 
@@ -289,7 +293,10 @@ _BUILTIN_NAMES: frozenset[str] | None = None
 
 
 def _get_manim_exports() -> frozenset[str]:
-    """动态获取 manim 包的实际导出名（import * 的展开）。"""
+    """动态获取 manim 包的实际导出名（import * 的展开）。
+
+    manim 不可用时（CI 无渲染依赖）回退到静态名称表，保持检查可用。
+    """
     global _MANIM_EXPORTS
     if _MANIM_EXPORTS is None:
         try:
@@ -298,7 +305,8 @@ def _get_manim_exports() -> frozenset[str]:
                 n for n in dir(_manim) if not n.startswith("_")
             )
         except Exception:
-            _MANIM_EXPORTS = frozenset()
+            from adapters._manim_static_names import MANIM_PUBLIC_NAMES
+            _MANIM_EXPORTS = MANIM_PUBLIC_NAMES
     return _MANIM_EXPORTS
 
 
