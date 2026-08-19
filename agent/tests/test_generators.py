@@ -540,6 +540,27 @@ class TestVideoGenerator:
         # Video generator doesn't need LLM prompt (delegates to manim_llm_adapter)
         assert gen.get_system_prompt() == ""
 
+    async def test_generate_prepares_manifest_without_starting_render(
+        self, gen, teaching_plan, knowledge_graph, user_input,
+    ):
+        result = await gen.generate(
+            teaching_plan=teaching_plan,
+            knowledge_graph=knowledge_graph,
+            user_input=user_input,
+            constraints={},
+            project_id="00000000-0000-0000-0000-000000000001",
+            existing_outputs={
+                "frames": {
+                    "artifact_version": "frames-v1",
+                    "frames": [{"frame_id": "f_001", "title": "开始"}],
+                },
+            },
+        )
+
+        assert result["status"] == "ready"
+        assert result["source_frames_version"] == "frames-v1"
+        assert "job_id" not in result
+
 
 # ============================================================================
 # Tests: ModuleDispatcher integration

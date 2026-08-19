@@ -45,4 +45,13 @@ describe("MindmapView", () => {
     fireEvent.keyDown(search, { key: "Enter" });
     expect(onNodeClick).toHaveBeenCalledWith("distance");
   });
+
+  it("renders connection handles for every parent-child relationship", async () => {
+    const { container } = render(<MindmapView root={root} />);
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(".react-flow__handle-left")).toHaveLength(2);
+      expect(container.querySelectorAll(".react-flow__handle-right")).toHaveLength(2);
+    });
+  });
 });

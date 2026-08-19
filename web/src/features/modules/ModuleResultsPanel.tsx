@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { regenerateModule } from "@/services/generate";
 import type { SSEModuleDoneEvent } from "@/services/sse";
-import { normalizeFramesArtifact } from "@/features/artifacts/artifact-model";
+import { normalizeFramesArtifact, normalizeVideoArtifact } from "@/features/artifacts/artifact-model";
 import { VideoStudioCard } from "@/features/artifacts/VideoStudioCard";
 import { InteractiveExperience } from "@/features/artifacts/InteractiveExperience";
 import { toUserFacingError } from "@/lib/user-facing-error";
@@ -83,6 +83,12 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
     .filter((entry) => entry.config)
     .sort((left, right) => left.config.order - right.config.order);
   const selected = sorted.find((entry) => entry.key === activeModule) ?? sorted[0];
+  const selectedVideo = selected?.key === "video" ? normalizeVideoArtifact(selected.value) : null;
+  const selectedStatusLabel = selected?.error
+    ? "生成失败"
+    : selectedVideo && !selectedVideo.job_id
+      ? "分镜已就绪"
+      : "已生成";
 
   useEffect(() => {
     if (selected && selected.key !== activeModule) setActiveModule(selected.key);
@@ -196,19 +202,23 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
             <selected.config.icon size={17} className="text-[var(--interactive)]" />
             <div className="min-w-0">
               <h2 className="text-sm font-bold">{selected.config.title}</h2>
-              <p className="text-[11px] text-[var(--muted-foreground)]">成果工作区 · 可检查并重新生成当前模块</p>
+              <p className="text-[11px] text-[var(--muted-foreground)]">
+                {selected.key === "video" ? "检查分镜并按需开始制作视频" : "成果工作区 · 可检查并重新生成当前模块"}
+              </p>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px]">{selected.error ? "生成失败" : "已生成"}</Badge>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={isRegenerating[selected.key]}
-                onClick={() => handleRegenerate(selected.key)}
-              >
-                <RefreshCw className={isRegenerating[selected.key] ? "animate-spin" : ""} />
-                {isRegenerating[selected.key] ? "生成中" : "重新生成"}
-              </Button>
+              <Badge variant="outline" className="text-[10px]">{selectedStatusLabel}</Badge>
+              {selected.key !== "video" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isRegenerating[selected.key]}
+                  onClick={() => handleRegenerate(selected.key)}
+                >
+                  <RefreshCw className={isRegenerating[selected.key] ? "animate-spin" : ""} />
+                  {isRegenerating[selected.key] ? "生成中" : "重新生成"}
+                </Button>
+              )}
             </div>
           </header>
           {navigationMessage && (
@@ -291,7 +301,7 @@ function renderModuleContent(
     case "quiz":
       return <QuizPanel questions={(value as { questions?: QuizQuestion[] })?.questions ?? []} />;
     case "video":
-      return <VideoStudioCard videoValue={value} framesValue={framesValue} projectId={projectId} targetFrameId={targetFrameId} />;
+      return <VideoStudioCard key={projectId} videoValue={value} framesValue={framesValue} projectId={projectId} targetFrameId={targetFrameId} />;
     case "comparison":
       return <ComparisonView data={value as ComparisonData} />;
     case "misconception":
@@ -316,9 +326,23 @@ function renderInteractiveDemo(value: unknown, projectTitle?: string): React.Rea
   return <InteractiveExperience code={code} topic={projectTitle} />;
 }
 
-function normalizeMindmapNode(source?: Record<string, unknown>): MindmapNode {
+function normalizeMindmapNode(
+  source?: Record<string, unknown>,
+  path: number[] = [0],
+  usedIds = new Set<string>(),
+): MindmapNode {
+  const requestedId = source?.id ? String(source.id) : `mindmap-${path.join("-")}`;
+  let id = requestedId;
+  let suffix = 2;
+  while (usedIds.has(id)) id = `${requestedId}-${suffix++}`;
+  usedIds.add(id);
+
   const children = Array.isArray(source?.children)
-    ? source.children.map((child) => normalizeMindmapNode(child as Record<string, unknown>))
+    ? source.children.map((child, index) => normalizeMindmapNode(
+        child as Record<string, unknown>,
+        [...path, index],
+        usedIds,
+      ))
     : [];
   const relatedFrameIds = Array.isArray(source?.related_frame_ids)
     ? source.related_frame_ids.map(String)
@@ -327,7 +351,7 @@ function normalizeMindmapNode(source?: Record<string, unknown>): MindmapNode {
       : [];
 
   return {
-    id: String(source?.id ?? "mindmap-root"),
+    id,
     name: String(source?.name ?? source?.label ?? "知识导图"),
     type: source?.type ? String(source.type) : undefined,
     relatedFrameIds,

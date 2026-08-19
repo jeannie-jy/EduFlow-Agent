@@ -140,4 +140,23 @@ describe("ModuleResultsPanel cross-module navigation", () => {
     expect(screen.getByRole("status")).toHaveTextContent("未找到关联帧 f_404");
     expect(screen.getByRole("heading", { name: "思维导图" })).toBeInTheDocument();
   });
+
+  it("assigns unique stable ids when generated mindmap nodes omit ids", async () => {
+    render(<ModuleResultsPanel project={projectWith({
+      mindmap: {
+        root: {
+          name: "冒泡排序",
+          children: [
+            { name: "比较相邻元素", children: [{ name: "交换逆序元素", children: [] }] },
+            { name: "重复遍历", children: [] },
+          ],
+        },
+      },
+    })} />);
+
+    expect(await screen.findByText("比较相邻元素")).toBeInTheDocument();
+    expect(screen.getByText("交换逆序元素")).toBeInTheDocument();
+    expect(screen.getByText("重复遍历")).toBeInTheDocument();
+    expect(screen.getByText("4 个概念 · 拖动空白处平移 · 滚轮缩放")).toBeInTheDocument();
+  });
 });

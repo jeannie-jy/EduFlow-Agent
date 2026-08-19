@@ -1,7 +1,8 @@
-"""Manim Video Generator — 教学视频导出生成器。
+"""Video preparation generator.
 
-封装现有的 manim_llm_adapter 导出流程为 ModuleGenerator。
-依赖 frames 模块（必须先有 DSL 帧才能生成视频）。
+The module generation phase prepares a video manifest from the frame script.
+Rendering is intentionally started later by the explicit export API after the
+user reviews the storyboard and chooses output settings.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ class VideoGenerator(BaseGenerator):
     """Manim 教学视频导出生成器。
 
     依赖 frames 模块先完成 DSL 帧生成。
-    创建 Manim 渲染任务并返回 job_id 供前端轮询。
+    准备视频分镜清单；不在模块生成阶段启动耗时渲染。
     """
 
     module_id = "video"
@@ -64,13 +65,7 @@ class VideoGenerator(BaseGenerator):
         project_id: str,
         existing_outputs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """创建 Manim 导出任务。
-
-        从 existing_outputs["frames"] 读取帧数据（内存获取，避免 DB 时序问题）。
-        创建 job 记录并返回 job_id。
-        """
-        import asyncio
-        import uuid
+        """Prepare a render-ready manifest without creating an export job."""
 
         # 1. 从已生成的模块产出中获取 frames（内存优先于 DB）
         dsl = None
@@ -102,55 +97,19 @@ class VideoGenerator(BaseGenerator):
                 "config": {},
             }
 
-        # 2. 创建导出任务
-        try:
-            from db.database import async_session_factory
-            from db.models import Project as ProjectModel, ExportJobModel
-            from api.deps import parse_project_id
-
-            async with async_session_factory() as db_session:
-                # 2. 创建导出任务
-                job_id = uuid.uuid4()
-                config = {
-                    "quality": "h",
-                    "format": "mp4",
-                    "fps": 30,
-                    "include_subtitles": True,
-                }
-
-                export_job = ExportJobModel(
-                    id=job_id,
-                    project_id=parse_project_id(project_id),
-                    target="manim_video",
-                    status="queued",
-                    config=config,
-                )
-                db_session.add(export_job)
-                await db_session.flush()
-                await db_session.commit()
-
-                # 单轨导出：无独立 Worker，直接启动进程内后台渲染任务
-                from api.export import _fallback_export
-                asyncio.create_task(_fallback_export(str(job_id), dsl, config))
-
-                return {
-                    "schema_version": "1.0",
-                    "source_frames_version": str(dsl.get("artifact_version", "")),
-                    "job_id": str(job_id),
-                    "status": "queued",
-                    "config": config,
-                    "message": "视频导出任务已创建，正在渲染中...",
-                }
-
-        except Exception as exc:
-            logger.exception("VideoGenerator 失败")
-            return {
-                "schema_version": "1.0",
-                "source_frames_version": str(dsl.get("artifact_version", "")) if dsl else "",
-                "status": "failed",
-                "message": f"视频导出失败: {exc}",
-                "config": {},
-            }
+        return {
+            "schema_version": "1.0",
+            "source_frames_version": str(dsl.get("artifact_version", "")),
+            "status": "ready",
+            "config": {
+                "quality": "h",
+                "format": "mp4",
+                "fps": 30,
+                "include_subtitles": True,
+                "include_tts": False,
+            },
+            "message": "视频分镜已就绪，请确认设置后开始制作视频",
+        }
 
     def validate(self, output: dict[str, Any]) -> list[dict[str, Any]]:
         """校验视频导出结果。"""

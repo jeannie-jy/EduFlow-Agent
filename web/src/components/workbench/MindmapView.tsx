@@ -9,6 +9,8 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  Handle,
+  Position,
   ReactFlow,
   type Edge,
   type Node,
@@ -67,6 +69,14 @@ const MindmapFlowNode = memo(function MindmapFlowNode({ data, selected }: NodePr
       )}
       data-node-type={source.type ?? "definition"}
     >
+      {depth > 0 && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          className="mindmap-flow-node__handle"
+          aria-hidden="true"
+        />
+      )}
       <div className="flex items-start gap-2">
         <span className="mindmap-flow-node__marker mt-1.5 size-2 shrink-0 rounded-full" />
         <div className="min-w-0 flex-1">
@@ -107,6 +117,14 @@ const MindmapFlowNode = memo(function MindmapFlowNode({ data, selected }: NodePr
             </button>
           ))}
         </div>
+      )}
+      {hasChildren && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className="mindmap-flow-node__handle"
+          aria-hidden="true"
+        />
       )}
     </article>
   );
@@ -165,6 +183,7 @@ function layoutMindmap(
         source: parentId,
         target: node.id,
         type: "smoothstep",
+        className: `mindmap-guide-edge mindmap-guide-edge--depth-${Math.min(depth, 3)}`,
         selectable: false,
         focusable: false,
         style: { stroke: "var(--graph-line)", strokeWidth: depth === 1 ? 2.5 : 1.75 },
@@ -215,7 +234,7 @@ export const MindmapView = memo(function MindmapView({
     observer.observe(containerRef.current);
     fit();
     return () => observer.disconnect();
-  }, [flow, root]);
+  }, [flow, nodes]);
 
   const focusNode = (nodeId: string) => {
     const target = nodes.find((node) => node.id === nodeId);
@@ -234,7 +253,7 @@ export const MindmapView = memo(function MindmapView({
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-3 sm:px-4">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold"><Network size={16} />概念导图</h3>
-          <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">{totalNodes} 个概念 · 拖动空白处平移 · Ctrl + 滚轮缩放</p>
+          <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">{totalNodes} 个概念 · 拖动空白处平移 · 滚轮缩放</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="relative block">
@@ -287,10 +306,9 @@ export const MindmapView = memo(function MindmapView({
             nodesConnectable={false}
             elementsSelectable
             panOnDrag
-            zoomOnScroll={false}
+            zoomOnScroll
             zoomOnPinch
             zoomOnDoubleClick={false}
-            zoomActivationKeyCode="Control"
             minZoom={0.35}
             maxZoom={1.8}
             proOptions={{ hideAttribution: true }}

@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { toUserFacingError } from "@/lib/user-facing-error";
 import { createExportJob, getExportStatus, type ExportArtifact, type ExportManimRequest } from "@/services/export";
 import { normalizeFramesArtifact, normalizeVideoArtifact } from "./artifact-model";
+import { loadVideoJobSession, saveVideoJobSession } from "./video-job-session";
 
 const qualityOptions = [
   { value: "l", label: "480p", note: "快速" },
@@ -49,20 +50,22 @@ export function VideoStudioCard({
 }) {
   const video = useMemo(() => normalizeVideoArtifact(videoValue), [videoValue]);
   const frames = useMemo(() => normalizeFramesArtifact(framesValue), [framesValue]);
-  const [status, setStatus] = useState(video.status ?? "idle");
-  const [progress, setProgress] = useState(0);
-  const [artifacts, setArtifacts] = useState<ExportArtifact[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [jobId, setJobId] = useState(video.job_id);
-  const [config, setConfig] = useState<ExportManimRequest>({
+  const storedSession = useMemo(() => loadVideoJobSession(projectId), [projectId]);
+  const defaultConfig: ExportManimRequest = {
     quality: (video.config?.quality as ExportManimRequest["quality"]) ?? "h",
     format: String(video.config?.format ?? "mp4"),
     fps: Number(video.config?.fps ?? 30),
     include_subtitles: video.config?.include_subtitles !== false,
     include_tts: video.config?.include_tts === true,
-  });
+  };
+  const [status, setStatus] = useState(storedSession?.status ?? video.status ?? "ready");
+  const [progress, setProgress] = useState(storedSession?.progress ?? 0);
+  const [artifacts, setArtifacts] = useState<ExportArtifact[]>(storedSession?.artifacts ?? []);
+  const [error, setError] = useState<string | null>(storedSession?.error ?? null);
+  const [jobId, setJobId] = useState(storedSession?.jobId ?? video.job_id);
+  const [config, setConfig] = useState<ExportManimRequest>(storedSession?.config ?? defaultConfig);
   const [creatingJob, setCreatingJob] = useState(false);
-  const [sourceFramesVersion, setSourceFramesVersion] = useState(video.source_frames_version);
+  const [sourceFramesVersion, setSourceFramesVersion] = useState(storedSession?.sourceFramesVersion ?? video.source_frames_version);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
 
   useEffect(() => {
@@ -90,6 +93,19 @@ export function VideoStudioCard({
       if (timeout) window.clearTimeout(timeout);
     };
   }, [jobId]);
+
+  useEffect(() => {
+    if (!jobId) return;
+    saveVideoJobSession(projectId, {
+      jobId,
+      status,
+      progress,
+      artifacts,
+      error,
+      config,
+      sourceFramesVersion,
+    });
+  }, [artifacts, config, error, jobId, progress, projectId, sourceFramesVersion, status]);
 
   const startRender = async () => {
     if (!projectId) return;
@@ -120,6 +136,11 @@ export function VideoStudioCard({
     frames.frames.reduce((sum, frame) => sum + (frame.duration_ms ?? 5000), 0) / 1000,
   );
   const selectedFrame = frames.frames[selectedFrameIndex] ?? frames.frames[0];
+  const selectedObjects = selectedFrame?.visual_objects ?? [];
+  const codeObjectCount = selectedObjects.filter((object) => object.type === "code_block").length;
+  const useCodeFocusLayout = codeObjectCount === 1 && selectedObjects.length > 1;
+  const supportObjectCount = Math.max(1, selectedObjects.length - codeObjectCount);
+  const frameDensity = selectedObjects.length > 6 ? "dense" : selectedObjects.length > 3 ? "compact" : "comfortable";
   const renderActive = status === "queued" || status === "rendering";
   const renderStage = status === "queued"
     ? 0
@@ -139,7 +160,7 @@ export function VideoStudioCard({
   }, [frames.frames, targetFrameId]);
 
   return (
-    <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className="space-y-4 p-4">
       <div className="min-w-0 space-y-4">
         <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -157,7 +178,7 @@ export function VideoStudioCard({
           </div>
           {frames.frames.length > 0 ? (
             <div className="space-y-4">
-              <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--code-bg)] shadow-sm">
+              <div className="video-storyboard-frame grid aspect-video min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--code-bg)] shadow-sm">
                 <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-white/75">
                   <div className="min-w-0">
                     <p className="font-mono text-[10px] text-white/45">
@@ -188,20 +209,57 @@ export function VideoStudioCard({
                     </Button>
                   </div>
                 </div>
-                <div className="video-storyboard-preview aspect-video overflow-auto bg-[var(--stage-bg)] p-4 sm:p-6">
-                  <div className="grid h-full min-h-52 grid-cols-1 content-center gap-3 sm:grid-cols-2">
-                    {selectedFrame?.visual_objects.slice(0, 4).map((object) => {
+                <div
+                  className={cn(
+                    "video-storyboard-preview min-h-0 overflow-auto bg-[var(--stage-bg)]",
+                    frameDensity === "comfortable" ? "p-4 sm:p-6" : "p-3 sm:p-4",
+                  )}
+                  data-frame-density={frameDensity}
+                  data-layout={useCodeFocusLayout ? "code-focus" : "adaptive-grid"}
+                >
+                  <div
+                    className={cn(
+                      "video-storyboard-layout grid min-h-full grid-cols-1 content-center",
+                      useCodeFocusLayout ? "gap-3" : "gap-2 sm:grid-cols-2 lg:grid-cols-4",
+                    )}
+                    style={useCodeFocusLayout ? { gridTemplateRows: `repeat(${supportObjectCount}, minmax(0, 1fr))` } : undefined}
+                  >
+                    {selectedFrame?.visual_objects.map((object) => {
                       const isStructure = object.type === "graph" || object.type === "tree";
+                      const isPrimaryCode = useCodeFocusLayout && object.type === "code_block";
+                      const isWideContent = [
+                        "array", "linked_list", "table", "code_block", "memory_block",
+                        "process", "timeline", "mindmap",
+                      ].includes(object.type ?? "");
+                      const isLongFormula = object.type === "formula"
+                        && String(object.latex ?? object.label ?? "").length > 28;
                       return (
                         <div
                           key={object.id}
+                          data-visual-type={object.type}
                           className={cn(
-                            "min-w-0 rounded-lg border border-[var(--border)] bg-[var(--card)]/95 p-3 shadow-sm",
-                            isStructure && "min-h-44 sm:col-span-2",
+                            "video-storyboard-object min-w-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]/95 shadow-sm",
+                            useCodeFocusLayout && (isPrimaryCode ? "is-primary-code" : "is-supporting-object"),
+                            !useCodeFocusLayout && (isWideContent || isLongFormula) && "sm:col-span-2",
+                            !useCodeFocusLayout && isStructure && "min-h-44 lg:col-span-4",
                           )}
                         >
-                          {object.label && <p className="mb-2 truncate text-[10px] font-semibold text-[var(--muted-foreground)]">{String(object.label)}</p>}
-                          <VisualObjectRenderer object={object} className={isStructure ? "h-40 w-full" : undefined} />
+                          {object.label && (
+                            <p className="border-b border-[var(--border)] px-3 py-2 text-[10px] font-semibold text-[var(--muted-foreground)]">
+                              {String(object.label)}
+                            </p>
+                          )}
+                          <div
+                            className={cn(
+                              "video-storyboard-object__content overflow-auto",
+                              isPrimaryCode ? "h-full max-h-none p-2" : "max-h-36 p-3",
+                              isStructure && "max-h-56 min-h-40",
+                            )}
+                            tabIndex={0}
+                            aria-label={`${String(object.label ?? object.type ?? "视觉对象")}内容区`}
+                          >
+                            <VisualObjectRenderer object={object} className={isStructure ? "h-48 w-full" : undefined} />
+                          </div>
                         </div>
                       );
                     })}
@@ -213,7 +271,14 @@ export function VideoStudioCard({
                   </div>
                 </div>
                 <div className="border-t border-white/10 px-4 py-3 text-white/75">
-                  <p className="line-clamp-2 text-xs leading-5">{selectedFrame?.narration || "该镜头暂无旁白"}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="line-clamp-2 text-xs leading-5">{selectedFrame?.narration || "该镜头暂无旁白"}</p>
+                    {frameDensity === "dense" && (
+                      <span className="shrink-0 rounded border border-[var(--warning)]/45 px-2 py-0.5 text-[9px] text-[var(--warning)]" title="该镜头内容较多，建议拆分镜头以避免成片拥挤">
+                        建议拆分镜头
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -264,7 +329,7 @@ export function VideoStudioCard({
         )}
       </div>
 
-      <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
+      <aside className="grid items-start gap-4 lg:grid-cols-2">
         <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <p className="text-xs font-semibold text-[var(--muted-foreground)]">视频制作状态</p>
           <div className="mt-3 flex items-center gap-2">
@@ -302,7 +367,7 @@ export function VideoStudioCard({
               <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{friendlyError.message} {friendlyError.suggestion}</p>
             </div>
           )}
-          {!jobId && <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">配置输出选项后即可创建新的渲染任务。</p>}
+          {!jobId && <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">视频尚未开始制作。请先检查分镜并配置输出选项。</p>}
           {stale && <p className="mt-3 text-xs leading-5 text-[var(--error)]">讲解分镜已有更新，建议重新制作视频后再导出。</p>}
         </section>
 
@@ -381,7 +446,7 @@ export function VideoStudioCard({
             >
               {creatingJob && <LoaderCircle className="animate-spin" />}
               {!creatingJob && <MonitorPlay />}
-              {jobId ? "按当前设置重新渲染" : "开始渲染"}
+              {jobId ? "按当前设置重新制作" : "开始制作视频"}
             </Button>
           </div>
         </section>
