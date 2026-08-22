@@ -79,13 +79,21 @@ async def call_llm(
     temperature: float = 0.3,
     max_tokens: int = 4096,
     model: str | None = None,
+    disable_thinking: bool = False,
 ) -> dict[str, Any]:
     """通用 LLM 调用封装。
+
+    Args:
+        disable_thinking: DeepSeek 新版 API 默认开启 thinking mode。长代码/长
+            文本生成场景（如 Manim 代码）下模型会在推理上耗尽 token 预算，
+            返回空 content 或超时；置 True 可关闭，生成更快且确定。
 
     Returns:
         {
             "content": str | None,
             "tool_calls": list[dict],
+            "finish_reason": str | None,
+            "refusal": str | None,
             "usage": {"input": int, "output": int},
         }
     """
@@ -108,6 +116,9 @@ async def call_llm(
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
         # DeepSeek 新版 API 默认开启 thinking mode，与 tool_choice 不兼容
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    elif disable_thinking:
+        # 长代码生成场景：thinking 模式耗尽 token 预算导致空内容/超时
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
     response = await client.chat.completions.create(**kwargs)
@@ -135,6 +146,9 @@ async def call_llm(
     return {
         "content": choice.message.content,
         "tool_calls": tool_calls,
+        # 诊断字段：空内容时靠 finish_reason/refusal 区分限流、内容过滤等
+        "finish_reason": choice.finish_reason,
+        "refusal": getattr(choice.message, "refusal", None),
         "usage": {
             "input": response.usage.prompt_tokens if response.usage else 0,
             "output": response.usage.completion_tokens if response.usage else 0,

@@ -149,6 +149,8 @@ async def _do_export_async(
     import shutil as _shutil
 
     r = redis_lib.from_url(redis_url, decode_responses=True)
+    # 提前计算，失败落盘（except 分支）也需要该目录
+    export_dir = Path(get_settings().export_dir) / job_id
 
     _update_redis_status(r, job_id, "rendering", progress=5)
     logger.info("导出开始: job=%s", job_id)
@@ -171,7 +173,6 @@ async def _do_export_async(
                 logger.info("Manim 脚本校验 warn: [%s] %s", i["rule"], i["detail"])
 
         # 2. 写入临时目录
-        export_dir = Path(get_settings().export_dir) / job_id
         scripts_dir = export_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         (scripts_dir / "main.py").write_text(files["main.py"], encoding="utf-8")
@@ -224,10 +225,29 @@ async def _do_export_async(
 
     except Exception as exc:
         logger.exception("导出失败: job=%s", job_id)
+        error_log = str(exc)[:500]
+        # LLM 校验失败时落盘失败脚本 + 校验问题，供复现调试
+        # （此前 main.py 未写盘，失败样本无法复现）
+        from adapters.manim_llm_adapter import ManimCodeValidationError
+        if isinstance(exc, ManimCodeValidationError):
+            try:
+                debug_dir = export_dir / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                (debug_dir / "main.py").write_text(exc.script, encoding="utf-8")
+                (debug_dir / "validation_errors.json").write_text(
+                    json.dumps(exc.issues, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                error_log = (
+                    f"{str(exc)[:280]}（失败脚本与校验问题已保存至 debug/ 目录）"
+                )
+                logger.info("校验失败脚本已落盘: %s", debug_dir)
+            except Exception:
+                pass
         # 先同步 DB（前端轮询的最终依据），Redis 状态写入单独容错——
         # 否则 Redis 不可用时 _update_redis_status 抛异常会吞掉 DB 同步
         try:
-            await _update_db_export_status(job_id, "failed", error_log=str(exc)[:500], engine=engine)
+            await _update_db_export_status(job_id, "failed", error_log=error_log, engine=engine)
         except Exception:
             pass
         try:

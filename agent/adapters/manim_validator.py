@@ -39,6 +39,7 @@ def validate_script(script: str) -> list[dict[str, Any]]:
     issues.extend(_check_mathtex_cjk(script))
     issues.extend(_check_invalid_lexer(script))
     issues.extend(_check_code_api(script))
+    issues.extend(_check_code_block_attr(script))
     issues.extend(_check_rstring_escape(script))
     issues.extend(_check_print_in_construct(script))
     issues.extend(_check_undefined_names(script))
@@ -110,6 +111,56 @@ def _check_code_api(script: str) -> list[dict]:
     return issues
 
 
+def _check_code_block_attr(script: str) -> list[dict]:
+    """检测 Code 属性访问幻觉：manim 0.20 的 Code 没有 .code_block 属性。
+
+    LLM 常顺着 DSL 的 visual_object type "code_block" 发明 code.code_block
+    （渲染期 AttributeError: 'Code' object has no attribute 'code_block'）。
+    真实 API：code.code_lines / code.background / code.line_numbers。
+    fixer 已确定性重写常见形态（X.code_block[...]），此规则兜底拦截
+    fixer 无法覆盖的形态（如 code[0].code_block），触发 LLM 反馈重试。
+    只检查字符串字面量之外的代码（code_string 内容里出现同名文本不算）。
+    """
+    issues = []
+    for m in re.finditer(r"\w+(?:\.\w+|\[[^\]]*\])*\.code_block\b", _blank_strings(script)):
+        lineno = script[:m.start()].count("\n") + 1
+        issues.append({
+            "rule": "code-block-attr",
+            "severity": "error",
+            "line": lineno,
+            "detail": (
+                f"Code 对象没有 code_block 属性，应改用 code.code_lines（行）/"
+                f"code.background（背景）: {m.group(0)[:60]}"
+            ),
+        })
+    return issues
+
+
+def _blank_strings(text: str) -> str:
+    """用空格替换字符串字面量（含三引号），保留换行以对齐行号。"""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ("'", '"'):
+            trip = text[i:i + 3] == c * 3
+            end = i + (3 if trip else 1)
+            while end < n:
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end:end + (3 if trip else 1)] == (c * 3 if trip else c):
+                    end += 3 if trip else 1
+                    break
+                end += 1
+            out.append(" " * (end - i))
+            i = end
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def _check_rstring_escape(script: str) -> list[dict]:
     r"""r-string 内的 \" 或 \' 会被当作字面反斜杠，不是转义。"""
     issues = []
@@ -152,9 +203,19 @@ def _check_print_in_construct(script: str) -> list[dict]:
 
 # manim 0.20 中「类名 → 不存在的关键字参数」映射（新增误用在此扩展）。
 # 例：markdown 参数属于 Code，Text 没有 → Text(..., markdown=False) 运行时 TypeError。
+# Code 的有效参数（对照 manim 0.20.1 签名）：code_file/code_string/language/
+# formatter_style/tab_width/add_line_numbers/line_numbers_from/background/
+# background_config/paragraph_config —— 无 **kwargs，LLM 把 Text 的样式参数
+# （font/font_size/color/stroke_width/line_spacing/weight/slant 等）误传给
+# Code 会直接 TypeError。与 manim_llm_adapter._CODE_TEXT_STYLE_KWARGS 保持同步。
 _INVALID_KWARGS: dict[str, set[str]] = {
     "Text": {"markdown"},
     "MarkupText": {"markdown"},
+    "Code": {
+        "font", "font_size", "color", "fill_color", "fill_opacity",
+        "stroke_width", "stroke_color", "background_color",
+        "line_spacing", "slant", "weight",
+    },
 }
 
 
@@ -174,14 +235,17 @@ def _check_invalid_kwargs(script: str) -> list[dict]:
             continue
         for kw in node.keywords:
             if kw.arg in invalid:
+                if node.func.id == "Code":
+                    # Code 的误用给出可用的参数提示，便于 LLM 反馈修复
+                    hint = ("（manim 0.20 Code 仅接受 code_string/language/"
+                            "tab_width/add_line_numbers/background 等）")
+                else:
+                    hint = "（manim 0.20，该参数属于 Code）"
                 issues.append({
                     "rule": "invalid-kwarg",
                     "severity": "error",
                     "line": getattr(node, "lineno", None),
-                    "detail": (
-                        f"{node.func.id}() 不支持参数 '{kw.arg}'"
-                        f"（manim 0.20，该参数属于 Code），请移除"
-                    ),
+                    "detail": f"{node.func.id}() 不支持参数 '{kw.arg}'{hint}，请移除",
                 })
     return issues
 
@@ -442,6 +506,7 @@ def _check_undefined_names(script: str) -> list[dict]:
                         "rule": "undefined-name",
                         "severity": "error",
                         "line": getattr(n, "lineno", None),
+                        "name": n.id,
                         "detail": f"未定义变量 '{n.id}'（函数 {fn_node.name}）",
                     })
 

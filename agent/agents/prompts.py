@@ -367,6 +367,28 @@ MANIM_CODER_SYSTEM_PROMPT = """你是一位资深的 Manim 动画导演。你的
 - **LaTeX 未安装**。数学公式用 `Text()` + Unicode 符号：α β γ δ → ← ↑ ↓ ⇒ ⇐ ≤ ≥ ≠ ≈ ± × · ∞ ∑ ∫ ∂ ∇ ∈ ⊆ ∪ ∩ ∧ ∨ ∀ ∃ ¬
 - 中文文本**绝对禁止**放入 MathTex。MathTex 仅用于纯 ASCII 公式如 `MathTex(r"E=mc^2")`
 
+## 作用域规则（必须遵守，违反会导致 NameError）
+
+模块级辅助函数（`make_*`、`create_*` 等）必须**完全自包含**：
+
+1. 需要复用的样式值定义在**模块级**（import 之后、class 之前）：`FONT_SIZE = 24`
+2. 或在辅助函数的**签名中作为参数**传入：`def make_table(rows, font_size=FONT_SIZE):`
+3. **禁止**在 `construct()` 内部定义变量（如 `font_size = 24`）后，在模块级函数中引用——模块级函数看不到 `construct` 的局部变量
+4. **禁止使用未定义的魔法变量**。`font_size`、`stroke_width`、`fill_opacity` 等是 Text/Table 的**参数名**，不是可以直接使用的全局变量；代码里出现的每个名字都必须能在当前作用域找到定义
+
+```python
+FONT_SIZE = 24            # ✅ 模块级常量，整个脚本可见
+ACCENT_COLOR = "#F4D03F"  # ✅ 模块级常量
+
+def make_table(headers, rows, font_size=FONT_SIZE):  # ✅ 自包含：常量或参数
+    ...
+    return Table(rows, col_labels=[Text(h, font_size=font_size) for h in headers])
+
+class EduFlow_Scene(Scene):
+    def construct(self):
+        table = make_table(["Key", "Val"], [["A", "1"]])  # ✅ 不引用 construct 局部变量
+```
+
 ## Manim v0.20 API 参考
 
 ### 基本形状
@@ -392,17 +414,24 @@ Text("长长长文本", font_size=22, color="#AAAAAA", width=12)
 # ⚠️ 必须用 code_string= 而不是 code= ！Manim v0.20 改了参数名
 Code(code_string="for i in range(n):", language="python", tab_width=4,
      add_line_numbers=False, background="window")
+# ⚠️ Code 不接受任何 Text 样式参数：font / font_size / color / fill_color /
+#    fill_opacity / stroke_width / line_spacing / weight / slant 全部传不得！
+#    给 Code 传这些参数会直接 TypeError（Code.__init__ 没有这些参数），
+#    即使它们是函数参数、常量也不行。代码字号/外观只能整体缩放：
+#    code.scale(0.8)
 # language 仅支持：python, cpp, java, javascript, bash, text
 # 不要用 pseudocode、csharp、typescript 等，不支持！
 
-# ⚠️ Code 对象内部只有 2 个元素：
-#   code_block[0] = 背景矩形(SurroundingRectangle)
-#   code_block[1] = Paragraph（所有代码行）
-# 访问第 N 行：code_block[1][N-1] （N 从 1 开始，N-1 是 Paragraph 内索引）
-# 遍历行：for line in code_block[1]: ...
-# 总行数：len(code_block[1])
-# 不要写 code_block.code ！
-# 不要写 code_block[N] 直接取行（N>1 时越界）！
+# ⚠️ Code 是 VGroup，没有 code_block / code / text 属性！访问行必须用 code_lines：
+#   code.code_lines    = Paragraph（所有代码行，VGroup，逐行是独立可着色的对象）
+#   code.background    = 背景矩形(SurroundingRectangle)
+#   code.line_numbers  = 行号
+# 访问第 N 行：code.code_lines[N-1] （N 从 1 开始，N-1 是 VGroup 内索引）
+# 遍历行：for line in code.code_lines: ...
+# 总行数：len(code.code_lines)
+# 给某行上色：code.code_lines[N-1].set_color(HIGHLIGHT_COLOR)
+# 不要写 code.code_block / code.code / code.text（属性不存在 → AttributeError）！
+# 不要写 code[N] 直接取行（索引的是背景/行号等元素，不是代码行）！
 ```
 
 ### 表格

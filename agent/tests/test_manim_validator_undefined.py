@@ -45,6 +45,143 @@ class C(Scene):
         errs = [i for i in issues if i["severity"] == "error"]
         assert not any(i["rule"] == "invalid-kwarg" for i in errs)
 
+    def test_code_font_size_misuse_caught(self):
+        """回归：Code(font_size=...) 渲染期 TypeError（LLM 把 Text 习惯带给 Code）。"""
+        script = """
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)", font_size=24)
+        self.add(c)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert any(
+            i["rule"] == "invalid-kwarg"
+            and "font_size" in i["detail"]
+            and "Code" in i["detail"]
+            for i in errs
+        )
+
+    def test_valid_code_call_not_flagged(self):
+        # Code 只使用签名内的合法参数
+        script = """
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)", language="python", tab_width=4,
+                 add_line_numbers=False, background="window")
+        self.add(c)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert not any(i["rule"] == "invalid-kwarg" for i in errs)
+
+    def test_code_font_misuse_caught(self):
+        """回归：Code(font=...) 渲染期 TypeError（LLM 顺着旧提示发明 font 参数）。"""
+        script = """
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)", font="Monospace")
+        self.add(c)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert any(
+            i["rule"] == "invalid-kwarg" and "font" in i["detail"] for i in errs
+        )
+
+    @pytest.mark.parametrize("bad_kwarg", [
+        "font", "font_size", "color", "fill_opacity", "stroke_width",
+        "line_spacing", "weight", "slant",
+    ])
+    def test_code_text_style_kwargs_all_caught(self, bad_kwarg):
+        """Code 不接受任何 Text 样式参数——黑名单内全部拦截。"""
+        script = f"""
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)", {bad_kwarg}=1)
+        self.add(c)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert any(
+            i["rule"] == "invalid-kwarg" and bad_kwarg in i["detail"] for i in errs
+        )
+
+
+class TestCodeBlockAttrCheck:
+    """code-block-attr 检查：Code 对象没有 .code_block 属性（渲染期 AttributeError）。"""
+
+    def test_code_block_attr_caught(self):
+        script = """
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)")
+        line = c.code_block[1][0]
+        line.set_color(YELLOW)
+        self.add(c)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert any(
+            i["rule"] == "code-block-attr" and "code_lines" in i["detail"] for i in errs
+        )
+
+    def test_subscript_base_caught(self):
+        """fixer 覆盖不到的形态（code[0].code_block）也能拦截。"""
+        script = """
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)")
+        x = c[0].code_block
+        self.add(x)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert any(i["rule"] == "code-block-attr" for i in errs)
+
+    def test_code_lines_ok(self):
+        """真实 API code.code_lines 不应误报。"""
+        script = """
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(1)")
+        for line in c.code_lines:
+            line.set_color(YELLOW)
+        c.background.set_color(BLUE)
+        self.add(c)
+"""
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert not any(i["rule"] == "code-block-attr" for i in errs)
+
+    def test_string_content_not_flagged(self):
+        """code_string 内容里出现 .code_block 文本不应误报。"""
+        script = '''
+from manim import *
+
+class C(Scene):
+    def construct(self):
+        c = Code(code_string="print(code.code_block)")  # 字符串内的文本
+        self.add(c)
+'''
+        issues = validate_script(script)
+        errs = [i for i in issues if i["severity"] == "error"]
+        assert not any(i["rule"] == "code-block-attr" for i in errs)
+
 
 class TestUndefinedNameCheck:
     """undefined-name 检查的正反用例。"""
