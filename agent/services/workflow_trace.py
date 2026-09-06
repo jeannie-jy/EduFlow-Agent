@@ -7,6 +7,7 @@ stored.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import logging
@@ -95,9 +96,17 @@ async def workflow_trace_scope(
     except Exception:
         logger.exception("workflow trace start failed")
 
-    token = _trace_var.set(context)
+    previous = _trace_var.get()
+    _trace_var.set(context)
     try:
         yield context
+    except (asyncio.CancelledError, GeneratorExit):
+        # A browser refresh or an SSE disconnect is cancellation, not a
+        # workflow failure. Keep the durable run state truthful and re-raise so
+        # the streaming framework can finish closing the generator.
+        context.status = "cancelled"
+        await _finish_workflow(context, None)
+        raise
     except BaseException as exc:
         context.status = "failed"
         await _finish_workflow(context, type(exc).__name__)
@@ -105,7 +114,10 @@ async def workflow_trace_scope(
     else:
         await _finish_workflow(context, None)
     finally:
-        _trace_var.reset(token)
+        # Token reset is unsafe when an async generator is finalized by a
+        # different task/context. Restoring the value with set() is safe in
+        # both contexts and avoids masking cancellation with ValueError.
+        _trace_var.set(previous)
 
 
 def set_workflow_trace_status(status: str) -> None:

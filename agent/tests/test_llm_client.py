@@ -422,6 +422,41 @@ class TestCallLLMStructured:
             )
 
     @pytest.mark.asyncio
+    async def test_truncated_retry_adds_compact_output_instruction(self, mock_llm_client):
+        """截断重试应提示模型压缩输出，避免单纯放大响应造成浪费。"""
+        first = MagicMock()
+        first_choice = MagicMock()
+        first_choice.message.content = '{"items": [bad'
+        first_choice.message.tool_calls = None
+        first_choice.finish_reason = "length"
+        first.choices = [first_choice]
+        first.usage = None
+
+        second = MagicMock()
+        second_choice = MagicMock()
+        second_choice.message.content = '{"items": ["ok"]}'
+        second_choice.message.tool_calls = None
+        second_choice.finish_reason = "stop"
+        second.choices = [second_choice]
+        second.usage = MagicMock()
+        second.usage.prompt_tokens = 1
+        second.usage.completion_tokens = 1
+        second.usage.total_tokens = 2
+
+        mock_llm_client.chat.completions.create = AsyncMock(side_effect=[first, second])
+
+        result = await call_llm_structured(
+            system_prompt="助手",
+            user_message="测试",
+            output_schema={"type": "object", "properties": {"items": {"type": "array"}}},
+            max_tokens=8,
+        )
+
+        assert result == {"items": ["ok"]}
+        second_call_messages = mock_llm_client.chat.completions.create.call_args_list[1].kwargs["messages"]
+        assert "压缩 narration" in second_call_messages[-1]["content"]
+
+    @pytest.mark.asyncio
     async def test_json_parse_failure_raises(self, mock_llm_client):
         """tool_calls 中的 JSON 解析失败应抛出 RuntimeError。"""
         mock_response = MagicMock()

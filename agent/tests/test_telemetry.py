@@ -1,5 +1,7 @@
 """Request context and LLM metric aggregation tests."""
 
+import asyncio
+
 import pytest
 from services.telemetry import (
     LLMBudgetExceededError,
@@ -61,6 +63,18 @@ def test_workflow_budget_enforces_estimated_cost_limit():
                 duration_ms=1,
                 estimated_cost_usd=0.02,
             )
+
+
+@pytest.mark.asyncio
+async def test_budget_scope_can_close_from_a_different_async_generator_task():
+    """SSE cancellation must not fail ContextVar cleanup in aclose()."""
+    async def stream():
+        with llm_budget_scope(max_tokens=100, max_cost_usd=1):
+            yield "chunk"
+
+    generator = stream()
+    assert await anext(generator) == "chunk"
+    await asyncio.create_task(generator.aclose())
 
 
 def test_http_and_sse_metrics_include_p95_error_rate_and_active_gauge():

@@ -89,11 +89,15 @@ def record_llm_call(
 def llm_budget_scope(max_tokens: int, max_cost_usd: float) -> Iterator[LLMBudgetState]:
     """Create one budget shared by all calls and child tasks in a workflow run."""
     state = LLMBudgetState(max_tokens=max_tokens, max_cost_usd=max_cost_usd)
-    token = _llm_budget_var.set(state)
+    previous = _llm_budget_var.get()
+    _llm_budget_var.set(state)
     try:
         yield state
     finally:
-        _llm_budget_var.reset(token)
+        # SSE libraries may finalize an async generator in a cancellation task
+        # different from the one that entered this scope. ContextVar tokens are
+        # context-bound, so reset(token) raises ValueError in that case.
+        _llm_budget_var.set(previous)
 
 
 def ensure_llm_budget_available() -> None:

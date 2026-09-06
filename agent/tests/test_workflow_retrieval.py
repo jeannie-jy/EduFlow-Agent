@@ -1,6 +1,7 @@
 """RAG integration tests for the Knowledge -> Coder main path."""
 
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -89,3 +90,76 @@ async def test_multi_query_retrieval_fuses_duplicates_and_applies_context_budget
     assert result["sources"][0]["source_id"] == "shared"
     assert result["sources"][0]["matched_queries"] == ["topic", "objective"]
     assert result["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_pgvector_query_uses_sqlalchemy_safe_vector_cast():
+    from services.knowledge_service import search_knowledge_pgvector
+
+    class Result:
+        def fetchall(self):
+            return [SimpleNamespace(
+                id="doc-1",
+                concept="queues",
+                content="queue content",
+                subject="cs",
+                difficulty=2,
+                object_types=[],
+                animation_types=[],
+                similarity=0.91,
+            )]
+
+    class Session:
+        def __init__(self):
+            self.sql = ""
+            self.params = None
+
+        async def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return Result()
+
+        async def rollback(self):
+            raise AssertionError("rollback should not be needed for a successful query")
+
+    session = Session()
+    settings = type("Settings", (), {"knowledge_similarity_threshold": 0.7})()
+    with (
+        patch("services.knowledge_service.generate_embedding", new=AsyncMock(return_value=[0.1, 0.2])),
+        patch("services.knowledge_service.get_settings", return_value=settings),
+    ):
+        result = await search_knowledge_pgvector("queues", session=session)
+
+    assert result[0]["id"] == "doc-1"
+    assert "CAST(:embedding AS vector)" in session.sql
+    assert ":embedding::vector" not in session.sql
+    assert session.params["embedding"] == "[0.1,0.2]"
+
+
+@pytest.mark.asyncio
+async def test_pgvector_failure_rolls_back_before_keyword_fallback():
+    from services.knowledge_service import search_knowledge_pgvector
+
+    class Session:
+        def __init__(self):
+            self.rollback_count = 0
+
+        async def execute(self, statement, params):
+            raise RuntimeError("syntax error")
+
+        async def rollback(self):
+            self.rollback_count += 1
+
+    session = Session()
+    settings = type("Settings", (), {"knowledge_similarity_threshold": 0.7})()
+    fallback = AsyncMock(return_value=[])
+    with (
+        patch("services.knowledge_service.generate_embedding", new=AsyncMock(return_value=[0.1])),
+        patch("services.knowledge_service.get_settings", return_value=settings),
+        patch("services.knowledge_service._fallback_keyword_search", new=fallback),
+    ):
+        result = await search_knowledge_pgvector("queues", session=session)
+
+    assert result == []
+    assert session.rollback_count == 1
+    fallback.assert_awaited_once_with("queues", 5, None, None, session)

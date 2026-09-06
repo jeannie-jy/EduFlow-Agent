@@ -275,6 +275,7 @@ async def call_llm_structured(
 
     raw_text = ""
     result = None
+    retry_hint_added = False
 
     # 逐次加倍 max_tokens 直到成功解析或达到上限（最多 4 次尝试：初始 + 3 次加倍）
     current_max_tokens = max_tokens
@@ -345,6 +346,20 @@ async def call_llm_structured(
         current_max_tokens = min(current_max_tokens * 2, 65536)
         if current_max_tokens == prev_max_tokens:
             break  # token 已达上限，无法继续加倍
+        if not retry_hint_added:
+            # A larger budget alone often causes the model to produce an even
+            # larger DSL. Add one compact retry instruction so the next call
+            # prefers concise narration/metadata and reserves tokens for the
+            # remaining JSON structure.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "上一轮输出未形成完整 JSON。请重试并严格只输出合法 JSON；"
+                    "压缩 narration、解释和重复 metadata，优先保证所有括号闭合，"
+                    "不要输出 markdown 或额外说明。"
+                ),
+            })
+            retry_hint_added = True
         logger.warning(
             "LLM 输出截断 (finish_reason=%s)，max_tokens=%d 重试 (attempt %d)",
             response.choices[0].finish_reason, current_max_tokens, attempt + 1,
