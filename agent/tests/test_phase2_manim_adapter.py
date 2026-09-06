@@ -200,6 +200,25 @@ class TestManimScriptGenerator:
         assert "# Narration: \"第一行 raise" in script
         compile(script, "<generated-manim>", "exec")
 
+    def test_cjk_text_uses_font_installed_in_render_image(self):
+        dsl = {
+            "project_id": "p1",
+            "topic": "红黑树",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "根节点",
+                "narration": "根节点必须是黑色",
+                "visual_objects": [{"id": "root", "type": "node", "label": "根节点"}],
+                "animations": [{"type": "appear", "target": "root"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert 'EDUFLOW_CJK_FONT = "Noto Sans CJK SC"' in script
+        assert "font=EDUFLOW_CJK_FONT" in script
+        compile(script, "<generated-manim>", "exec")
+
     def test_formula_never_requires_latex(self):
         dsl = {
             "project_id": "p1",

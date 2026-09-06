@@ -492,6 +492,7 @@ def test_compose_sandbox_enforces_resource_and_mount_boundaries():
     assert float(sandbox["cpus"]) <= 2
     assert sandbox["security_opt"] == ["no-new-privileges:true"]
     assert sandbox["tmpfs"]
+    assert "XDG_CACHE_HOME=/tmp/.cache" in sandbox["environment"]
     assert mounts == "render_data:/app/data/exports"
     assert "docker.sock" not in mounts.lower()
 
@@ -520,4 +521,6 @@ def test_agent_runtime_image_excludes_build_toolchain():
     assert "FROM python:3.12-slim AS runtime" in dockerfile
     runtime = dockerfile.split("FROM python:3.12-slim AS runtime", 1)[1]
     assert "build-essential" not in runtime
+    assert "fonts-noto-cjk" in runtime
+    assert "fc-cache -f" in runtime
     assert "USER eduflow" in runtime
