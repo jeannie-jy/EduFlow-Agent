@@ -39,7 +39,7 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_USER:?Set MINIO_USER in .env}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:?Set MINIO_PASSWORD in .env}
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
-      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-v4-flash}
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_BACKUP_ENDPOINT=${LLM_BACKUP_ENDPOINT:-}
       - LLM_BACKUP_MODEL=${LLM_BACKUP_MODEL:-}
@@ -91,7 +91,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/eduflow
       - REDIS_URL=redis://redis:6379
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
-      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-v4-flash}
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_BACKUP_ENDPOINT=${LLM_BACKUP_ENDPOINT:-}
       - LLM_BACKUP_MODEL=${LLM_BACKUP_MODEL:-}
@@ -146,7 +146,7 @@ services:
       - EXPORT_DIR=/app/data/exports
       - MANIM_EXECUTION_MODE=worker
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
-      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-v4-flash}
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_BACKUP_ENDPOINT=${LLM_BACKUP_ENDPOINT:-}
       - LLM_BACKUP_MODEL=${LLM_BACKUP_MODEL:-}

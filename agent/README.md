@@ -196,7 +196,7 @@ agent/
 |------|--------|------|
 | `LLM_API_KEY` | — | DeepSeek API Key（**必填**） |
 | `LLM_ENDPOINT` | `https://api.deepseek.com/v1` | LLM API 地址 |
-| `LLM_MODEL` | `deepseek-chat` | 模型名称 |
+| `LLM_MODEL` | `deepseek-v4-flash` | 模型名称；结构化生成默认关闭 thinking 并使用 JSON mode |
 | `EMBEDDING_API_KEY` | — | OpenAI API Key |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | 嵌入模型 |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | 数据库连接 |

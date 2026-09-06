@@ -93,7 +93,7 @@ docker compose restart agent-api  # 重启后端
 | `LLM_API_KEY` | ✅ | DeepSeek API Key |
 | `EMBEDDING_API_KEY` | ✅ | OpenAI API Key（text-embedding-3-small） |
 | `LLM_ENDPOINT` | — | LLM API 地址（默认 `https://api.deepseek.com/v1`） |
-| `LLM_MODEL` | — | 模型名称（默认 `deepseek-chat`） |
+| `LLM_MODEL` | — | 模型名称（默认 `deepseek-v4-flash`） |
 | `DB_PASSWORD` | ✅ | 数据库密码；Compose 无回退默认值 |
 | `REDIS_URL` | — | Redis 连接（默认 `redis://localhost:6379`） |
 | `MINIO_USER` / `MINIO_PASSWORD` | ✅ | MinIO 凭证；Compose 无回退默认值 |

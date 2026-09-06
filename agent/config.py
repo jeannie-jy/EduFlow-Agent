@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────
     llm_endpoint: str = "https://api.deepseek.com/v1"
-    llm_model: str = "deepseek-chat"
+    llm_model: str = "deepseek-v4-flash"
     llm_api_key: str = "your-deepseek-api-key"
     llm_backup_endpoint: str = ""
     llm_backup_model: str = ""

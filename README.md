@@ -73,7 +73,7 @@ EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语�
 
 | 层次 | 技术 | 说明 |
 |------|------|------|
-| **LLM** | DeepSeek (主) | API 调用（兼容 OpenAI 接口），`LLM_MODEL` 可切换（默认 `deepseek-chat`） |
+| **LLM** | DeepSeek (主) | API 调用（兼容 OpenAI 接口），`LLM_MODEL` 可切换（默认 `deepseek-v4-flash`） |
 | **Embedding** | text-embedding-3-small (1536维) | 知识库语义检索，可平替通义千问 text-embedding-v4 |
 | **Agent 编排** | LangGraph | 5 节点 StateGraph + HITL interrupt + Postgres Checkpointer |
 | **后端** | Python 3.12+ / FastAPI | 异步 REST API + SSE 流式推送 + Alembic 数据库迁移 |
@@ -375,7 +375,7 @@ uv pip compile requirements.txt --python-version 3.12 --universal -o requirement
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `LLM_API_KEY` | DeepSeek API Key | - |
-| `LLM_MODEL` | LLM 模型名称 | `deepseek-chat` |
+| `LLM_MODEL` | LLM 模型名称 | `deepseek-v4-flash` |
 | `EMBEDDING_API_KEY` | Embedding API Key | - |
 | `DATABASE_URL` | 数据库连接字符串 | 手动开发有本地回退值；Compose 由必填 `DB_PASSWORD` 构造 |
 | `REDIS_URL` | Redis 连接字符串 | `redis://localhost:6379` |
