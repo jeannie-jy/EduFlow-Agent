@@ -39,15 +39,18 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "frames": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
             "items": {
                 "type": "object",
                 "properties": {
-                    "frame_id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "learning_goal": {"type": "string"},
-                    "narration": {"type": "string"},
+                    "frame_id": {"type": "string", "maxLength": 40},
+                    "title": {"type": "string", "maxLength": 80},
+                    "learning_goal": {"type": "string", "maxLength": 180},
+                    "narration": {"type": "string", "maxLength": 360},
                     "visual_objects": {
                         "type": "array",
+                        "maxItems": 4,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -61,27 +64,27 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                                     ],
                                 },
                                 "label": {"type": "string"},
-                                "cells": {"type": "array"},
-                                "headers": {"type": "array"},
-                                "rows": {"type": "array"},
+                                "cells": {"type": "array", "maxItems": 32},
+                                "headers": {"type": "array", "maxItems": 12},
+                                "rows": {"type": "array", "maxItems": 32},
                                 "language": {"type": "string"},
-                                "code": {"type": "string"},
-                                "highlight_lines": {"type": "array"},
+                                "code": {"type": "string", "maxLength": 1800},
+                                "highlight_lines": {"type": "array", "maxItems": 12},
                                 "latex": {"type": "string"},
                                 "node_type": {"type": "string"},
                                 "source": {"type": "string"},
                                 "target": {"type": "string"},
                                 "weight": {"type": "number"},
                                 "directed": {"type": "boolean"},
-                                "blocks": {"type": "array"},
+                                "blocks": {"type": "array", "maxItems": 16},
                                 "pid": {"type": "string"},
                                 "state": {"type": "string"},
                                 "attributes": {"type": "object"},
                                 "title": {"type": "string"},
                                 "content": {"type": "object"},
-                                "events": {"type": "array"},
+                                "events": {"type": "array", "maxItems": 16},
                                 "root": {"type": "string"},
-                                "children": {"type": "array"},
+                                "children": {"type": "array", "maxItems": 16},
                                 "position": {"type": "object"},
                                 "style": {"type": "object"},
                             },
@@ -89,12 +92,13 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                         },
                     },
                     "state_snapshot": {"type": "object"},
-                    "animations": {"type": "array"},
-                    "interaction_hooks": {"type": "array"},
-                    "checks": {"type": "array"},
+                    "animations": {"type": "array", "maxItems": 6},
+                    "interaction_hooks": {"type": "array", "maxItems": 3},
+                    "checks": {"type": "array", "maxItems": 3},
                     "depends_on_parameters": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "maxItems": 8,
+                        "items": {"type": "string", "maxLength": 80},
                     },
                 },
                 "required": ["frame_id", "title", "narration", "visual_objects", "state_snapshot"],
@@ -102,6 +106,7 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
         },
         "parameters": {
             "type": "array",
+            "maxItems": 8,
             "items": {
                 "type": "object",
                 "properties": {
@@ -115,12 +120,14 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                     "recompute_scope": {"type": "string"},
                     "affects_frame_ids": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "maxItems": 12,
+                        "items": {"type": "string", "maxLength": 40},
                     },
                 },
                 "required": ["key", "label", "param_type", "recompute_scope"],
             },
         },
+        "assets": {"type": "array", "maxItems": 12},
     },
     "required": ["frames"],
 }
@@ -142,7 +149,8 @@ class FramesGenerator(BaseGenerator):
     version = "1.0.0"
 
     temperature = 0.3
-    max_tokens = 32768  # Coder 输出完整 DSL，需要大 token 限制
+    # 每次只生成最多 3 帧；单批 8K 足够且可避免一次 32K 长响应阻塞 SSE。
+    max_tokens = 8192
 
     @property
     def output_schema(self) -> dict[str, Any]:
@@ -165,22 +173,28 @@ class FramesGenerator(BaseGenerator):
         包括：XML 标签注入防御、LLM 调用、资产后处理、DSL 组装。
         """
         from agents.llm_client import call_llm_structured
+        from agents.nodes import (
+            _bounded_coder_output,
+            _generate_coder_batches,
+            _prompt_json,
+            _prompt_text,
+        )
 
         # ── 构建上下文（与 coder_node 一致）──
         user_message_parts = [
             "以下是根据用户请求生成的教学计划。请严格按照计划生成教学推演 DSL。",
-            f"<topic>\n{user_input}\n</topic>",
-            f"<teaching_plan>\n{json.dumps(teaching_plan, ensure_ascii=False, indent=2)}\n</teaching_plan>",
+            f"<topic>\n{_prompt_text(user_input)}\n</topic>",
+            f"<teaching_plan>\n{_prompt_json(teaching_plan)}\n</teaching_plan>",
         ]
 
         if knowledge_graph:
             user_message_parts.append(
-                f"<knowledge_graph>\n{json.dumps(knowledge_graph, ensure_ascii=False, indent=2)}\n</knowledge_graph>"
+                f"<knowledge_graph>\n{_prompt_json(knowledge_graph)}\n</knowledge_graph>"
             )
 
         if constraints:
             user_message_parts.append(
-                f"<constraints>\n{json.dumps(constraints, ensure_ascii=False, indent=2)}\n</constraints>"
+                f"<constraints>\n{_prompt_json(constraints)}\n</constraints>"
             )
 
         user_message_parts.append(
@@ -191,12 +205,13 @@ class FramesGenerator(BaseGenerator):
 
         # ── LLM 调用 ──────────────────────────────────────
         try:
-            result = await call_llm_structured(
-                system_prompt=self.get_system_prompt(),
+            result = await _generate_coder_batches(
                 user_message=user_message,
-                output_schema=self.output_schema,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                output_schema=self.get_output_schema(),
+                teaching_plan=teaching_plan,
+                user_input=user_input,
+                llm_call=call_llm_structured,
+                routing_key="module:frames",
             )
         except Exception as exc:
             logger.error("FramesGenerator LLM 调用失败: %s", exc)
@@ -216,6 +231,8 @@ class FramesGenerator(BaseGenerator):
                 ],
                 "parameters": [],
             }
+
+        result = _bounded_coder_output(result)
 
         # ── 资产后处理（与 coder_node 一致）──
         raw_assets = result.pop("assets", [])

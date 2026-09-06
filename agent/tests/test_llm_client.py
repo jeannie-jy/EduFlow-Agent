@@ -380,6 +380,10 @@ class TestCallLLMStructured:
             # 验证 schema 出现在 messages 的 system prompt 中
             system_content = call_kwargs[1]["messages"][0]["content"]
             assert "ok" in system_content
+            assert call_kwargs[1]["response_format"] == {"type": "json_object"}
+            assert call_kwargs[1]["extra_body"] == {
+                "thinking": {"type": "disabled"}
+            }
 
     @pytest.mark.asyncio
     async def test_empty_choices_raises(self, mock_llm_client):
@@ -445,16 +449,24 @@ class TestCallLLMStructured:
 
         mock_llm_client.chat.completions.create = AsyncMock(side_effect=[first, second])
 
-        result = await call_llm_structured(
-            system_prompt="助手",
-            user_message="测试",
-            output_schema={"type": "object", "properties": {"items": {"type": "array"}}},
-            max_tokens=8,
-        )
+        with (
+            patch("agents.llm_client._log_usage") as log_usage,
+            patch("services.telemetry.record_gateway_retry") as record_retry,
+        ):
+            result = await call_llm_structured(
+                system_prompt="助手",
+                user_message="测试",
+                output_schema={"type": "object", "properties": {"items": {"type": "array"}}},
+                max_tokens=8,
+            )
 
         assert result == {"items": ["ok"]}
+        assert log_usage.call_count == 2
+        record_retry.assert_called_once_with(operation="structured", reason="length")
         second_call_messages = mock_llm_client.chat.completions.create.call_args_list[1].kwargs["messages"]
         assert "压缩 narration" in second_call_messages[-1]["content"]
+        assert mock_llm_client.chat.completions.create.call_args_list[0].kwargs["max_tokens"] == 8
+        assert mock_llm_client.chat.completions.create.call_args_list[1].kwargs["max_tokens"] == 16
 
     @pytest.mark.asyncio
     async def test_json_parse_failure_raises(self, mock_llm_client):

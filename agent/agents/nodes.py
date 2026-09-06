@@ -689,8 +689,15 @@ async def _generate_coder_batches(
     output_schema: dict[str, Any],
     teaching_plan: dict[str, Any],
     user_input: str,
+    llm_call=None,
+    routing_key: str = "coder",
 ) -> dict[str, Any]:
-    """Generate frames in bounded batches and merge them deterministically."""
+    """Generate frames in bounded batches and merge them deterministically.
+
+    ``llm_call`` is injectable so the module wrapper and the LangGraph node use
+    one batching implementation while retaining independently mockable seams.
+    """
+    llm_call = llm_call or call_llm_structured
     expected_frames = _bounded_int(
         teaching_plan.get("estimated_total_frames"),
         1,
@@ -727,13 +734,13 @@ async def _generate_coder_batches(
             )
 
         try:
-            result = await call_llm_structured(
+            result = await llm_call(
                 system_prompt=CODER_SYSTEM_PROMPT,
                 user_message=batch_prompt,
                 output_schema=batch_schema,
                 temperature=0.3,
                 max_tokens=8192,
-                routing_key="coder",
+                routing_key=routing_key,
             )
             frames = result.get("frames", []) if isinstance(result, dict) else []
             frames = [frame for frame in frames if isinstance(frame, dict)][:count]

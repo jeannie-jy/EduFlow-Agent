@@ -9,9 +9,71 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+_LONG_TEXT_FIELDS = {"code", "starter_code", "full_solution", "latex"}
+
+
+def _bounded_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Add conservative limits when a module forgot to bound its schema.
+
+    JSON Schema is also part of the prompt. An unconstrained ``array`` or
+    ``string`` effectively invites the model to keep writing until the provider
+    cuts it off. Explicit module limits win; these defaults are only a safety
+    net for legacy generators.
+    """
+    bounded = deepcopy(schema)
+
+    def visit(node: Any, field_name: str = "") -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "array":
+                node.setdefault("maxItems", 12)
+            elif node.get("type") == "string":
+                node.setdefault(
+                    "maxLength",
+                    8000 if field_name in _LONG_TEXT_FIELDS else 1000,
+                )
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                for name, child in properties.items():
+                    visit(child, name)
+            for key in ("items", "additionalProperties"):
+                if isinstance(node.get(key), (dict, list)):
+                    visit(node[key], field_name)
+            for key in ("anyOf", "oneOf", "allOf", "$defs", "definitions"):
+                if isinstance(node.get(key), (dict, list)):
+                    visit(node[key], field_name)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child, field_name)
+
+    visit(bounded)
+    return bounded
+
+
+def _bound_output_to_schema(value: Any, schema: dict[str, Any]) -> Any:
+    """Apply array/string limits even when a provider ignores prompt schema."""
+    schema_type = schema.get("type")
+    if schema_type == "string" and isinstance(value, str):
+        return value[: int(schema.get("maxLength", len(value)))]
+    if schema_type == "array" and isinstance(value, list):
+        limit = int(schema.get("maxItems", len(value)))
+        item_schema = schema.get("items", {})
+        return [
+            _bound_output_to_schema(item, item_schema)
+            for item in value[:limit]
+        ]
+    if schema_type == "object" and isinstance(value, dict):
+        properties = schema.get("properties", {})
+        return {
+            key: _bound_output_to_schema(item, properties.get(key, {}))
+            for key, item in value.items()
+        }
+    return value
 
 
 class BaseGenerator(ABC):
@@ -80,8 +142,8 @@ class BaseGenerator(ABC):
         return result
 
     def get_output_schema(self) -> dict[str, Any]:
-        """返回 output_schema（供协议兼容）。"""
-        return self.output_schema
+        """返回带资源上限的 output_schema（供协议与 LLM 调用）。"""
+        return _bounded_generation_schema(self.output_schema)
 
     def validate(self, output: dict[str, Any]) -> list[dict[str, Any]]:
         """默认校验：检查 output 是否包含预期顶层键。
@@ -153,18 +215,22 @@ class BaseGenerator(ABC):
             ],
             "project_context": context,
         }
-        user_message = json.dumps(grounded_request, ensure_ascii=False, indent=2)
+        user_message = json.dumps(
+            grounded_request,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
         try:
             result = await call_llm_structured(
                 system_prompt=self.get_system_prompt(),
                 user_message=user_message,
-                output_schema=self.output_schema,
+                output_schema=self.get_output_schema(),
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 routing_key=f"module:{self.module_id}",
             )
-            return result
+            return _bound_output_to_schema(result, self.get_output_schema())
         except Exception as exc:
             logger.error("Module '%s' LLM 调用失败: %s", self.module_id, exc)
             raise

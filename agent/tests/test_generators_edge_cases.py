@@ -586,10 +586,9 @@ class TestLLMErrorHandling:
                 project_id="test",
             )
 
-            # DSL 结构应完整（即使 frames 为空）
+            # DSL 结构应完整；缺失帧由批处理边界确定性补齐
             assert "frames" in result
             assert "topic" in result
             assert "teaching_strategy" in result
-            # frames 为空时 validate 会报 empty_frames
-            issues = gen_frames.validate(result)
-            assert any("empty_frames" in i.get("type", "") for i in issues)
+            assert len(result["frames"]) == plan["estimated_total_frames"]
+            assert result["frames"][0]["frame_id"] == "f_001"

@@ -450,9 +450,22 @@ class TestFramesGenerator:
         )
 
         assert "frames" in result
-        assert len(result["frames"]) == 1
+        assert len(result["frames"]) == teaching_plan["estimated_total_frames"]
+        assert mock_llm_structured.await_count == 3
+        assert all(
+            call.kwargs["max_tokens"] == 8192
+            for call in mock_llm_structured.await_args_list
+        )
         assert result["topic"] == user_input
         assert result["project_id"] == "test-proj"
+
+    def test_output_schema_has_hard_resource_limits(self, gen):
+        schema = gen.get_output_schema()
+        frames = schema["properties"]["frames"]
+        frame = frames["items"]
+        assert frames["maxItems"] == 12
+        assert frame["properties"]["narration"]["maxLength"] == 360
+        assert frame["properties"]["visual_objects"]["maxItems"] == 4
 
     async def test_dsl_structure_matches_coder_node_format(self, gen, mock_llm_structured, teaching_plan, knowledge_graph, user_input):
         mock_llm_structured.return_value = {

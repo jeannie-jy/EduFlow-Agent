@@ -246,18 +246,24 @@ async def call_llm_structured(
     max_tokens: int = 8192,
     model: str | None = None,
     routing_key: str | None = None,
+    disable_thinking: bool = True,
+    json_mode: bool = True,
 ) -> dict[str, Any]:
     """调用 LLM 并以结构化 JSON 格式输出。
 
-    绕过 function calling，直接在 content 中输出 JSON——
-    DeepSeek 的 function calling 中文长文本场景格式不稳定。
+    结构化提取默认关闭 DeepSeek V4 的 thinking mode：推理 token 与最终
+    JSON 共用输出预算，默认 high effort 会让小型 JSON 也频繁触发 length。
+    同时启用 OpenAI-compatible JSON mode，function calling 仍保留给真正的
+    Tool Runtime，避免把数据生成伪装成工具调用。
     """
     settings = get_settings()
     client = _get_llm_client("primary")
     selected_model = _routed_model(settings, model, routing_key)
     backup_client = _get_llm_client("backup") if _backup_available(settings) else None
 
-    schema_json = json.dumps(output_schema, ensure_ascii=False, indent=2)
+    # Schema 供模型读取而非人类阅读；紧凑序列化可显著减少每个模块都会
+    # 重复发送的输入 token，字段约束本身不受影响。
+    schema_json = json.dumps(output_schema, ensure_ascii=False, separators=(",", ":"))
 
     system_full = (
         system_prompt
@@ -277,30 +283,45 @@ async def call_llm_structured(
     result = None
     retry_hint_added = False
 
-    # 逐次加倍 max_tokens 直到成功解析或达到上限（最多 4 次尝试：初始 + 3 次加倍）
-    current_max_tokens = max_tokens
+    # JSON mode + non-thinking 下，一次有界重试足以覆盖偶发空响应/截断。
+    # 继续进行 4 次指数扩容只会放大延迟和费用，且掩盖无界 schema 问题。
+    max_attempts = 2
+    hard_max_tokens = 32768
+    current_max_tokens = min(max_tokens, hard_max_tokens)
     prev_max_tokens = 0
-    for attempt in range(4):
+    for attempt in range(max_attempts):
         request_started = time.perf_counter()
         from services.llm_gateway import execute_llm_call_with_fallback
+
+        primary_kwargs: dict[str, Any] = {
+            "model": selected_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": current_max_tokens,
+        }
+        if json_mode:
+            primary_kwargs["response_format"] = {"type": "json_object"}
+        if disable_thinking and "deepseek.com" in settings.llm_endpoint.lower():
+            primary_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+        backup_kwargs = {
+            key: value for key, value in primary_kwargs.items() if key != "extra_body"
+        }
+        backup_kwargs["model"] = settings.llm_backup_model
+        if (
+            disable_thinking
+            and backup_client
+            and "deepseek.com" in settings.llm_backup_endpoint.lower()
+        ):
+            backup_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
         response, used_fallback = await execute_llm_call_with_fallback(
             settings.llm_endpoint,
             "structured",
-            lambda: client.chat.completions.create(
-                model=selected_model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=current_max_tokens,
-            ),
+            lambda: client.chat.completions.create(**primary_kwargs),
             fallback_provider=settings.llm_backup_endpoint if backup_client else None,
             fallback_call=(
-                lambda: backup_client.chat.completions.create(
-                    model=settings.llm_backup_model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=current_max_tokens,
-                )
+                lambda: backup_client.chat.completions.create(**backup_kwargs)
                 if backup_client
                 else None
             ),
@@ -313,6 +334,20 @@ async def call_llm_structured(
         choice = response.choices[0]
         raw_text = choice.message.content or ""
 
+        # Every provider response is billable, including malformed/truncated
+        # attempts. Recording only the successful parse hid retries from the
+        # workflow trace and allowed the real request budget to be exceeded.
+        _log_usage(
+            response,
+            model=settings.llm_backup_model if used_fallback else selected_model,
+            operation="structured",
+            duration_ms=(time.perf_counter() - request_started) * 1000,
+            prompt_version=prompt_version,
+            endpoint=(
+                settings.llm_backup_endpoint if used_fallback else settings.llm_endpoint
+            ),
+        )
+
         # 如果 content 为空但存在 tool_calls，回退到解析 tool_calls 参数
         if not raw_text.strip() and choice.message.tool_calls:
             raw_text = choice.message.tool_calls[0].function.arguments
@@ -320,18 +355,6 @@ async def call_llm_structured(
         result = _extract_and_parse_json(raw_text)
 
         if result is not None:
-            _log_usage(
-                response,
-                model=settings.llm_backup_model if used_fallback else selected_model,
-                operation="structured",
-                duration_ms=(time.perf_counter() - request_started) * 1000,
-                prompt_version=prompt_version,
-                endpoint=(
-                    settings.llm_backup_endpoint
-                    if used_fallback
-                    else settings.llm_endpoint
-                ),
-            )
             return result
 
         # 检查是否因截断导致解析失败
@@ -342,8 +365,17 @@ async def call_llm_structured(
         if not is_truncated:
             break  # 不是截断问题，重试也没用
 
+        if attempt + 1 >= max_attempts:
+            break
+
+        from services.telemetry import record_gateway_retry
+
+        record_gateway_retry(
+            operation="structured",
+            reason=str(choice.finish_reason or "incomplete_json"),
+        )
         prev_max_tokens = current_max_tokens
-        current_max_tokens = min(current_max_tokens * 2, 65536)
+        current_max_tokens = min(current_max_tokens * 2, hard_max_tokens)
         if current_max_tokens == prev_max_tokens:
             break  # token 已达上限，无法继续加倍
         if not retry_hint_added:
@@ -361,8 +393,13 @@ async def call_llm_structured(
             })
             retry_hint_added = True
         logger.warning(
-            "LLM 输出截断 (finish_reason=%s)，max_tokens=%d 重试 (attempt %d)",
-            response.choices[0].finish_reason, current_max_tokens, attempt + 1,
+            "LLM 结构化输出不完整 (finish_reason=%s, used_max_tokens=%d); "
+            "next_max_tokens=%d retry=%d/%d",
+            response.choices[0].finish_reason,
+            prev_max_tokens,
+            current_max_tokens,
+            attempt + 1,
+            max_attempts - 1,
         )
 
     # 解析失败 — 输出诊断
