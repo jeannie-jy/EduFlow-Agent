@@ -23,7 +23,16 @@ import reactDOMUMD from "../../../node_modules/react-dom/umd/react-dom.productio
 export interface SandboxRendererProps {
   code: string;
   experienceKind?: "network" | "hierarchy" | "sequence" | "collection" | "state" | "code" | "concept";
+  /** Test seam for the expensive Babel/Tailwind runtime compilation step. */
+  compileRuntime?: SandboxRuntimeCompiler;
 }
+
+export interface SandboxRuntimeCompilation {
+  compiledJs: string;
+  utilityCss: string;
+}
+
+export type SandboxRuntimeCompiler = (code: string) => Promise<SandboxRuntimeCompilation>;
 
 const SANDBOX_TAILWIND_THEME = `
 @theme {
@@ -153,11 +162,23 @@ function extractTailwindCandidates(code: string): string[] {
   return [...candidates];
 }
 
-async function compileTailwindCss(code: string): Promise<string> {
+export async function compileTailwindCss(code: string): Promise<string> {
   const { compile } = await import("tailwindcss");
   const compiler = await compile(SANDBOX_TAILWIND_THEME);
   return compiler.build(extractTailwindCandidates(code));
 }
+
+export const compileSandboxRuntime: SandboxRuntimeCompiler = async (code) => {
+  const [mod, utilityCss] = await Promise.all([
+    import("@babel/standalone"),
+    compileTailwindCss(code),
+  ]);
+  const result = mod.default.transform(cleanCode(code), {
+    presets: [["react", { runtime: "classic" }]],
+    filename: "interactive-demo.jsx",
+  });
+  return { compiledJs: result.code ?? "", utilityCss };
+};
 
 // ============================================================================
 // HTML 模板
@@ -315,7 +336,11 @@ function buildHtml(compiledJs: string, utilityCss: string, experienceKind: strin
 // 组件
 // ============================================================================
 
-export function SandboxRenderer({ code, experienceKind = "concept" }: SandboxRendererProps) {
+export function SandboxRenderer({
+  code,
+  experienceKind = "concept",
+  compileRuntime = compileSandboxRuntime,
+}: SandboxRendererProps) {
   const [compiled, setCompiled] = useState<string | null>(null);
   const [utilityCss, setUtilityCss] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -329,22 +354,12 @@ export function SandboxRenderer({ code, experienceKind = "concept" }: SandboxRen
 
     if (!code) return;
 
-    Promise.all([import("@babel/standalone"), compileTailwindCss(code)])
-      .then(([mod, generatedCss]) => {
+    compileRuntime(code)
+      .then(({ compiledJs, utilityCss: generatedCss }) => {
         if (cancelled) return;
-        try {
-          const result = mod.default.transform(cleanCode(code), {
-            presets: [["react", { runtime: "classic" }]],
-            filename: "interactive-demo.jsx",
-          });
-          if (!cancelled) {
-            setCompiled(result.code ?? "");
-            setUtilityCss(generatedCss);
-          }
-        } catch (err) {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : String(err));
-          }
+        if (!cancelled) {
+          setCompiled(compiledJs);
+          setUtilityCss(generatedCss);
         }
       })
       .catch((err: unknown) => {
@@ -356,7 +371,7 @@ export function SandboxRenderer({ code, experienceKind = "concept" }: SandboxRen
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, compileRuntime]);
 
   const srcDoc = useMemo(
     () => (compiled === null || utilityCss === null ? "" : buildHtml(compiled, utilityCss, experienceKind)),

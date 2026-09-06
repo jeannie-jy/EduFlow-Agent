@@ -76,6 +76,7 @@ async function request<T>(
     const res = await fetch(url, {
       method,
       headers,
+      credentials: "include",
       body: body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
@@ -134,6 +135,10 @@ export const api = {
     return request<T>("PUT", path, body, { timeoutMs });
   },
 
+  patch<T>(path: string, body?: unknown, timeoutMs?: number) {
+    return request<T>("PATCH", path, body, { timeoutMs });
+  },
+
   delete<T>(path: string, timeoutMs?: number) {
     return request<T>("DELETE", path, undefined, { timeoutMs });
   },
@@ -159,6 +164,7 @@ export const api = {
     const res = await fetch(url, {
       method: "POST",
       headers,
+      credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal,
     });

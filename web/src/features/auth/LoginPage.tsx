@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "./AuthShell";
-import { validateLogin, simulateAuth, type LoginErrors } from "./auth";
+import { login, validateLogin, type LoginErrors } from "./auth";
 import { setAuthState } from "@/lib/auth";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -23,11 +23,15 @@ export function LoginPage() {
     if (Object.keys(validation).length > 0) return;
 
     setSubmitting(true);
-    // 占位：后端认证未实现，仅设置本地 auth 状态（见 lib/auth.ts 头注）
-    await simulateAuth();
-    setAuthState({ isAuthenticated: true, nickname: email.split("@")[0], email });
-    setSubmitting(false);
-    navigate("/app");
+    try {
+      const user = await login({ email, password });
+      setAuthState({ id: user.id, isAuthenticated: true, nickname: user.nickname, email: user.email, role: user.role });
+      navigate("/app");
+    } catch {
+      setErrors({ password: "邮箱或密码错误，请重试" });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (

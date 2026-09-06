@@ -50,16 +50,25 @@ function FrameStage({
   frame,
   previous,
   interactionMode,
+  showPseudocode,
+  showPointers,
   selectedTarget,
   onSelectTarget,
 }: {
   frame: ArtifactFrame;
   previous?: ArtifactFrame;
   interactionMode: InteractionMode;
+  showPseudocode: boolean;
+  showPointers: boolean;
   selectedTarget?: SelectedTarget;
   onSelectTarget: (target?: SelectedTarget) => void;
 }) {
-  if (frame.visual_objects.length === 0) {
+  const visibleObjects = frame.visual_objects.filter((object) => {
+    if (!showPseudocode && object.type === "code_block") return false;
+    if (!showPointers && object.type === "edge") return false;
+    return true;
+  });
+  if (visibleObjects.length === 0) {
     return (
       <div className="flex min-h-80 items-center justify-center rounded-lg border border-dashed border-[var(--canvas-grid)] bg-[var(--stage-bg)] p-8 text-center">
         <div className="max-w-sm">
@@ -81,7 +90,7 @@ function FrameStage({
       }}
     >
       <div className="grid min-h-[15rem] grid-cols-1 content-center gap-4 sm:min-h-[19rem] xl:grid-cols-2">
-        {frame.visual_objects.map((object) => {
+        {visibleObjects.map((object) => {
           const isStructure = object.type === "graph" || object.type === "tree";
           const isSelected = selectedTarget?.objectId === object.id;
           return (
@@ -105,7 +114,7 @@ function FrameStage({
                 isStructure && "min-h-72 xl:col-span-2",
               )}
             >
-              {(object.label || frame.visual_objects.length > 1) && (
+              {(object.label || visibleObjects.length > 1) && (
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">
                     {String(object.label ?? object.id)}
@@ -167,12 +176,25 @@ export function FrameWorkbench({
   const [saveMessage, setSaveMessage] = useState("");
 
   const frames = artifact.frames;
+  const parameterValues = useMemo(
+    () => Object.fromEntries(
+      artifact.parameters.map((parameter) => [parameter.key, parameter.current_value]),
+    ),
+    [artifact.parameters],
+  );
   const frame = frames[activeIndex];
   const previous = activeIndex > 0 ? frames[activeIndex - 1] : undefined;
   const isFirst = activeIndex === 0;
   const isLast = activeIndex === frames.length - 1;
 
   useEffect(() => setArtifact(normalizedArtifact), [normalizedArtifact]);
+
+  useEffect(() => {
+    const configuredSpeed = parameterValues.animation_speed;
+    if (typeof configuredSpeed === "number" && Number.isFinite(configuredSpeed)) {
+      setSpeed(Math.min(Math.max(configuredSpeed, 0.25), 3));
+    }
+  }, [parameterValues.animation_speed]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -359,6 +381,8 @@ export function FrameWorkbench({
           frame={frame}
           previous={previous}
           interactionMode={interactionMode}
+          showPseudocode={parameterValues.show_pseudocode !== false}
+          showPointers={parameterValues.show_pointers !== false}
           selectedTarget={selectedTarget}
           onSelectTarget={(target) => {
             setSelectedTarget(target);

@@ -23,13 +23,15 @@ import {
   getProject,
   createProject,
   startGeneration,
-  streamGeneration,
   streamFromUrl,
   approvePlan,
   rejectPlan,
+  resumeProjectStream,
+  discoverProjectStream,
   listModules,
   type ProjectDetailResponse,
   type SSEProgressEvent,
+  type SSEOptions,
   type SSEWaitingApprovalEvent,
   type SSEModuleStartEvent,
   type SSEModuleDoneEvent,
@@ -82,7 +84,7 @@ export function ProjectWorkspace() {
     if (!projectId) return;
     setLoading(true);
     refreshProject().finally(() => setLoading(false));
-  }, [projectId, isNew]);
+  }, [projectId, isNew, refreshProject, searchParams]);
 
   // 确定初始步骤
   useEffect(() => {
@@ -97,14 +99,14 @@ export function ProjectWorkspace() {
       setCurrentStep("select");
       setCompletedSteps([]);
     }
-  }, [project?.status, project?.module_outputs, isNew]);
+  }, [project?.status, project?.module_outputs, project?.dsl?.module_errors, isNew]);
 
   // Step 3 时替换 URL（新建模式）
   useEffect(() => {
     if (currentStep === "results" && realIdRef.current && isNew) {
       navigate(`/app/project/${realIdRef.current}`, { replace: true });
     }
-  }, [currentStep, isNew]);
+  }, [currentStep, isNew, navigate]);
 
   if (loading) {
     return (
@@ -214,6 +216,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
+  const resumeAttemptedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   // 模块选择状态（Phase A）
@@ -258,6 +261,108 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, []);
 
+  useEffect(() => {
+    if (isNew || resumeAttemptedRef.current || !project?.status) return;
+    if (!new Set(["planning", "generating", "reviewing"]).has(project.status)) return;
+    resumeAttemptedRef.current = true;
+    startedRef.current = true;
+    setPhase("connecting");
+    setMessage("正在恢复生成进度…");
+    setTeachingPlan((project.teaching_plan as Record<string, unknown> | null) ?? null);
+    onStepChange("plan");
+
+    const streamOptions: SSEOptions = {
+      onProgress: (event: SSEProgressEvent) => {
+        setProgress(event.pct);
+        setMessage(event.message || "正在恢复生成进度…");
+        if (event.teaching_plan) setTeachingPlan(event.teaching_plan as Record<string, unknown>);
+        if (event.phase === "planning") setPhase("planning");
+        else if (event.phase === "validating" || event.phase === "quality") setPhase("validating");
+        else setPhase("generating");
+      },
+      onWaitingApproval: (event: SSEWaitingApprovalEvent) => {
+        setPhase("waiting_approval");
+        setProgress(event.pct);
+        setMessage(event.message);
+        if (event.teaching_plan) setTeachingPlan(event.teaching_plan as Record<string, unknown>);
+      },
+      onModuleStart: (event: SSEModuleStartEvent) => {
+        setPhase("reviewing");
+        setProgress(event.pct);
+        setMessage(event.message);
+        setModuleStatuses((current) => new Map(current).set(event.module_id, {
+          module_id: event.module_id,
+          display_name: event.display_name,
+          status: "running",
+        }));
+      },
+      onModuleDone: (event: SSEModuleDoneEvent) => {
+        setProgress(event.pct);
+        setModuleStatuses((current) => new Map(current).set(event.module_id, {
+          module_id: event.module_id,
+          display_name: event.display_name,
+          status: "done",
+        }));
+      },
+      onModuleError: (event: SSEModuleErrorEvent) => {
+        setProgress(event.pct);
+        setModuleStatuses((current) => new Map(current).set(event.module_id, {
+          module_id: event.module_id,
+          display_name: event.display_name ?? event.module_id,
+          status: "error",
+          error: event.error,
+        }));
+      },
+      onDone: async (event) => {
+        setPhase("done");
+        setProgress(100);
+        setMessage("生成完成");
+        if (event.quality_report) setQualityReport(event.quality_report as Record<string, unknown>);
+        if (refreshProject) await refreshProject();
+        onStepChange("results");
+        onDone();
+      },
+      onError: (event) => {
+        setPhase("error");
+        setErrorMsg(event.message || "恢复生成流失败，请重试");
+      },
+    };
+
+    let cancelled = false;
+    let connection = resumeProjectStream(projectId, streamOptions);
+
+    if (!connection) {
+      if (project.status === "planning" && project.teaching_plan) {
+        startedRef.current = false;
+        setPhase("waiting_approval");
+        setMessage("教学计划已生成，等待确认");
+      } else {
+        void discoverProjectStream(projectId, streamOptions)
+          .then((discovered) => {
+            if (cancelled) {
+              discovered?.close();
+              return;
+            }
+            connection = discovered;
+            if (discovered) return;
+            startedRef.current = false;
+            setPhase("error");
+            setErrorMsg("未找到可恢复的生成会话，请重新开始生成");
+          })
+          .catch(() => {
+            if (cancelled) return;
+            startedRef.current = false;
+            setPhase("error");
+            setErrorMsg("查询可恢复生成会话失败，请稍后重试");
+          });
+      }
+    }
+    return () => {
+      cancelled = true;
+      connection?.close();
+    };
+  }, [isNew, project?.status, project?.teaching_plan, projectId, onDone, onStepChange, refreshProject]);
+
   const handleStart = useCallback(async (selected: string[]) => {
     if (startedRef.current) return;
     startedRef.current = true;
@@ -291,11 +396,11 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     onStepChange("plan");
 
     try {
-      await startGeneration(effectiveProjectId, "modules", selected);
+      const generation = await startGeneration(effectiveProjectId, "modules", selected);
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
-      streamGeneration(effectiveProjectId, {
+      streamFromUrl(generation.stream_url, {
         signal: abortRef.current.signal,
         onProgress: (event: SSEProgressEvent) => {
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -337,7 +442,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "生成启动失败");
     }
-  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, resetTimeout]);
+  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout]);
 
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
@@ -405,7 +510,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "批准失败");
     }
-  }, [projectId, onDone, selectedModules]);
+  }, [projectId, onDone, onStepChange, refreshProject, selectedModules]);
 
   const handleReject = useCallback(async (feedback: string) => {
     const pid = realIdRef.current || projectId;
@@ -424,7 +529,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "提交失败");
     }
-  }, [projectId]);
+  }, [onStepChange, projectId]);
 
   return (
     <div className="mx-auto max-w-3xl p-6">

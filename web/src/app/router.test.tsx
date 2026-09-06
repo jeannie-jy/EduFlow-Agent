@@ -12,10 +12,12 @@ const routes = [
   ["/missing", "404"],
 ] as const;
 
-it.each(routes)("renders %s as %s", (path, heading) => {
+it.each(routes)("renders %s as %s", async (path, heading) => {
   const router = createMemoryRouter(appRoutes, { initialEntries: [path] });
 
   renderWithProviders(<RouterProvider router={router} />);
 
-  expect(screen.getByRole("heading", { name: heading })).toBeVisible();
+  expect(
+    await screen.findByRole("heading", { name: heading }, { timeout: 3000 }),
+  ).toBeVisible();
 });

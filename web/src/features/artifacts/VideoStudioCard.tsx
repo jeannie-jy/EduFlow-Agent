@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   Mic2,
   MonitorPlay,
+  XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import { Progress } from "@/components/ui/progress";
 import { VisualObjectRenderer } from "@/components/workbench/visual-objects/VisualObjectRenderer";
 import { cn } from "@/lib/utils";
 import { toUserFacingError } from "@/lib/user-facing-error";
-import { createExportJob, getExportStatus, type ExportArtifact, type ExportManimRequest } from "@/services/export";
+import { cancelExportJob, createExportJob, getExportStatus, type ExportArtifact, type ExportManimRequest } from "@/services/export";
 import { normalizeFramesArtifact, normalizeVideoArtifact } from "./artifact-model";
 import { loadVideoJobSession, saveVideoJobSession } from "./video-job-session";
 
@@ -65,6 +66,7 @@ export function VideoStudioCard({
   const [jobId, setJobId] = useState(storedSession?.jobId ?? video.job_id);
   const [config, setConfig] = useState<ExportManimRequest>(storedSession?.config ?? defaultConfig);
   const [creatingJob, setCreatingJob] = useState(false);
+  const [cancellingJob, setCancellingJob] = useState(false);
   const [sourceFramesVersion, setSourceFramesVersion] = useState(storedSession?.sourceFramesVersion ?? video.source_frames_version);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
 
@@ -80,7 +82,7 @@ export function VideoStudioCard({
         setProgress(result.progress_pct ?? 0);
         setArtifacts(result.artifacts ?? []);
         if (result.status === "failed") setError(result.error_log ?? "渲染失败");
-        if (result.status !== "completed" && result.status !== "failed") {
+        if (!["completed", "failed", "cancelled"].includes(result.status)) {
           timeout = window.setTimeout(poll, 3000);
         }
       } catch {
@@ -123,6 +125,21 @@ export function VideoStudioCard({
       setError(createError instanceof Error ? createError.message : "无法创建渲染任务");
     } finally {
       setCreatingJob(false);
+    }
+  };
+
+  const cancelRender = async () => {
+    if (!jobId) return;
+    setCancellingJob(true);
+    try {
+      await cancelExportJob(jobId);
+      setStatus("cancelled");
+      setProgress(0);
+      setError(null);
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "无法取消渲染任务");
+    } finally {
+      setCancellingJob(false);
     }
   };
 
@@ -336,8 +353,9 @@ export function VideoStudioCard({
             {(status === "queued" || status === "rendering") && <LoaderCircle className="animate-spin text-[var(--interactive)]" size={18} />}
             {status === "completed" && <CheckCircle2 className="text-[var(--success)]" size={18} />}
             {status === "failed" && <AlertTriangle className="text-[var(--error)]" size={18} />}
+            {status === "cancelled" && <XCircle className="text-[var(--muted-foreground)]" size={18} />}
             <span className="text-sm font-semibold">
-              {status === "queued" ? "等待制作" : status === "rendering" ? "正在制作" : status === "completed" ? "视频已完成" : status === "failed" ? "视频制作未完成" : "尚未开始制作"}
+              {status === "queued" ? "等待制作" : status === "rendering" ? "正在制作" : status === "completed" ? "视频已完成" : status === "failed" ? "视频制作未完成" : status === "cancelled" ? "制作已取消" : "尚未开始制作"}
             </span>
           </div>
           {renderActive && (
@@ -366,6 +384,18 @@ export function VideoStudioCard({
               <p className="text-xs font-semibold text-[var(--error)]">{friendlyError.title}</p>
               <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{friendlyError.message} {friendlyError.suggestion}</p>
             </div>
+          )}
+          {renderActive && (
+            <Button
+              className="mt-3"
+              variant="outline"
+              size="sm"
+              disabled={cancellingJob}
+              onClick={cancelRender}
+            >
+              {cancellingJob ? <LoaderCircle className="animate-spin" /> : <XCircle />}
+              取消制作
+            </Button>
           )}
           {!jobId && <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">视频尚未开始制作。请先检查分镜并配置输出选项。</p>}
           {stale && <p className="mt-3 text-xs leading-5 text-[var(--error)]">讲解分镜已有更新，建议重新制作视频后再导出。</p>}

@@ -20,10 +20,26 @@ export interface ParameterData {
   current_value: unknown;
   constraints: Record<string, unknown>;
   recompute_scope: string; // "local" | "all_frames"
+  affects_frame_ids?: string[];
 }
 
 export interface ParameterListResponse {
   parameters: ParameterData[];
+}
+
+export interface RecomputeImpact {
+  mode: "local" | "partial_frames" | "all_frames";
+  scope: { type: string; frame_ids: string[] } | null;
+  changed_keys: string[];
+  dependencies: Record<string, string[]>;
+  direct_frame_ids: string[];
+  affected_frame_ids: string[];
+  affected_module_ids?: string[];
+  module_dependencies?: Record<string, string[]>;
+  protected_frame_ids: string[];
+  fallback_used: boolean;
+  reason: string;
+  impact_token: string;
 }
 
 // ============================================================================
@@ -34,8 +50,15 @@ export function listParameters(projectId: string) {
   return api.get<ParameterListResponse>(`/projects/${projectId}/parameters`);
 }
 
-export function recomputeProject(projectId: string, changedParams: Record<string, unknown>) {
-  return api.post<{ stream_url: string }>(`/projects/${projectId}/recompute`, {
+export function recomputeProject(projectId: string, changedParams: Record<string, unknown>, expectedImpactToken?: string) {
+  return api.post<RecomputeImpact & { stream_url: string | null }>(`/projects/${projectId}/recompute`, {
+    changed_params: changedParams,
+    expected_impact_token: expectedImpactToken,
+  });
+}
+
+export function previewRecomputeProject(projectId: string, changedParams: Record<string, unknown>) {
+  return api.post<RecomputeImpact>(`/projects/${projectId}/recompute/preview`, {
     changed_params: changedParams,
   });
 }

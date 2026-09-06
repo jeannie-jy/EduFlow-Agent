@@ -1,6 +1,6 @@
-/**
- * 认证工具 — 表单校验逻辑与类型定义。
- */
+/** 认证表单校验与后端会话 API。 */
+
+import { api } from "@/services/api-client";
 
 export type LoginValues = {
   email: string;
@@ -44,8 +44,25 @@ export function validateRegistration(values: RegistrationValues): RegistrationEr
   return errors;
 }
 
-export function simulateAuth(delay = 280): Promise<{ ok: true }> {
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve({ ok: true }), delay);
-  });
+export interface AuthUser {
+  id: string;
+  nickname: string;
+  email: string;
+  role: "student" | "teacher" | "admin";
+}
+
+export function login(values: LoginValues): Promise<AuthUser> {
+  return api.post<AuthUser>("/auth/login", values);
+}
+
+export function register(values: Omit<RegistrationValues, "confirmation" | "acceptedTerms">): Promise<AuthUser> {
+  return api.post<AuthUser>("/auth/register", values);
+}
+
+export function getCurrentUser(): Promise<AuthUser> {
+  return api.get<AuthUser>("/auth/me");
+}
+
+export function logout(): Promise<void> {
+  return api.post<void>("/auth/logout");
 }

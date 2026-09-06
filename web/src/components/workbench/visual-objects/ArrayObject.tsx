@@ -31,7 +31,7 @@ export const ArrayObject = memo(function ArrayObject({
   previousValues,
   className,
 }: ArrayObjectProps) {
-  const cells = object.cells ?? [];
+  const cells = useMemo(() => object.cells ?? [], [object.cells]);
   const style = object.style ?? {};
 
   const cellEntries = useMemo(

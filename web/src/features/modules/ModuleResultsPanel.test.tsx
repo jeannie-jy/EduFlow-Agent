@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ProjectDetailResponse } from "@/services/projects";
+import * as generateService from "@/services/generate";
 import { ModuleResultsPanel } from "./ModuleResultsPanel";
 
 const frames = {
@@ -71,6 +72,48 @@ describe("ModuleResultsPanel cross-module navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: /小练习/ }));
     expect(screen.getByText("智能生成额度不足")).toBeInTheDocument();
     expect(screen.queryByText("Insufficient Balance")).not.toBeInTheDocument();
+  });
+
+  it("retries every failed module in one persisted stream", async () => {
+    let callbacks: Parameters<typeof generateService.regenerateModules>[2] | undefined;
+    const estimate = vi.spyOn(generateService, "estimateModuleCost").mockResolvedValue({
+      available: true,
+      requested_module_count: 2,
+      estimated_cost_usd: 0.025,
+      sample_count: 4,
+      method: "historical_median_per_module",
+      hard_limit_cost_usd: 10,
+      hard_limit_tokens: 100000,
+    });
+    const retry = vi.spyOn(generateService, "regenerateModules").mockImplementation(
+      async (_projectId, _modules, options) => {
+        callbacks = options;
+        return { close: vi.fn(), state: "open", lastEventId: null };
+      },
+    );
+    const project = projectWith({ cards: { cards: [] } });
+    project.dsl = { module_errors: { quiz: "timeout", mindmap: "provider unavailable" } };
+    project.selected_modules = ["cards", "quiz", "mindmap"];
+
+    render(<ModuleResultsPanel project={project} />);
+    fireEvent.click(screen.getByRole("button", { name: "重试全部失败模块（2）" }));
+    expect(await screen.findByText(/预计约 \$0\.025000/)).toBeInTheDocument();
+    expect(retry).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认重试 2 个模块" }));
+
+    await waitFor(() => expect(retry).toHaveBeenCalledWith(
+      project.id,
+      expect.arrayContaining(["quiz", "mindmap"]),
+      expect.any(Object),
+    ));
+    callbacks?.onModuleDone?.({
+      phase: "module_done", module_id: "quiz", display_name: "小练习",
+      output: { questions: [] }, pct: 50,
+    });
+    callbacks?.onDone?.({ phase: "done", pct: 100 });
+    expect(await screen.findByRole("status")).toHaveTextContent("失败模块重试已完成");
+    estimate.mockRestore();
+    retry.mockRestore();
   });
 
   it("keeps internal video frames out of result navigation", () => {

@@ -19,6 +19,7 @@ export type ArtifactFrame = {
   checks: ArtifactCheck[];
   duration_ms?: number;
   is_locked?: boolean;
+  depends_on_parameters?: string[];
 };
 
 export type ArtifactParameter = {
@@ -30,6 +31,7 @@ export type ArtifactParameter = {
   current_value: unknown;
   constraints: Record<string, unknown>;
   recompute_scope: string;
+  affects_frame_ids?: string[];
 };
 
 export type FramesArtifact = {
@@ -72,6 +74,9 @@ export function normalizeFramesArtifact(value: unknown): FramesArtifact {
     checks: asRecordArray(frame.checks) as ArtifactCheck[],
     duration_ms: typeof frame.duration_ms === "number" ? frame.duration_ms : undefined,
     is_locked: Boolean(frame.is_locked),
+    depends_on_parameters: Array.isArray(frame.depends_on_parameters)
+      ? frame.depends_on_parameters.map(String)
+      : [],
   }));
 
   const parameters = asRecordArray(source.parameters).map((parameter): ArtifactParameter => ({
@@ -83,6 +88,9 @@ export function normalizeFramesArtifact(value: unknown): FramesArtifact {
     current_value: parameter.current_value ?? parameter.default_value ?? parameter.default,
     constraints: asRecord(parameter.constraints),
     recompute_scope: String(parameter.recompute_scope ?? "all_frames"),
+    affects_frame_ids: Array.isArray(parameter.affects_frame_ids)
+      ? parameter.affects_frame_ids.map(String)
+      : [],
   })).filter((parameter) => parameter.key);
 
   return {

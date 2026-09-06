@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VideoStudioCard } from "./VideoStudioCard";
 
 const exportMocks = vi.hoisted(() => ({
+  cancelExportJob: vi.fn().mockResolvedValue({ job_id: "job-new", status: "cancelled" }),
   createExportJob: vi.fn().mockResolvedValue({ job_id: "job-new", status: "queued" }),
   getExportStatus: vi.fn().mockResolvedValue({
     job_id: "job-new",
@@ -19,6 +20,7 @@ describe("VideoStudioCard", () => {
   beforeEach(() => {
     window.localStorage.clear();
     exportMocks.createExportJob.mockClear();
+    exportMocks.cancelExportJob.mockClear();
     exportMocks.getExportStatus.mockClear();
     exportMocks.getExportStatus.mockResolvedValue({
       job_id: "job-new",
@@ -27,6 +29,36 @@ describe("VideoStudioCard", () => {
       artifacts: [],
       error_log: null,
     });
+  });
+
+  it("cancels an active durable render job", async () => {
+    window.localStorage.setItem("eduflow:video-job:project-cancel", JSON.stringify({
+      jobId: "job-active",
+      status: "rendering",
+      progress: 45,
+      artifacts: [],
+      error: null,
+      config: {},
+    }));
+    exportMocks.getExportStatus.mockResolvedValue({
+      job_id: "job-active",
+      status: "rendering",
+      progress_pct: 45,
+      artifacts: [],
+      error_log: null,
+    });
+
+    render(
+      <VideoStudioCard
+        projectId="project-cancel"
+        videoValue={{ status: "ready", config: {} }}
+        framesValue={{ artifact_version: "v1", frames: [] }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "取消制作" }));
+    await waitFor(() => expect(exportMocks.cancelExportJob).toHaveBeenCalledWith("job-active"));
+    expect(await screen.findByText("制作已取消")).toBeInTheDocument();
   });
 
   it("creates a render job from editable output settings", async () => {

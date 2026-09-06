@@ -20,16 +20,22 @@ import { KnowledgeCardDeck } from "@/components/workbench/KnowledgeCardDeck";
 import type { KnowledgeCardData } from "@/components/workbench/KnowledgeCard";
 import { MindmapView, type MindmapNode } from "@/components/workbench/MindmapView";
 import type { ProjectDetailResponse } from "@/services/projects";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { regenerateModule } from "@/services/generate";
+import {
+  estimateModuleCost,
+  regenerateModule,
+  regenerateModules,
+  type ModuleCostEstimate,
+} from "@/services/generate";
 import type { SSEModuleDoneEvent } from "@/services/sse";
 import { normalizeFramesArtifact, normalizeVideoArtifact } from "@/features/artifacts/artifact-model";
 import { VideoStudioCard } from "@/features/artifacts/VideoStudioCard";
 import { InteractiveExperience } from "@/features/artifacts/InteractiveExperience";
 import { toUserFacingError } from "@/lib/user-facing-error";
+import { VersionHistoryPanel } from "@/features/artifacts/VersionHistoryPanel";
 
 // ============================================================================
 // 模块配置
@@ -53,7 +59,7 @@ export interface ModuleResultsPanelProps {
   onRefreshProject?: () => void | Promise<void>;
 }
 
-export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPanelProps) {
+export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }: ModuleResultsPanelProps) {
   const moduleOutputs = (project?.module_outputs ?? {}) as Record<string, unknown>;
   const persistedErrors = ((project?.dsl?.module_errors ?? {}) as Record<string, unknown>);
   const [localOutputs, setLocalOutputs] = useState<Record<string, unknown>>(moduleOutputs);
@@ -63,12 +69,14 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
   const [isRegenerating, setIsRegenerating] = useState<Record<string, boolean>>({});
   const [targetFrameId, setTargetFrameId] = useState<string>();
   const [navigationMessage, setNavigationMessage] = useState<{ tone: "success" | "error"; text: string }>();
+  const [retryEstimate, setRetryEstimate] = useState<ModuleCostEstimate>();
+  const [isEstimating, setIsEstimating] = useState(false);
 
   useEffect(() => {
     setLocalOutputs((project?.module_outputs ?? {}) as Record<string, unknown>);
     const errors = ((project?.dsl?.module_errors ?? {}) as Record<string, unknown>);
     setLocalErrors(Object.fromEntries(Object.entries(errors).map(([key, value]) => [key, String(value)])));
-  }, [project?.module_outputs, project?.updated_at]);
+  }, [project?.module_outputs, project?.dsl?.module_errors, project?.updated_at]);
 
   const displayedOutputs = { ...moduleOutputs, ...localOutputs };
   const visibleKeys = new Set([
@@ -112,8 +120,69 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
         setLocalErrors((prev) => ({ ...prev, [event.module_id]: event.error }));
         setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
       },
+      onError: (event) => {
+        setIsRegenerating((p) => ({ ...p, [moduleId]: false }));
+        setNavigationMessage({ tone: "error", text: event.message || "模块重新生成连接失败" });
+      },
     });
   }, [project?.id, isRegenerating]);
+
+  const failedModuleIds = useMemo(() => Object.keys(localErrors), [localErrors]);
+  const prepareRegenerateFailed = useCallback(async () => {
+    if (!project?.id || failedModuleIds.length === 0 || isEstimating) return;
+    setIsEstimating(true);
+    try {
+      setRetryEstimate(await estimateModuleCost(project.id, failedModuleIds));
+    } catch (error) {
+      setNavigationMessage({ tone: "error", text: toUserFacingError(error).message });
+    } finally {
+      setIsEstimating(false);
+    }
+  }, [failedModuleIds, isEstimating, project?.id]);
+
+  const handleRegenerateFailed = useCallback(async () => {
+    if (!project?.id || failedModuleIds.length === 0) return;
+    const failed = [...failedModuleIds];
+    setRetryEstimate(undefined);
+    setIsRegenerating((current) => ({
+      ...current,
+      ...Object.fromEntries(failed.map((moduleId) => [moduleId, true])),
+    }));
+    setNavigationMessage({ tone: "success", text: `正在重试 ${failed.length} 个失败模块…` });
+    const finish = () => setIsRegenerating((current) => ({
+      ...current,
+      ...Object.fromEntries(failed.map((moduleId) => [moduleId, false])),
+    }));
+    try {
+      await regenerateModules(project.id, failed, {
+        onModuleDone: (event) => {
+          setLocalOutputs((current) => ({ ...current, [event.module_id]: event.output }));
+          setLocalErrors((current) => {
+            const next = { ...current };
+            delete next[event.module_id];
+            return next;
+          });
+          setIsRegenerating((current) => ({ ...current, [event.module_id]: false }));
+        },
+        onModuleError: (event) => {
+          setLocalErrors((current) => ({ ...current, [event.module_id]: event.error }));
+          setIsRegenerating((current) => ({ ...current, [event.module_id]: false }));
+        },
+        onDone: () => {
+          finish();
+          setNavigationMessage({ tone: "success", text: "失败模块重试已完成" });
+          void onRefreshProject?.();
+        },
+        onError: (event) => {
+          finish();
+          setNavigationMessage({ tone: "error", text: event.message || "批量重试连接失败" });
+        },
+      });
+    } catch (error) {
+      finish();
+      setNavigationMessage({ tone: "error", text: toUserFacingError(error).message });
+    }
+  }, [failedModuleIds, onRefreshProject, project?.id]);
 
   const handleFrameNavigate = useCallback((frameId: string) => {
     const framesArtifact = normalizeFramesArtifact(displayedOutputs.frames);
@@ -168,6 +237,38 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
             {sorted.filter((entry) => entry.value != null).length} 个已生成
             {sorted.some((entry) => entry.error) && ` · ${sorted.filter((entry) => entry.error).length} 个失败`}
           </p>
+          {failedModuleIds.length > 0 && (
+            <Button
+              className="mt-3 w-full"
+              size="sm"
+              variant="outline"
+              disabled={failedModuleIds.some((moduleId) => isRegenerating[moduleId])}
+              onClick={() => void prepareRegenerateFailed()}
+            >
+              <RefreshCw className={isEstimating ? "animate-spin" : ""} />
+              {isEstimating ? "正在估算" : `重试全部失败模块（${failedModuleIds.length}）`}
+            </Button>
+          )}
+          {retryEstimate && (
+            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-xs">
+              <p className="text-[var(--foreground)]">
+                {retryEstimate.available && retryEstimate.estimated_cost_usd != null
+                  ? `预计约 $${retryEstimate.estimated_cost_usd.toFixed(6)}，基于 ${retryEstimate.sample_count} 次历史模块运行的单模块费用中位数。`
+                  : "暂无有效历史计价样本，无法给出预计费用。"}
+              </p>
+              <p className="mt-1 text-[var(--muted-foreground)]">
+                实际费用可能变化；工作流硬上限 ${retryEstimate.hard_limit_cost_usd.toFixed(2)} 美元 / {retryEstimate.hard_limit_tokens.toLocaleString()} Tokens。
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" onClick={() => void handleRegenerateFailed()}>
+                  确认重试 {failedModuleIds.length} 个模块
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRetryEstimate(undefined)}>
+                  取消
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
         <nav aria-label="成果模块" className="flex gap-1 overflow-x-auto p-2 lg:block lg:space-y-1">
           {sorted.map(({ key, config }) => {
@@ -194,6 +295,7 @@ export function ModuleResultsPanel({ project, onNavigateTab }: ModuleResultsPane
             );
           })}
         </nav>
+        {project?.id && <VersionHistoryPanel projectId={project.id} onRestored={onRefreshProject} />}
       </aside>
 
       {selected && (

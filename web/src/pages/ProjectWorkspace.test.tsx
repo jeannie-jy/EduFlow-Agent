@@ -8,6 +8,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { screen, waitFor, cleanup } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/handlers";
 import { AppProviders } from "@/app/AppProviders";
 import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
@@ -47,6 +48,25 @@ describe("ProjectWorkspace", () => {
     // done 但没有任何产物的历史项目应恢复到模块选择，而不是进入空成果页。
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "选择模块" })).toBeInTheDocument();
+    });
+  });
+
+  it("restores a persisted waiting-for-approval state after refresh", async () => {
+    server.use(http.get("http://localhost:8000/api/projects/:id", ({ params }) => HttpResponse.json({
+      id: params.id,
+      title: "Dijkstra 最短路径",
+      status: "planning",
+      teaching_plan: { objectives: ["理解最短路径"], outline: [] },
+      module_outputs: {},
+      selected_modules: [],
+      dsl: { frames: [] },
+      updated_at: "2026-09-05T00:00:00Z",
+    })));
+
+    renderWorkspace(`/app/project/${PROJECT_ID}`);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "确认教学计划" })).toBeInTheDocument();
     });
   });
 });

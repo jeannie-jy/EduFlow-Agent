@@ -90,6 +90,21 @@ describe("FrameWorkbench", () => {
     expect(screen.getByText("2 / 2")).toBeInTheDocument();
   });
 
+  it("applies local playback parameters from the artifact without regeneration", () => {
+    render(<FrameWorkbench value={{
+      ...artifact,
+      parameters: [{
+        key: "animation_speed",
+        label: "动画速度",
+        param_type: "number",
+        current_value: 2,
+        recompute_scope: "local",
+      }],
+    }} />);
+
+    expect(screen.getByRole("button", { name: "切换播放速度" })).toHaveTextContent("2×");
+  });
+
   it("edits, saves, and locks a frame through the existing APIs", async () => {
     render(<FrameWorkbench value={artifact} projectId="project-1" />);
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));

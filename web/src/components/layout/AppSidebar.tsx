@@ -3,9 +3,11 @@ import {
   CirclePlayIcon,
   LayoutTemplateIcon,
   PlusIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { EduFlowBrand } from "@/components/brand/EduFlowBrand";
+import { getAuthState } from "@/lib/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Sidebar,
@@ -30,6 +32,10 @@ const navigationItems = [
 export function AppSidebar() {
   const { state, isMobile, setOpenMobile } = useSidebar();
   const { pathname } = useLocation();
+  const isAdmin = getAuthState()?.role === "admin";
+  const visibleItems = isAdmin
+    ? [...navigationItems, { label: "用户与权限", to: "/app/admin/users", icon: ShieldCheckIcon, end: false }]
+    : navigationItems;
 
   return (
     <Sidebar collapsible="icon">
@@ -59,7 +65,7 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <nav aria-label="主导航">
               <SidebarMenu>
-                {navigationItems.map(({ label, to, icon: Icon, ...item }) => {
+                {visibleItems.map(({ label, to, icon: Icon, ...item }) => {
                   const isActive =
                     label === "我的推演"
                       ? pathname === "/app"

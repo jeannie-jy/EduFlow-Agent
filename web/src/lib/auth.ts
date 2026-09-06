@@ -1,21 +1,18 @@
 /**
- * Auth 状态管理（刻意占位实现）。
+ * Auth UI 缓存。
  *
- * 当前后端尚未实现认证（无 /api/auth/* 端点），MVP 用 localStorage 模拟登录态，
- * 仅供 UI 展示登录/工作台入口，**不可用于任何安全决策**。
- *
- * 真实方案（后端认证立项后落地）：
- * - HttpOnly cookie 会话 + GET /api/auth/me 验证当前用户
- * - 登录/注册端点换为真实表单提交，密码哈希与限流在后端完成
- * - 替换本模块所有调用点（LoginPage / RegisterPage / LandingPage）
+ * 登录凭据保存在服务端散列会话和 HttpOnly cookie 中；localStorage 只缓存昵称等
+ * 展示信息，不能作为授权依据。业务 API 的最终授权由后端完成。
  */
 
 const AUTH_KEY = "eduflow-auth";
 
 export interface AuthState {
+  id?: string;
   isAuthenticated: boolean;
   nickname: string;
   email: string;
+  role?: "student" | "teacher" | "admin";
 }
 
 export function getAuthState(): AuthState | null {
