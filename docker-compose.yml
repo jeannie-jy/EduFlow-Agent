@@ -192,6 +192,7 @@ services:
       - EXPORT_WORKER_POLL_SECONDS=1
       - EXPORT_MAX_WORKSPACE_BYTES=1073741824
       - EXPORT_MAX_WORKSPACE_FILES=5000
+      - XDG_CACHE_HOME=/tmp/.cache
     volumes:
       - render_data:/app/data/exports
     network_mode: "none"

@@ -25,10 +25,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
+        fontconfig \
+        fonts-noto-cjk \
         libcairo2 \
         libpango-1.0-0 \
         libpangocairo-1.0-0 \
         libpq5 \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /wheels /wheels
