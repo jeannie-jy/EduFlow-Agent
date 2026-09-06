@@ -1,0 +1,65 @@
+name: Compose Fault Injection
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: compose-fault-injection-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dependency-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DB_PASSWORD: ci-fault-only-password
+      MINIO_USER: ci-fault-minio
+      MINIO_PASSWORD: ci-fault-minio-password
+      LLM_API_KEY: ""
+      EMBEDDING_API_KEY: ""
+      AUTH_REQUIRED: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start isolated Compose stack
+        run: docker compose up -d --build --wait --wait-timeout 180
+
+      - name: Run read-only HTTP capacity smoke
+        run: >-
+          python agent/scripts/http_capacity_smoke.py
+          --duration 60
+          --concurrency 16
+          --max-error-rate 0.01
+          --min-rps 5
+          --report capacity-smoke-report.json
+
+      - name: Inject dependency faults and verify recovery
+        run: >-
+          python agent/scripts/compose_fault_smoke.py
+          --services redis postgres minio
+          --timeout 120
+          --report fault-smoke-report.json
+
+      - name: Capture Compose diagnostics
+        if: always()
+        run: |
+          docker compose ps --all > compose-ps.txt
+          docker compose logs --no-color > compose.log
+
+      - name: Upload fault report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-fault-injection-${{ github.run_id }}
+          path: |
+            fault-smoke-report.json
+            capacity-smoke-report.json
+            compose-ps.txt
+            compose.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Tear down isolated stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

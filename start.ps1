@@ -71,7 +71,7 @@ if ($All -or $Backend) {
     # 检查依赖
     if (-not (Test-Path ".venv\Lib\site-packages\fastapi")) {
         Write-Host "  -> 安装 Python 依赖..." -ForegroundColor Gray
-        pip install -r requirements.txt
+        pip install -r requirements.lock.txt
     }
 
     Write-Host "  -> FastAPI 启动在 http://localhost:8000" -ForegroundColor Gray

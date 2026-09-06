@@ -52,7 +52,7 @@ if [[ "$MODE" =~ ^(all|backend)$ ]]; then
     fi
 
     # 检查依赖
-    python -c "import fastapi" 2>/dev/null || pip install -r requirements.txt
+    python -c "import fastapi" 2>/dev/null || pip install -r requirements.lock.txt
 
     echo "  -> FastAPI 启动在 http://localhost:8000"
     echo "  -> API 文档: http://localhost:8000/docs"

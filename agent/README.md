@@ -17,7 +17,7 @@ source .venv/Scripts/activate   # Windows Git Bash / PowerShell
 # source .venv/bin/activate     # Linux / macOS
 
 # 安装 Python 依赖
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 
 # 配置环境变量（确保仓库根目录有 .env）
 cp ../.env.example ../.env
@@ -34,7 +34,10 @@ API 文档: http://localhost:8000/docs
 agent/
 ├── main.py                   # FastAPI 应用入口（lifespan / CORS / 路由注册）
 ├── config.py                 # 配置模块（pydantic-settings，环境变量统一加载）
-├── requirements.txt          # Python 依赖
+├── requirements.txt          # 顶层 Python 依赖声明
+├── requirements.lock.txt     # Python 3.12 跨平台生产依赖锁
+├── requirements-ci.txt       # 不含 Manim 的 CI 顶层依赖声明
+├── requirements-ci.lock.txt  # Python 3.12 跨平台 CI 依赖锁
 ├── Dockerfile                # Docker 镜像
 │
 ├── agents/                   # LangGraph Agent 编排层
@@ -72,6 +75,8 @@ agent/
 │   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度 + 统一持久化）
 │   ├── module_dispatcher.py  # 模块生成调度器（串行调度 + 失败落库 + frames 表同步）
 │   ├── project_persistence.py# DSL snapshot 合并 + frames 表持久化 + module_errors 收敛
+│   ├── tool_runtime.py       # 真实 Tool Calling Registry、多轮执行、权限/预算与 ToolResult
+│   ├── workflow_trace.py     # Workflow/Node/Tool 持久化脱敏 Trace
 │   └── knowledge_service.py  # pgvector 语义检索 + embedding 播种
 │
 ├── tools/                    # 确定性工具（节点直接异步调用）
@@ -101,7 +106,7 @@ agent/
 ├── data/                     # 静态数据
 │   └── seed_knowledge.json   # 22 个知识点种子数据
 │
-├── tests/                    # 测试（731 个，31 个文件）
+├── tests/                    # 单元、集成、安全与真实渲染测试
 │   ├── test_agent_nodes.py   # 5 个 Agent 节点 + Graph 拓扑
 │   ├── test_api_integration.py  # API 集成测试
 │   ├── test_db_integration.py   # 数据库 CRUD
@@ -148,31 +153,38 @@ agent/
 | `GET` | `/api/projects/{id}` | 项目详情（含完整 DSL） |
 | `POST` | `/api/projects/{id}/generate` | 启动生成流程（action: full/plan_only/modules） |
 | `GET` | `/api/projects/{id}/generate/stream` | SSE 流式进度 |
+| `GET` | `/api/projects/{id}/generate/active-stream` | 查询当前项目最新可续传活动流 |
 | `POST` | `/api/projects/{id}/generate/approve` | HITL：批准教学计划，恢复生成 |
 | `POST` | `/api/projects/{id}/generate/reject` | HITL：拒绝并带反馈重规划 |
 | `GET` | `/api/projects/{id}/generate/resume/stream` | HITL 审批后恢复的 SSE 流 |
 | `GET` | `/api/projects/{id}/generate/modules` | 可用模块列表 |
 | `GET` | `/api/projects/{id}/generate/module/{module_id}/stream` | 单模块重生成（SSE） |
 | `POST` | `/api/projects/{id}/regenerate` | 局部重生成 |
-| `GET` | `/api/projects/{id}/regenerate/stream` | 重生成进度（SSE） |
+| `GET` | `/api/projects/{id}/generate/regenerate/stream` | 重生成进度（SSE） |
 | `DELETE` | `/api/projects/{id}` | 删除项目 |
 | `GET` | `/api/projects/{id}/frames` | 帧列表 |
 | `PUT` | `/api/projects/{id}/frames/{fid}` | 编辑帧（locked 时 409） |
 | `POST` | `/api/projects/{id}/frames/{fid}/lock` | 锁定/解锁帧 |
 | `GET` | `/api/projects/{id}/parameters` | 参数列表 |
 | `POST` | `/api/projects/{id}/recompute` | 参数变更触发重算 |
+| `POST` | `/api/projects/{id}/recompute/preview` | 校验参数并预览影响帧（无写入） |
 | `POST` | `/api/projects/{id}/export/manim` | 创建视频导出任务 |
 | `GET` | `/api/export/{job_id}` | 查询导出状态 |
 | `POST` | `/api/knowledge/search` | 语义检索（pgvector） |
 | `GET` | `/api/knowledge/templates` | 知识点模板列表 |
 | `POST` | `/api/materials/upload` | 上传课件文件 |
 | `POST` | `/api/materials/{id}/parse` | 解析文件内容 |
+| `GET` | `/api/projects/{id}/workflow-runs` | 查询项目工作流运行记录 |
+| `GET` | `/api/projects/{id}/workflow-runs/{run_id}` | 查询节点级 Trace、模型和成本 |
 | `POST` | `/api/projects/{id}/feedback` | 提交反馈 |
 | `GET` | `/api/projects/{id}/feedback` | 反馈列表 |
 | `POST` | `/api/projects/{id}/versions` | 保存版本 |
 | `GET` | `/api/projects/{id}/versions` | 版本列表 |
 | `GET` | `/api/projects/{id}/versions/{vid}` | 版本详情 |
+| `GET` | `/api/projects/{id}/versions/{vid}/diff` | 与当前或指定版本做结构化差异对比 |
 | `POST` | `/api/projects/{id}/versions/{vid}/restore` | 恢复版本 |
+| `GET` | `/api/metrics` | 进程与数据库运营指标（JSON） |
+| `GET` | `/api/metrics/prometheus` | Prometheus exposition 指标 |
 
 完整契约见[开发任务与接口规范](../docs/开发任务与接口规范.md)。
 
@@ -211,7 +223,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-测试统计: 731 个测试（31 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程、模块调度、生成器可靠性、提示注入防护。
+最近一次完整本地后端回归为 **1037 passed / 6 skipped**，剩余 6 项均为本机未安装 Manim 的真实渲染门控；无无条件跳过测试。前端最近一次为 **41 files / 295 tests**，TypeScript、生产构建和 Bundle Budget 通过。真实在线模型评测仍需显式授权，不计入这些离线数据。离线回归覆盖 Agent 节点、真实 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 验证。
 
 ## 数据流
 

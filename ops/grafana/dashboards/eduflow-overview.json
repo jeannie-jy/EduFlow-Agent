@@ -1,0 +1,23 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {"type": "stat", "title": "Workflow success ratio (24h)", "targets": [{"expr": "eduflow_workflow_success_ratio"}], "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}},
+    {"type": "stat", "title": "Workflow p95 (ms)", "targets": [{"expr": "eduflow_workflow_duration_p95_ms"}], "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}},
+    {"type": "stat", "title": "Queue depth", "targets": [{"expr": "eduflow_queue_depth"}], "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}},
+    {"type": "stat", "title": "Estimated cost USD (24h)", "targets": [{"expr": "eduflow_workflow_estimated_cost_usd"}], "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}},
+    {"type": "timeseries", "title": "Workflow status", "targets": [{"expr": "eduflow_workflows_total", "legendFormat": "{{status}}"}], "gridPos": {"h": 9, "w": 12, "x": 0, "y": 8}},
+    {"type": "timeseries", "title": "Tool calls", "targets": [{"expr": "eduflow_tool_calls_total", "legendFormat": "{{tool}}"}], "gridPos": {"h": 9, "w": 12, "x": 12, "y": 8}},
+    {"type": "timeseries", "title": "Tool p95 latency (ms)", "targets": [{"expr": "eduflow_tool_duration_p95_ms", "legendFormat": "{{tool}}"}], "gridPos": {"h": 9, "w": 12, "x": 0, "y": 17}},
+    {"type": "stat", "title": "Export success ratio (24h)", "targets": [{"expr": "eduflow_export_success_ratio"}], "gridPos": {"h": 9, "w": 6, "x": 12, "y": 17}},
+    {"type": "stat", "title": "Export p95 (ms)", "targets": [{"expr": "eduflow_export_duration_p95_ms"}], "gridPos": {"h": 9, "w": 6, "x": 18, "y": 17}}
+  ],
+  "schemaVersion": 41,
+  "tags": ["eduflow", "agent"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "EduFlow Agent Operations",
+  "uid": "eduflow-agent-ops",
+  "version": 1
+}
