@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,6 +67,26 @@ class Settings(BaseSettings):
     llm_endpoint: str = "https://api.deepseek.com/v1"
     llm_model: str = "deepseek-chat"
     llm_api_key: str = "your-deepseek-api-key"
+    llm_backup_endpoint: str = ""
+    llm_backup_model: str = ""
+    llm_backup_api_key: str = ""
+    llm_planner_model: str = ""
+    llm_knowledge_model: str = ""
+    llm_coder_model: str = ""
+    llm_quality_model: str = ""
+    llm_reflection_model: str = ""
+    llm_module_model: str = ""
+    llm_manim_model: str = ""
+    llm_timeout_seconds: float = Field(default=120.0, ge=1, le=600)
+    llm_gateway_max_retries: int = Field(default=2, ge=0, le=8)
+    llm_gateway_retry_base_seconds: float = Field(default=0.5, ge=0, le=30)
+    llm_gateway_max_concurrency: int = Field(default=8, ge=1, le=128)
+    llm_circuit_failure_threshold: int = Field(default=5, ge=1, le=100)
+    llm_circuit_reset_seconds: float = Field(default=30.0, ge=1, le=3600)
+    llm_input_cost_per_million: float = Field(default=0.0, ge=0)
+    llm_output_cost_per_million: float = Field(default=0.0, ge=0)
+    llm_request_max_tokens: int = Field(default=200_000, ge=1, le=10_000_000)
+    llm_request_max_cost_usd: float = Field(default=10.0, ge=0.01, le=10_000)
 
     # ── Embedding ─────────────────────────────────────────
     embedding_endpoint: str = "https://api.openai.com/v1"
@@ -76,6 +97,8 @@ class Settings(BaseSettings):
     # ── 知识库 ────────────────────────────────────────────
     knowledge_search_top_k: int = 5
     knowledge_similarity_threshold: float = 0.7
+    retrieval_query_count: int = Field(default=3, ge=1, le=5)
+    retrieval_context_max_chars: int = Field(default=6000, ge=500, le=30000)
 
     # ── Agent ─────────────────────────────────────────────
     agent_log_level: str = "INFO"
@@ -83,10 +106,29 @@ class Settings(BaseSettings):
     agent_timeout_ms: int = 120_000
     quality_score_threshold: float = 0.6  # 低于此分数触发 Reflection
     max_reflection_cycles: int = 3
+    max_replan_cycles: int = Field(default=3, ge=1, le=10)
+    module_generation_concurrency: int = Field(default=3, ge=1, le=16)
+    tool_calling_enabled: bool = True
+    tool_max_rounds: int = Field(default=3, ge=1, le=8)
+    tool_max_calls: int = Field(default=8, ge=1, le=32)
+    tool_max_concurrency: int = Field(default=3, ge=1, le=16)
+    tool_timeout_seconds: float = Field(default=10.0, ge=0.1, le=120)
+    tool_result_max_chars: int = Field(default=12000, ge=500, le=100000)
+    sse_stream_lease_seconds: int = Field(default=90, ge=15, le=600)
+    sse_stream_poll_seconds: float = Field(default=0.5, ge=0.1, le=10)
+    sse_event_retention_hours: int = Field(default=24, ge=1, le=168)
 
     # ── 文件存储 ──────────────────────────────────────────
     upload_dir: Path = Path("data/uploads")
     upload_max_size_bytes: int = 52_428_800  # 50 MB
+    material_retention_days: int = Field(default=30, ge=1, le=3650)
+    material_cleanup_interval_seconds: int = Field(default=21600, ge=60, le=604800)
+    material_parse_execution_mode: Literal["inline", "sandbox"] = "inline"
+    material_sandbox_dir: Path = Path("data/material-sandbox")
+    material_parse_timeout_seconds: int = Field(default=120, ge=5, le=1800)
+    material_parse_result_max_bytes: int = Field(
+        default=2 * 1024 * 1024, ge=1024, le=20 * 1024 * 1024
+    )
     allowed_upload_types: list[str] = [
         "application/pdf",
         "text/plain",
@@ -96,12 +138,54 @@ class Settings(BaseSettings):
         "text/x-java-source",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ]
+    artifact_store_backend: Literal["local", "minio"] = "local"
+    artifact_store_dir: Path = Path("data/artifacts")
+    minio_endpoint: str = "localhost:9000"
+    minio_public_endpoint: str = "localhost:9000"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "eduflow-artifacts"
+    minio_secure: bool = False
 
     # ── 导出 ──────────────────────────────────────────────
     # 默认放到用户目录下，避免放在项目内触发 uvicorn --reload 重启
     export_dir: Path = Path.home() / ".eduflow" / "exports"
     manim_timeout_seconds: int = 600
+    manim_execution_mode: Literal["disabled", "queue", "worker"] = "disabled"
+    export_worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60)
+    export_worker_heartbeat_seconds: float = Field(default=30.0, ge=1, le=300)
+    export_worker_max_attempts: int = Field(default=3, ge=1, le=10)
+    export_retry_base_seconds: float = Field(default=5.0, ge=0.1, le=3600)
+    export_retry_max_seconds: float = Field(default=300.0, ge=0.1, le=86400)
+    export_max_artifact_bytes: int = Field(default=500 * 1024 * 1024, ge=1)
+    export_max_workspace_bytes: int = Field(default=1024 * 1024 * 1024, ge=1)
+    export_max_workspace_files: int = Field(default=5000, ge=1, le=100000)
     ffmpeg_path: str = ""  # FFmpeg 目录路径，留空则自动从 PATH 查找
+
+    # ── 通用后台任务 ──────────────────────────────────────
+    task_worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60)
+    task_worker_heartbeat_seconds: float = Field(default=30.0, ge=1, le=300)
+    task_worker_lease_seconds: int = Field(default=300, ge=30, le=3600)
+    task_worker_max_attempts: int = Field(default=3, ge=1, le=10)
+    task_retry_base_seconds: float = Field(default=5.0, ge=0.1, le=3600)
+    task_retry_max_seconds: float = Field(default=300.0, ge=0.1, le=86400)
+
+    # ── 认证 ──────────────────────────────────────────────
+    # 本地/既有测试默认兼容匿名模式；Compose 生产入口显式开启。
+    auth_required: bool = False
+    auth_cookie_secure: bool = False
+    auth_session_days: int = Field(default=14, ge=1, le=90)
+    auth_login_attempts: int = Field(default=10, ge=1, le=1000)
+    auth_login_window_seconds: int = Field(default=300, ge=1, le=86400)
+    auth_register_attempts: int = Field(default=5, ge=1, le=1000)
+    auth_register_window_seconds: int = Field(default=3600, ge=1, le=86400)
+    api_write_rate_limit: int = Field(default=120, ge=1, le=10000)
+    api_write_rate_window_seconds: int = Field(default=60, ge=1, le=86400)
+    api_generation_rate_limit: int = Field(default=20, ge=1, le=1000)
+    api_generation_rate_window_seconds: int = Field(default=300, ge=1, le=86400)
+    audit_retention_days: int = Field(default=90, ge=7, le=3650)
+    audit_archive_max_events: int = Field(default=10000, ge=1, le=100000)
+    audit_archive_hmac_key: str = ""
 
 
 @lru_cache

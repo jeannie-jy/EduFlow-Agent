@@ -11,12 +11,17 @@ import hashlib
 import json
 import logging
 import uuid
+from copy import deepcopy
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session, get_readonly_session
-from schema.project import FrameUpdateRequest, FrameLockRequest
+from db.database import get_readonly_session, get_session
+from db.models import User
+from schema.project import FrameLockRequest, FrameUpdateRequest
+
+from .auth import require_editor
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -35,9 +40,9 @@ async def list_frames(
     帧表为编辑真源：优先返回 ``frames`` 表中的行；仅当表为空时回退到
     ``dsl_snapshot['frames']``（兼容尚未落表的历史项目）。
     """
-    from db.models import Frame as FrameModel
-
     from sqlalchemy import select
+
+    from db.models import Frame as FrameModel
 
     # DB frames 表优先（编辑真源，反映最新编辑/锁定状态）
     query = (
@@ -76,7 +81,7 @@ async def list_frames(
     from db.models import Project as ProjectModel
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project and project.dsl_snapshot:
-        snap_frames = project.dsl_snapshot.get("frames", [])
+        snap_frames = deepcopy(project.dsl_snapshot.get("frames", []))
         if snap_frames:
             for f in snap_frames:
                 if "id" not in f:
@@ -92,11 +97,12 @@ async def update_frame(
     fid: str,
     body: FrameUpdateRequest,
     session: AsyncSession = Depends(get_session),
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """编辑单帧内容。"""
-    from db.models import Frame as FrameModel
-
     from sqlalchemy import select
+
+    from db.models import Frame as FrameModel
 
     # 查找帧
     query = select(FrameModel).where(
@@ -148,11 +154,12 @@ async def lock_frame(
     fid: str,
     body: FrameLockRequest,
     session: AsyncSession = Depends(get_session),
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """锁定或解锁帧。"""
-    from db.models import Frame as FrameModel
-
     from sqlalchemy import select
+
+    from db.models import Frame as FrameModel
 
     query = select(FrameModel).where(
         FrameModel.project_id == parse_project_id(project_id),
@@ -230,4 +237,7 @@ async def _sync_frame_into_snapshot(
 
     if changed or module_changed:
         project.dsl_snapshot = snap
+        # Frame edits create a mutable working copy. No saved version may be
+        # advertised as current until an explicit/final workflow snapshot exists.
+        project.current_version_id = None
         await session.flush()

@@ -485,6 +485,7 @@ async def convert_dsl_to_manim_llm(
             user_message=user_message,
             temperature=0.3,
             max_tokens=16384,
+            routing_key="manim",
             # DeepSeek 新版默认 thinking 模式：flash 模型在长代码生成上会耗尽
             # token 预算，返回空 content 或超时；关闭后生成快且确定
             disable_thinking=True,

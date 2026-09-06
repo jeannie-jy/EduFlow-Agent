@@ -9,13 +9,17 @@ FastAPI 应用，负责：
 from __future__ import annotations
 
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Response, status
+from fastapi.responses import PlainTextResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
+from db.database import get_readonly_session
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +51,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("模块生成器注册失败: %s", exc)
 
-    # TODO: 初始化 DB 连接池、Redis 客户端
+    from services.material_retention import run_material_retention
+
+    retention_stop = asyncio.Event()
+    retention_task = asyncio.create_task(run_material_retention(retention_stop))
+
+    # DB engine、Redis 与 LLM client 均按首次使用惰性建立连接。
     yield
+
+    retention_stop.set()
+    retention_task.cancel()
+    try:
+        await retention_task
+    except asyncio.CancelledError:
+        pass
 
     # 关闭 Agent checkpointer 连接
     try:
@@ -57,7 +73,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("关闭 checkpointer 异常: %s", exc)
 
-    # TODO: 关闭 DB 连接池、Redis 客户端
+    try:
+        from api.export import close_export_resources
+        from db.database import close_database
+
+        await close_export_resources()
+        await close_database()
+    except Exception as exc:
+        logger.warning("关闭数据库或 Redis 资源异常: %s", exc)
+
     logger.info("EduFlow-Agent 已关闭")
 
 
@@ -98,8 +122,8 @@ def create_app() -> FastAPI:
             "http://127.0.0.1:3000",
         ],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "Idempotency-Key"],
     )
 
     # 请求日志与 request_id 追踪
@@ -125,6 +149,75 @@ app = create_app()
 
 @app.get("/api/health", tags=["system"])
 async def health_check() -> dict[str, str]:
-    """健康检查端点。"""
+    """Process liveness check; it intentionally performs no network I/O."""
     settings = get_settings()
     return {"status": "ok", "version": settings.app_version}
+
+
+async def readiness_checks() -> dict[str, str]:
+    """Probe dependencies needed to accept generation and export work."""
+    from sqlalchemy import text
+
+    checks: dict[str, str] = {}
+    try:
+        from db.database import async_session_factory
+
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        logger.warning("readiness database check failed: %s", exc)
+        checks["database"] = "unavailable"
+
+    try:
+        from api.export import _get_redis
+
+        redis_client = await _get_redis()
+        if redis_client is None:
+            raise ConnectionError("redis client unavailable")
+        pong = await __import__("asyncio").to_thread(redis_client.ping)
+        checks["redis"] = "ok" if pong else "unavailable"
+    except Exception as exc:
+        logger.warning("readiness redis check failed: %s", exc)
+        checks["redis"] = "unavailable"
+
+    try:
+        from services.artifact_store import get_artifact_store
+
+        await get_artifact_store().ready()
+        checks["artifact_store"] = "ok"
+    except Exception as exc:
+        logger.warning("readiness artifact store check failed: %s", exc)
+        checks["artifact_store"] = "unavailable"
+    return checks
+
+
+@app.get("/api/ready", tags=["system"])
+async def readiness_check(response: Response) -> dict[str, object]:
+    checks = await readiness_checks()
+    ready = all(value == "ok" for value in checks.values())
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"status": "ready" if ready else "not_ready", "checks": checks}
+
+
+@app.get("/api/metrics", tags=["system"])
+async def process_metrics(
+    session: AsyncSession = Depends(get_readonly_session),
+) -> dict[str, object]:
+    """Process telemetry plus cross-process aggregates from durable state."""
+    from services.operational_metrics import operational_metrics_snapshot
+    from services.telemetry import telemetry_snapshot
+
+    snapshot = telemetry_snapshot()
+    snapshot["operational"] = await operational_metrics_snapshot(session)
+    return snapshot
+
+
+@app.get("/api/metrics/prometheus", tags=["system"], response_class=PlainTextResponse)
+async def prometheus_metrics(
+    session: AsyncSession = Depends(get_readonly_session),
+) -> str:
+    from services.operational_metrics import operational_metrics_snapshot, prometheus_text
+
+    return prometheus_text(await operational_metrics_snapshot(session))

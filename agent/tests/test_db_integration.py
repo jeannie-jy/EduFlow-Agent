@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, func, schema, types
+from sqlalchemy import func, schema, select, types
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -20,16 +20,15 @@ from sqlalchemy.ext.asyncio import (
 
 from db.models import (
     Base,
-    Project,
-    Frame,
-    ParameterModel,
-    QualityReportModel,
     ExportJobModel,
     Feedback,
-    SourceMaterial,
+    Frame,
+    ParameterModel,
+    Project,
     ProjectVersion,
+    QualityReportModel,
+    SourceMaterial,
 )
-
 
 # ============================================================================
 # Helpers
@@ -43,7 +42,8 @@ def _make_sqlite_compatible():
     global _replaced
     if _replaced:
         return
-    from sqlalchemy.dialects.postgresql import JSONB, ARRAY, UUID as PG_UUID
+    from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+    from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
     for table in Base.metadata.tables.values():
         for col in table.columns:
@@ -526,6 +526,37 @@ class TestVersionManagement:
         assert len(versions) == 1
         assert versions[0].version == 1
         assert versions[0].change_summary == "初始版本"
+
+    @pytest.mark.asyncio
+    async def test_save_version_atomically_advances_current_pointer(
+        self, db_session: AsyncSession
+    ):
+        from api.versions import save_version
+
+        proj = await self._create_project(db_session)
+        dsl = {
+            "frames": [{"frame_id": "f_001", "title": "original"}],
+            "module_outputs": {
+                "frames": {
+                    "frames": [{"frame_id": "f_001", "title": "original"}],
+                    "schema_version": "1.0",
+                }
+            },
+        }
+        saved = await save_version(str(proj.id), dsl, "generated", db_session)
+        dsl["frames"][0]["title"] = "mutated-after-save"
+        await db_session.flush()
+
+        version = await db_session.get(ProjectVersion, uuid.UUID(saved["id"]))
+        assert proj.current_version_id == version.id
+        assert version.dsl_snapshot["frames"][0]["title"] == "original"
+        stored_output = version.dsl_snapshot["module_outputs"]["frames"]
+        assert "frames" not in stored_output
+        assert stored_output["artifact_ref"] == {
+            "type": "project_version_frames",
+            "version_id": saved["id"],
+        }
+        assert proj.dsl_snapshot == version.dsl_snapshot
 
     @pytest.mark.asyncio
     async def test_version_unique_constraint(self, db_session: AsyncSession):
