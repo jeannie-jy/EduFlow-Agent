@@ -34,6 +34,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _setup_logging(settings)
     logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
+    # Do not start background tasks against an unversioned or partially migrated
+    # database. This turns legacy-volume drift into one actionable startup error.
+    from services.schema_guard import assert_database_schema_current
+
+    await assert_database_schema_current()
+
     # 注册模块生成器（Phase A: 模块化生成器架构）
     try:
         import generators.mindmap_generator   # noqa: F401 — 触发 register_generator

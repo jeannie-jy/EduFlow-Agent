@@ -7,8 +7,9 @@
   列集以该服务的读写为准：concept/content/subject/difficulty/object_types/animation_types/embedding。
 - 不建 long_term_memories / trajectories / tool_call_logs（旧架构遗留，全仓零引用；
   如未来恢复记忆功能请另开迁移）。
-- 已存在的开发库无保留价值（旧 schema 与 ORM 零交集），请按 README 迁移小节
-  执行 `docker compose down -v` 后重建，本迁移只针对全新数据库。
+- 由旧版 ORM ``create_all`` 建立、但没有 ``alembic_version`` 的兼容开发库，必须先运行
+  ``python -m scripts.adopt_legacy_database --apply``；脚本验证全部基线表和必要列后才会
+  stamp 0001。不得直接对未知或部分 schema 执行 stamp。
 
 Revision ID: 0001
 Revises:

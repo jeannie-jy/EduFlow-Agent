@@ -77,6 +77,13 @@ if ($All -or $Backend) {
     Write-Host "  -> FastAPI 启动在 http://localhost:8000" -ForegroundColor Gray
     Write-Host "  -> API 文档: http://localhost:8000/docs" -ForegroundColor Gray
 
+    Write-Host "  -> 检查并升级数据库迁移..." -ForegroundColor Gray
+    python -m scripts.adopt_legacy_database --apply
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[!] 数据库迁移失败，后端未启动；请检查上方迁移诊断" -ForegroundColor Red
+        exit 1
+    }
+
     # 在新的 PowerShell 窗口启动 uvicorn
     Start-Process powershell -ArgumentList @"
 -NoExit -Command `

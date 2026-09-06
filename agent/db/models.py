@@ -1,6 +1,6 @@
 """SQLAlchemy ORM 模型。
 
-映射到 init.sql 中定义的表结构。使用 async SQLAlchemy 2.0 风格。
+映射到 Alembic 管理的业务表结构。使用 async SQLAlchemy 2.0 风格。
 """
 
 from __future__ import annotations

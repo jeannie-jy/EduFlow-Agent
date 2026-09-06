@@ -57,6 +57,9 @@ if [[ "$MODE" =~ ^(all|backend)$ ]]; then
     echo "  -> FastAPI 启动在 http://localhost:8000"
     echo "  -> API 文档: http://localhost:8000/docs"
 
+    echo "  -> 检查并升级数据库迁移..."
+    python -m scripts.adopt_legacy_database --apply
+
     # 后台启动
     python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir agents --reload-dir api --reload-dir adapters --reload-dir db --reload-dir generators --reload-dir plugins --reload-dir schema --reload-dir services --reload-dir tools --reload-dir alembic --reload-dir scripts --reload-dir main.py --log-level info &
     BACKEND_PID=$!
