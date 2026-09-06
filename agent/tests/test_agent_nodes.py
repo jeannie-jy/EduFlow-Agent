@@ -197,6 +197,16 @@ class TestPlannerNode:
         assert "estimated_total_frames" in source
         assert '"required"' in source
 
+    def test_planner_limits_are_explicit_in_source(self):
+        """Planner schema must bound arrays so one request cannot grow unbounded."""
+        import inspect
+        from agents.nodes import planner_node
+
+        source = inspect.getsource(planner_node)
+        assert '"maxItems": 8' in source
+        assert '"maxItems": 5' in source
+        assert '"maxLength": 180' in source
+
 
 # ============================================================================
 # Knowledge Node
@@ -295,6 +305,16 @@ class TestKnowledgeNode:
 
         call_args = mock_llm.call_args
         assert call_args[1]["temperature"] == 0.2
+
+    def test_knowledge_limits_are_explicit_in_source(self):
+        """Knowledge graph arrays must have bounded cardinality."""
+        import inspect
+        from agents.nodes import knowledge_node
+
+        source = inspect.getsource(knowledge_node)
+        assert '"maxItems": 12' in source
+        assert '"maxItems": 24' in source
+        assert '"maxItems": 15' in source
 
 
 # ============================================================================
@@ -430,6 +450,47 @@ class TestCoderNode:
 
         call_args = mock_llm.call_args
         assert call_args[1]["max_tokens"] == 32768  # Coder 输出完整 DSL，需较大 token 限制
+
+    @pytest.mark.asyncio
+    async def test_coder_batch_mode_limits_each_call_and_merges_frames(self):
+        """生产流开启 batch mode 后，每次只生成 3 帧并合并为完整 DSL。"""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["coder_batch_mode"] = True
+        state["teaching_plan"]["estimated_total_frames"] = 5
+        state["teaching_plan"]["outline"] = state["teaching_plan"]["outline"][:2]
+
+        def batch_output(start):
+            return {
+                "frames": [
+                    {
+                        "frame_id": f"f_{index:03d}",
+                        "title": f"步骤 {index}",
+                        "learning_goal": "理解当前步骤",
+                        "narration": "简短讲解",
+                        "visual_objects": [],
+                        "state_snapshot": {},
+                        "animations": [],
+                        "interaction_hooks": [],
+                        "checks": [],
+                    }
+                    for index in range(start, start + (3 if start == 1 else 2))
+                ],
+                "parameters": [],
+                "assets": [],
+            }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [batch_output(1), batch_output(4)]
+            result = await coder_node(state)
+
+        assert mock_llm.await_count == 2
+        assert all(call.kwargs["max_tokens"] == 8192 for call in mock_llm.await_args_list)
+        assert all("<frame_batch>" in call.kwargs["user_message"] for call in mock_llm.await_args_list)
+        assert [frame["frame_id"] for frame in result["dsl"]["frames"]] == [
+            "f_001", "f_002", "f_003", "f_004", "f_005"
+        ]
 
     @pytest.mark.asyncio
     async def test_coder_dsl_structure_complete(self):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 from typing import Any
 
 from config import get_settings
@@ -52,6 +53,143 @@ def _prompt_json(value: Any, *, indent: int | None = None) -> str:
     return _escape_prompt_markup(
         json.dumps(value, ensure_ascii=False, indent=indent, default=str)
     )
+
+
+def _clip_text(value: Any, limit: int) -> str:
+    """Bound model-authored text before it enters the durable workflow state."""
+    return str(value or "")[:limit]
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _bounded_list(value: Any, limit: int) -> list[Any]:
+    return value[:limit] if isinstance(value, list) else []
+
+
+def _bounded_teaching_plan(plan: Any) -> dict[str, Any]:
+    """Apply the same limits as the Planner schema to parsed model output.
+
+    Prompt/schema limits reduce generation size; this second boundary protects
+    downstream nodes when a provider ignores JSON-schema-like instructions.
+    """
+    if not isinstance(plan, dict):
+        return {}
+    bounded = dict(plan)
+    for field, limit in (("prerequisites", 8), ("objectives", 5), ("risk_notes", 5)):
+        values = bounded.get(field, [])
+        bounded[field] = [_clip_text(item, 180) for item in values[:limit]] if isinstance(values, list) else []
+    outline = bounded.get("outline", [])
+    bounded["outline"] = []
+    if isinstance(outline, list):
+        for index, item in enumerate(outline[:8], 1):
+            if not isinstance(item, dict):
+                continue
+            points = item.get("key_points", [])
+            bounded["outline"].append({
+                **item,
+                "step": index,
+                "title": _clip_text(item.get("title"), 120),
+                "key_points": [_clip_text(point, 180) for point in points[:5]] if isinstance(points, list) else [],
+                "estimated_frames": _bounded_int(item.get("estimated_frames"), 1, 1, 8),
+            })
+    bounded["estimated_total_frames"] = _bounded_int(
+        bounded.get("estimated_total_frames"), 1, 1, 12
+    )
+    parameters = bounded.get("suggested_parameters", [])
+    bounded["suggested_parameters"] = []
+    if isinstance(parameters, list):
+        for item in parameters[:8]:
+            if isinstance(item, dict):
+                bounded["suggested_parameters"].append({
+                    **item,
+                    "key": _clip_text(item.get("key"), 80),
+                    "type": _clip_text(item.get("type"), 40),
+                    "description": _clip_text(item.get("description"), 180),
+                })
+    bounded["teaching_approach"] = _clip_text(bounded.get("teaching_approach"), 300)
+    bounded["difficulty_curve"] = _clip_text(bounded.get("difficulty_curve"), 80)
+    return bounded
+
+
+def _bounded_knowledge_graph(graph: Any) -> dict[str, Any]:
+    """Bound Knowledge Agent arrays before they are included in Coder prompts."""
+    if not isinstance(graph, dict):
+        return {"concepts": [], "edges": []}
+    concepts = graph.get("concepts", [])
+    edges = graph.get("edges", [])
+    bounded_concepts = []
+    if isinstance(concepts, list):
+        for item in concepts[:12]:
+            if not isinstance(item, dict):
+                continue
+            bounded_concepts.append({
+                **item,
+                "id": _clip_text(item.get("id"), 60),
+                "name": _clip_text(item.get("name"), 100),
+                "type": _clip_text(item.get("type"), 40),
+                "description": _clip_text(item.get("description"), 180),
+                "suggested_visual_objects": [
+                    _clip_text(value, 40)
+                    for value in _bounded_list(item.get("suggested_visual_objects"), 5)
+                ],
+                "common_pitfalls": [
+                    _clip_text(value, 160)
+                    for value in _bounded_list(item.get("common_pitfalls"), 4)
+                ],
+            })
+    bounded_edges = []
+    if isinstance(edges, list):
+        for item in edges[:24]:
+            if isinstance(item, dict):
+                bounded_edges.append({
+                    **item,
+                    "source": _clip_text(item.get("source"), 60),
+                    "target": _clip_text(item.get("target"), 60),
+                    "relation": _clip_text(item.get("relation"), 40),
+                })
+    return {
+        **graph,
+        "concepts": bounded_concepts,
+        "edges": bounded_edges,
+        "key_terms": [
+            _clip_text(value, 100)
+            for value in _bounded_list(graph.get("key_terms"), 15)
+        ],
+    }
+
+
+def _bounded_coder_output(result: Any) -> dict[str, Any]:
+    """Keep parsed DSL output within RenderScript resource limits."""
+    if not isinstance(result, dict):
+        return {"frames": [], "parameters": [], "assets": []}
+    bounded = dict(result)
+    bounded["frames"] = []
+    frames = result.get("frames", [])
+    if isinstance(frames, list):
+        for frame in frames[:12]:
+            if not isinstance(frame, dict):
+                continue
+            bounded["frames"].append({
+                **frame,
+                "frame_id": _clip_text(frame.get("frame_id"), 40),
+                "title": _clip_text(frame.get("title"), 80),
+                "learning_goal": _clip_text(frame.get("learning_goal"), 180),
+                "narration": _clip_text(frame.get("narration"), 360),
+                "visual_objects": _bounded_list(frame.get("visual_objects"), 4),
+                "animations": _bounded_list(frame.get("animations"), 6),
+                "interaction_hooks": _bounded_list(frame.get("interaction_hooks"), 3),
+                "checks": _bounded_list(frame.get("checks"), 3),
+                "depends_on_parameters": _bounded_list(frame.get("depends_on_parameters"), 8),
+            })
+    bounded["parameters"] = _bounded_list(result.get("parameters"), 8)
+    bounded["assets"] = _bounded_list(result.get("assets"), 12)
+    return bounded
 
 
 def _infer_knowledge_type(user_input: str) -> str:
@@ -147,40 +285,53 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
     output_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "target_audience_level": {"type": "string"},
+            "target_audience_level": {"type": "string", "maxLength": 80},
             "prerequisites": {
                 "type": "array",
-                "items": {"type": "string"},
+                "maxItems": 8,
+                "items": {"type": "string", "maxLength": 120},
             },
             "objectives": {
                 "type": "array",
-                "items": {"type": "string"},
+                "maxItems": 5,
+                "items": {"type": "string", "maxLength": 180},
             },
             "outline": {
                 "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "step": {"type": "integer"},
-                        "title": {"type": "string"},
-                        "key_points": {"type": "array", "items": {"type": "string"}},
-                        "estimated_frames": {"type": "integer"},
+                        "step": {"type": "integer", "minimum": 1, "maximum": 8},
+                        "title": {"type": "string", "maxLength": 120},
+                        "key_points": {
+                            "type": "array",
+                            "maxItems": 5,
+                            "items": {"type": "string", "maxLength": 180},
+                        },
+                        "estimated_frames": {"type": "integer", "minimum": 1, "maximum": 8},
                     },
                     "required": ["step", "title", "key_points", "estimated_frames"],
                 },
             },
-            "teaching_approach": {"type": "string"},
-            "difficulty_curve": {"type": "string"},
-            "estimated_total_frames": {"type": "integer"},
-            "risk_notes": {"type": "array", "items": {"type": "string"}},
+            "teaching_approach": {"type": "string", "maxLength": 300},
+            "difficulty_curve": {"type": "string", "maxLength": 80},
+            "estimated_total_frames": {"type": "integer", "minimum": 1, "maximum": 12},
+            "risk_notes": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {"type": "string", "maxLength": 180},
+            },
             "suggested_parameters": {
                 "type": "array",
+                "maxItems": 8,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string"},
-                        "type": {"type": "string"},
-                        "description": {"type": "string"},
+                        "key": {"type": "string", "maxLength": 80},
+                        "type": {"type": "string", "maxLength": 40},
+                        "description": {"type": "string", "maxLength": 180},
                         "default": {},
                     },
                 },
@@ -195,7 +346,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
             user_message=user_message,
             output_schema=output_schema,
             temperature=0.3,
-            max_tokens=16384,  # Planner 输出大量教学计划 JSON，需要更大 token 限制
+            max_tokens=8192,  # 输出 schema 已限长，避免无界规划占用工作流预算
             routing_key="planner",
         )
     except Exception as exc:
@@ -216,6 +367,8 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
             "risk_notes": [],
             "suggested_parameters": [],
         }
+
+    teaching_plan = _bounded_teaching_plan(teaching_plan)
 
     # 补充：用 design_parameters 为知识点类型生成建议参数（兼容无 LLM 参数场景）
     suggested_params = teaching_plan.get("suggested_parameters", [])
@@ -430,21 +583,24 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
         "properties": {
             "concepts": {
                 "type": "array",
+                "maxItems": 12,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "id": {"type": "string"},
-                        "name": {"type": "string"},
-                        "type": {"type": "string"},
-                        "description": {"type": "string"},
-                        "difficulty": {"type": "integer"},
+                        "id": {"type": "string", "maxLength": 60},
+                        "name": {"type": "string", "maxLength": 100},
+                        "type": {"type": "string", "maxLength": 40},
+                        "description": {"type": "string", "maxLength": 180},
+                        "difficulty": {"type": "integer", "minimum": 1, "maximum": 5},
                         "suggested_visual_objects": {
                             "type": "array",
-                            "items": {"type": "string"},
+                            "maxItems": 5,
+                            "items": {"type": "string", "maxLength": 40},
                         },
                         "common_pitfalls": {
                             "type": "array",
-                            "items": {"type": "string"},
+                            "maxItems": 4,
+                            "items": {"type": "string", "maxLength": 160},
                         },
                     },
                     "required": ["id", "name", "type"],
@@ -452,19 +608,21 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             },
             "edges": {
                 "type": "array",
+                "maxItems": 24,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "source": {"type": "string"},
-                        "target": {"type": "string"},
-                        "relation": {"type": "string"},
+                        "source": {"type": "string", "maxLength": 60},
+                        "target": {"type": "string", "maxLength": 60},
+                        "relation": {"type": "string", "maxLength": 40},
                     },
                     "required": ["source", "target", "relation"],
                 },
             },
             "key_terms": {
                 "type": "array",
-                "items": {"type": "string"},
+                "maxItems": 15,
+                "items": {"type": "string", "maxLength": 100},
             },
         },
         "required": ["concepts", "edges", "key_terms"],
@@ -476,7 +634,7 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             user_message=user_message,
             output_schema=output_schema,
             temperature=0.2,
-            max_tokens=8192,  # 知识图谱 JSON 包含多个概念 + 关系边
+            max_tokens=6144,  # 概念/关系有硬上限，保留足够空间但避免无效长输出
             routing_key="knowledge",
         )
     except Exception as exc:
@@ -489,6 +647,7 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             "key_terms": [],
         }
 
+    knowledge_graph = _bounded_knowledge_graph(knowledge_graph)
     key_terms = knowledge_graph.pop("key_terms", [])
     knowledge_graph["sources"] = retrieval.get("sources", [])
 
@@ -508,6 +667,106 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
 # ============================================================================
 # Coder Node
 # ============================================================================
+
+
+def _fallback_coder_frame(frame_id: str, user_input: str, batch_index: int) -> dict[str, Any]:
+    return {
+        "frame_id": frame_id,
+        "title": "内容介绍" if batch_index == 0 else f"步骤 {batch_index + 1}",
+        "learning_goal": f"了解 {user_input[:30]}",
+        "narration": f"今天我们来学习 {user_input[:50]}。",
+        "visual_objects": [],
+        "state_snapshot": {},
+        "animations": [],
+        "interaction_hooks": [],
+        "checks": [],
+    }
+
+
+async def _generate_coder_batches(
+    *,
+    user_message: str,
+    output_schema: dict[str, Any],
+    teaching_plan: dict[str, Any],
+    user_input: str,
+) -> dict[str, Any]:
+    """Generate frames in bounded batches and merge them deterministically."""
+    expected_frames = _bounded_int(
+        teaching_plan.get("estimated_total_frames"),
+        1,
+        1,
+        12,
+    )
+    batch_size = 3
+    merged_frames: list[dict[str, Any]] = []
+    merged_parameters: list[dict[str, Any]] = []
+    merged_assets: list[dict[str, Any]] = []
+
+    for start in range(0, expected_frames, batch_size):
+        count = min(batch_size, expected_frames - start)
+        batch_schema = deepcopy(output_schema)
+        frames_schema = batch_schema["properties"]["frames"]
+        frames_schema["minItems"] = count
+        frames_schema["maxItems"] = count
+        batch_start = start + 1
+        batch_end = start + count
+        batch_prompt = (
+            f"{user_message}\n\n<frame_batch>\n"
+            f"这是第 {start // batch_size + 1} 批，只生成 f_{batch_start:03d} 到 "
+            f"f_{batch_end:03d}，共 {count} 帧；不要生成其他帧。\n"
+            "每帧保持 2-3 个 visual_objects，narration 简洁，优先保证 JSON 完整。\n"
+            "</frame_batch>"
+        )
+        if merged_frames:
+            # Only carry the immediately preceding state forward; sending the
+            # full prior DSL would recreate the context/output explosion.
+            batch_prompt += (
+                "\n<previous_frame trust=\"data\">\n"
+                f"{_prompt_json(merged_frames[-1])}\n"
+                "</previous_frame>"
+            )
+
+        try:
+            result = await call_llm_structured(
+                system_prompt=CODER_SYSTEM_PROMPT,
+                user_message=batch_prompt,
+                output_schema=batch_schema,
+                temperature=0.3,
+                max_tokens=8192,
+                routing_key="coder",
+            )
+            frames = result.get("frames", []) if isinstance(result, dict) else []
+            frames = [frame for frame in frames if isinstance(frame, dict)][:count]
+        except Exception as exc:
+            logger.warning(
+                "Coder batch failed; using deterministic fallback | batch=%d-%d error=%s",
+                batch_start,
+                batch_end,
+                type(exc).__name__,
+            )
+            frames = []
+            result = {}
+
+        for offset in range(count):
+            frame_id = f"f_{start + offset + 1:03d}"
+            frame = frames[offset] if offset < len(frames) else _fallback_coder_frame(
+                frame_id, user_input, start + offset
+            )
+            # The batch range is the source of truth for ordering and IDs;
+            # never let a model duplicate or shift a frame across batches.
+            frame = {**frame, "frame_id": frame_id}
+            merged_frames.append(frame)
+
+        if not merged_parameters and isinstance(result, dict):
+            merged_parameters = _bounded_list(result.get("parameters"), 8)
+        if not merged_assets and isinstance(result, dict):
+            merged_assets = _bounded_list(result.get("assets"), 12)
+
+    return {
+        "frames": merged_frames,
+        "parameters": merged_parameters,
+        "assets": merged_assets,
+    }
 
 
 async def coder_node(state: AgentState) -> dict[str, Any]:
@@ -574,15 +833,18 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
         "properties": {
             "frames": {
                 "type": "array",
+                "minItems": 1,
+                "maxItems": 12,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "frame_id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "learning_goal": {"type": "string"},
-                        "narration": {"type": "string"},
+                        "frame_id": {"type": "string", "maxLength": 40},
+                        "title": {"type": "string", "maxLength": 80},
+                        "learning_goal": {"type": "string", "maxLength": 180},
+                        "narration": {"type": "string", "maxLength": 360},
                         "visual_objects": {
                             "type": "array",
+                            "maxItems": 4,
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -597,14 +859,14 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                     },
                                     "label": {"type": "string"},
                                     # 数组
-                                    "cells": {"type": "array"},
+                                    "cells": {"type": "array", "maxItems": 32},
                                     # 表格
-                                    "headers": {"type": "array"},
-                                    "rows": {"type": "array"},
+                                    "headers": {"type": "array", "maxItems": 12},
+                                    "rows": {"type": "array", "maxItems": 32},
                                     # 代码块
                                     "language": {"type": "string"},
-                                    "code": {"type": "string"},
-                                    "highlight_lines": {"type": "array"},
+                                    "code": {"type": "string", "maxLength": 1800},
+                                    "highlight_lines": {"type": "array", "maxItems": 12},
                                     # 公式
                                     "latex": {"type": "string"},
                                     # 节点
@@ -615,7 +877,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                     "weight": {"type": "number"},
                                     "directed": {"type": "boolean"},
                                     # 内存块
-                                    "blocks": {"type": "array"},
+                                    "blocks": {"type": "array", "maxItems": 16},
                                     # 进程
                                     "pid": {"type": "string"},
                                     "state": {"type": "string"},
@@ -624,10 +886,10 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                     "title": {"type": "string"},
                                     "content": {"type": "object"},
                                     # 时间线
-                                    "events": {"type": "array"},
+                                    "events": {"type": "array", "maxItems": 16},
                                     # 思维导图
                                     "root": {"type": "string"},
-                                    "children": {"type": "array"},
+                                    "children": {"type": "array", "maxItems": 16},
                                     # 通用
                                     "position": {"type": "object"},
                                     "style": {"type": "object"},
@@ -636,12 +898,13 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                             },
                         },
                         "state_snapshot": {"type": "object"},
-                        "animations": {"type": "array"},
-                        "interaction_hooks": {"type": "array"},
-                        "checks": {"type": "array"},
+                        "animations": {"type": "array", "maxItems": 6},
+                        "interaction_hooks": {"type": "array", "maxItems": 3},
+                        "checks": {"type": "array", "maxItems": 3},
                         "depends_on_parameters": {
                             "type": "array",
-                            "items": {"type": "string"},
+                            "maxItems": 8,
+                            "items": {"type": "string", "maxLength": 80},
                         },
                     },
                     "required": ["frame_id", "title", "narration", "visual_objects", "state_snapshot"],
@@ -649,12 +912,13 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             },
             "parameters": {
                 "type": "array",
+                "maxItems": 8,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string"},
-                        "label": {"type": "string"},
-                        "param_type": {"type": "string"},
+                        "key": {"type": "string", "maxLength": 80},
+                        "label": {"type": "string", "maxLength": 100},
+                        "param_type": {"type": "string", "maxLength": 40},
                         "default_value": {},
                         "current_value": {},
                         "constraints": {"type": "object"},
@@ -662,45 +926,46 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                         "recompute_scope": {"type": "string"},
                         "affects_frame_ids": {
                             "type": "array",
+                            "maxItems": 12,
                             "items": {"type": "string"},
                         },
                     },
                     "required": ["key", "label", "param_type", "recompute_scope"],
                 },
             },
-            "assets": {"type": "array"},
+            "assets": {"type": "array", "maxItems": 12},
         },
         "required": ["frames"],
     }
 
     try:
-        result = await call_llm_structured(
-            system_prompt=CODER_SYSTEM_PROMPT,
-            user_message=user_message,
-            output_schema=output_schema,
-            temperature=0.3,
-            max_tokens=32768,  # Coder 输出完整 DSL（多帧 + narration + visual_objects）
-            routing_key="coder",
-        )
+        if state.get("coder_batch_mode") and not regeneration_scope:
+            result = await _generate_coder_batches(
+                user_message=user_message,
+                output_schema=output_schema,
+                teaching_plan=teaching_plan,
+                user_input=user_input,
+            )
+        else:
+            result = await call_llm_structured(
+                system_prompt=CODER_SYSTEM_PROMPT,
+                user_message=user_message,
+                output_schema=output_schema,
+                temperature=0.3,
+                max_tokens=32768,  # 局部重生成保留单次调用，范围已由 scope 限制
+                routing_key="coder",
+            )
     except Exception as exc:
         logger.error("Coder 生成失败: %s", exc)
         result = {
             "frames": [
-                {
-                    "frame_id": "f_001",
-                    "title": "内容介绍",
-                    "learning_goal": f"了解 {user_input[:30]}",
-                    "narration": f"今天我们来学习 {user_input[:50]}。",
-                    "visual_objects": [],
-                    "state_snapshot": {},
-                    "animations": [],
-                    "interaction_hooks": [],
-                    "checks": [],
-                },
+                _fallback_coder_frame("f_001", user_input, 0),
             ],
             "parameters": [],
             "assets": [],
         }
+
+    result = _bounded_coder_output(result)
 
     # 后处理：用 generate_asset 规范化 LLM 生成的 assets
     raw_assets = result.get("assets", [])

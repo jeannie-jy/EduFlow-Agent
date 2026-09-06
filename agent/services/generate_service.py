@@ -52,6 +52,7 @@ async def run_generation_stream(
         "enable_tools": True,
         "approval_mode": approval_mode,
         "selected_modules": selected_modules or [],
+        "coder_batch_mode": True,
         "status": "draft",
         "reflection_count": 0,
         "replan_count": 0,
@@ -192,6 +193,7 @@ async def run_regenerate_stream(
         "reflection_count": 0,
         "replan_count": 0,
         "revision_history": [],
+        "coder_batch_mode": True,
     }
     graph = await _get_graph()
     run_id = f"{project_id}:regenerate:{uuid.uuid4().hex}"
@@ -522,6 +524,7 @@ async def run_generation_sync_with_usage(
         "materials": materials or [],
         "constraints": constraints or {},
         "approval_mode": False,
+        "coder_batch_mode": True,
         "status": "draft",
         "reflection_count": 0,
         "replan_count": 0,
