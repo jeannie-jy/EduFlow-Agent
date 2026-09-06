@@ -246,6 +246,61 @@ class TestDispatchModulesBasic:
         assert call_order == ["frames", "dependent"]
         assert json.loads(events[-1]["data"])["module_errors"] is None
 
+    async def test_focused_retry_reuses_existing_dependency_without_regenerating(self):
+        call_order = []
+
+        class FramesGen(_MockWorkingGen):
+            module_id = "frames"
+
+            async def generate(self, **kwargs):
+                call_order.append("frames")
+                return {"frames": [{"frame_id": "new"}]}
+
+        class DependentGen(_MockWorkingGen):
+            module_id = "dependent"
+            requires = ("frames",)
+
+            async def generate(self, **kwargs):
+                assert kwargs["existing_outputs"]["frames"]["frames"][0]["frame_id"] == "existing"
+                call_order.append("dependent")
+                return {"status": "ok"}
+
+        register_generator(FramesGen())
+        register_generator(DependentGen())
+        events = [
+            event async for event in dispatch_modules(
+                "test-proj-001",
+                _make_minimal_state(),
+                ["dependent"],
+                ensure_frames=False,
+                existing_outputs={"frames": {"frames": [{"frame_id": "existing"}]}},
+            )
+        ]
+
+        assert call_order == ["dependent"]
+        payload = json.loads(events[-1]["data"])
+        assert set(payload["module_outputs"]) == {"dependent"}
+
+    async def test_blocking_validation_issue_is_not_persisted_as_success(self):
+        class InvalidGen(_MockWorkingGen):
+            module_id = "invalid"
+
+            def validate(self, output):
+                return [{"severity": "high", "type": "invalid", "description": "bad"}]
+
+        register_generator(InvalidGen())
+        events = [
+            event async for event in dispatch_modules(
+                "test-proj-001",
+                _make_minimal_state(),
+                ["invalid"],
+                ensure_frames=False,
+            )
+        ]
+        payload = json.loads(events[-1]["data"])
+        assert payload["module_outputs"] == {}
+        assert "invalid" in payload["module_errors"]
+
 
 class TestDispatchModulesErrors:
     """测试错误处理。"""

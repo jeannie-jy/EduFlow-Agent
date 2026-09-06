@@ -56,6 +56,8 @@ class AgentState(TypedDict, total=False):
     selected_modules: list[str]         # 用户选择的模块列表: ["mindmap","cards","frames"]
     module_outputs: dict[str, dict]     # module_id → 模块产出字典
     module_errors: dict[str, str]       # module_id → 错误信息
+    ensure_frames: bool                 # 初次模块生成是否自动补充基础 Frames
+    module_context_outputs: dict[str, dict]  # 单模块重生成时只读的既有依赖产物
 
     # ── 元信息 ───────────────────────────────────────────
     project_id: str

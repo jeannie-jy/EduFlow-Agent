@@ -434,6 +434,8 @@ async def modules_node(state: AgentState) -> dict[str, Any]:
         state,
         state.get("selected_modules", []),
         persist_result=False,
+        ensure_frames=state.get("ensure_frames", True),
+        existing_outputs=state.get("module_context_outputs", {}),
     ):
         event_name = event.get("event")
         if event_name == "done":

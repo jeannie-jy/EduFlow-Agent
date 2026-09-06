@@ -726,7 +726,9 @@ async def single_module_stream(
     if gen is None:
         raise HTTPException(status_code=400, detail=f"Unknown module: {module_id}")
 
-    snap = project.dsl_snapshot or {}
+    from services.project_persistence import load_canonical_project_dsl
+
+    snap = await load_canonical_project_dsl(project, session) or {}
     state: AgentState = {
         "user_input": snap.get("input_content", snap.get("topic", "")),
         "project_id": project_id,
@@ -734,6 +736,11 @@ async def single_module_stream(
         "knowledge_graph": snap.get("knowledge_graph", {}),
         "constraints": snap.get("constraints", {}),
         "selected_modules": [module_id],
+        # A single-artifact retry must not silently regenerate Frames. Existing
+        # artifacts satisfy declared dependencies (for example video -> frames)
+        # without being written as new outputs.
+        "ensure_frames": False,
+        "module_context_outputs": snap.get("module_outputs", {}),
         "status": "generating",
         "reflection_count": 0,
         "revision_history": [],
