@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
 # EduFlow-Agent 一键启动脚本 (Linux / macOS / Git Bash)
-# 用法: ./start.sh [infra|backend|frontend|all]
+# 用法: ./start.sh [infra|backend|frontend|all|video|all-video]
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
 MODE="${1:-all}"
+
+START_INFRA=false
+START_BACKEND=false
+START_FRONTEND=false
+START_VIDEO=false
+case "$MODE" in
+    infra) START_INFRA=true ;;
+    backend) START_BACKEND=true ;;
+    frontend) START_FRONTEND=true ;;
+    all) START_INFRA=true; START_BACKEND=true; START_FRONTEND=true ;;
+    video) START_INFRA=true; START_BACKEND=true; START_VIDEO=true ;;
+    all-video) START_INFRA=true; START_BACKEND=true; START_FRONTEND=true; START_VIDEO=true ;;
+    *) echo "Usage: $0 [infra|backend|frontend|all|video|all-video]" >&2; exit 2 ;;
+esac
 
 echo -e "\033[36m========================================\033[0m"
 echo -e "\033[36m  EduFlow-Agent 启动\033[0m"
@@ -23,7 +37,7 @@ if [ ! -f ".env" ]; then
 fi
 
 # ── 2. 启动基础设施（Docker）────────────────────────────────
-if [[ "$MODE" =~ ^(all|infra)$ ]]; then
+if $START_INFRA; then
     echo -e "\n\033[32m[1/3] 启动基础设施 (PostgreSQL + Redis + MinIO)...\033[0m"
     docker compose up -d postgres redis minio
     echo "  -> PostgreSQL: localhost:5432"
@@ -40,8 +54,22 @@ if [[ "$MODE" =~ ^(all|infra)$ ]]; then
     echo "  -> PostgreSQL 已就绪"
 fi
 
-# ── 3. 启动后端 ──────────────────────────────────────────
-if [[ "$MODE" =~ ^(all|backend)$ ]]; then
+# ── 3. 启动隔离视频服务（可选）──────────────────────────
+if $START_VIDEO; then
+    echo -e "\n\033[32m[2/4] 启动视频 Worker + 隔离渲染沙箱...\033[0m"
+    docker compose --profile video up -d --build render-worker render-sandbox
+    sleep 2
+    VIDEO_SERVICES="$(docker compose --profile video ps --status running --services)"
+    grep -qx "render-worker" <<<"$VIDEO_SERVICES"
+    grep -qx "render-sandbox" <<<"$VIDEO_SERVICES"
+    export MANIM_EXECUTION_MODE=queue
+    export ARTIFACT_STORE_BACKEND=minio
+    export MINIO_ENDPOINT=localhost:9000
+    echo "  -> 视频任务准备器与无网络渲染沙箱已运行"
+fi
+
+# ── 4. 启动后端 ──────────────────────────────────────────
+if $START_BACKEND; then
     echo -e "\n\033[32m[2/3] 启动后端 (FastAPI)...\033[0m"
     cd "$PROJECT_ROOT/agent"
 
@@ -66,8 +94,8 @@ if [[ "$MODE" =~ ^(all|backend)$ ]]; then
     echo "  -> 后端 PID: $BACKEND_PID"
 fi
 
-# ── 4. 启动前端 ──────────────────────────────────────────
-if [[ "$MODE" =~ ^(all|frontend)$ ]]; then
+# ── 5. 启动前端 ──────────────────────────────────────────
+if $START_FRONTEND; then
     echo -e "\n\033[32m[3/3] 启动前端 (Vite)...\033[0m"
     cd "$PROJECT_ROOT/web"
 
@@ -87,6 +115,9 @@ echo -e "\033[36m  启动完成!\033[0m"
 echo -e "\033[32m  前端: http://localhost:5173\033[0m"
 echo -e "\033[32m  后端: http://localhost:8000\033[0m"
 echo -e "\033[32m  API文档: http://localhost:8000/docs\033[0m"
+if $START_VIDEO; then
+    echo -e "\033[32m  视频: Worker + 隔离沙箱已启用\033[0m"
+fi
 echo -e "\033[36m========================================\033[0m"
 echo -e "\n\033[90m提示: 在 .env 中配置 LLM_API_KEY 后即可使用 Agent 功能\033[0m"
 

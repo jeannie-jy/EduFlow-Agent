@@ -33,6 +33,7 @@ async def test_manim_export_is_disabled_before_database_access_by_default():
                 session,
             )
     assert exc.value.status_code == 503
+    assert exc.value.detail["error"]["code"] == "VIDEO_EXPORT_UNAVAILABLE"
     assert session.get.call_count == 0
 
 

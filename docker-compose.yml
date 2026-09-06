@@ -145,6 +145,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - EXPORT_DIR=/app/data/exports
       - MANIM_EXECUTION_MODE=worker
+      - MANIM_SCRIPT_MODE=${MANIM_SCRIPT_MODE:-deterministic}
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
       - LLM_MODEL=${LLM_MODEL:-deepseek-v4-flash}
       - LLM_API_KEY=${LLM_API_KEY}

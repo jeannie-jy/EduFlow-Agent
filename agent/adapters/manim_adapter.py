@@ -214,7 +214,7 @@ class ManimScriptGenerator:
         lines = [
             "",
             f"class EduFlow_{safe_topic}(Scene):",
-            f'    """教学推演: {self.topic}"""',
+            '    """EduFlow deterministic teaching animation."""',
             "",
             "    def construct(self):",
         ]
@@ -234,7 +234,7 @@ class ManimScriptGenerator:
         for i, frame in enumerate(self.frames):
             fid = frame.get("frame_id", f"f_{i:03d}")
             lines.append(f"        # ── {fid}: {frame.get('title', 'Untitled')} ──")
-            lines.append(f"        self.next_section(name='{fid}')")
+            lines.append(f"        self.next_section(name={fid!r})")
 
             # 生成 visual objects 创建代码
             obj_vars, obj_code = self._generate_objects_for_frame(frame, prev_objects, i)
@@ -247,9 +247,9 @@ class ManimScriptGenerator:
             # 生成 narration（作为字幕）
             narration = frame.get("narration", "")
             if narration:
-                safe_narration = narration.replace('"', "'")[:200]
+                safe_narration = " ".join(str(narration).split())[:200]
                 lines.append(f'        # Narration: "{safe_narration}"')
-                lines.append(f'        subtitle = Text("{safe_narration}", font_size=24, color=WHITE)')
+                lines.append(f"        subtitle = Text({safe_narration!r}, font_size=24, color=WHITE)")
                 lines.append("        subtitle.to_edge(DOWN)")
                 lines.append("        self.play(FadeIn(subtitle), run_time=0.5)")
                 lines.append("        self.wait(2)")
@@ -279,7 +279,13 @@ class ManimScriptGenerator:
 
         for vo in frame.get("visual_objects", []):
             vo_id = vo.get("id", "unknown")
-            var_name = f"{vo_id}_{frame_idx}"
+            safe_id = "".join(
+                char if char.isalnum() or char == "_" else "_"
+                for char in str(vo_id)
+            ) or "object"
+            if safe_id[0].isdigit():
+                safe_id = f"object_{safe_id}"
+            var_name = f"{safe_id}_{frame_idx}"
 
             position = vo.get("position", {})
             x = max(-7.0, min(7.0, position.get("x", 0) / 100.0 - 3.0))
@@ -301,7 +307,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text(r'{label[:20]}', font_size=20)"
+                        f"        {var_name}_label = Text({label[:20]!r}, font_size=20)"
                         f".next_to({var_name}, DOWN, buff=0.1)"
                     )
                     code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
@@ -316,7 +322,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text('{label[:20]}', font_size=16)"
+                        f"        {var_name}_label = Text({label[:20]!r}, font_size=16)"
                         f".next_to({var_name}, UP, buff=0.1)"
                     )
 
@@ -325,27 +331,18 @@ class ManimScriptGenerator:
                 headers = vo.get("headers", [])
                 code_lines.append(
                     f"        {var_name} = Table("
-                    f"[{json.dumps(headers)}] + {json.dumps(rows_data)}"
+                    f"[{headers!r}] + {rows_data!r}"
                     f").scale(0.5).move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
 
             elif obj_type == "formula":
                 latex_raw = vo.get("latex", "x")
-                # math 包或 any → Text 避免 LaTeX 依赖
-                use_text = not _HAS_LATEX or _has_cjk(latex_raw) or not _looks_like_math(latex_raw)
-                if use_text:
-                    safe = _strip_latex(latex_raw).replace('"', "'")[:200]
-                    # 不用 r-string，_strip_latex 已处理 LaTeX 转 Unicode
-                    code_lines.append(
-                        f'        {var_name} = Text("{safe}", font_size=24, color=WHITE)'
-                        f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
-                    )
-                else:
-                    latex = repr(latex_raw)
-                    code_lines.append(
-                        f"        {var_name} = MathTex({latex})"
-                        f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
-                    )
+                # 生产沙箱不安装 LaTeX，始终编译为 Unicode Text。
+                safe = _strip_latex(latex_raw)[:200]
+                code_lines.append(
+                    f"        {var_name} = Text({safe!r}, font_size=24, color=WHITE)"
+                    f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
+                )
 
             elif obj_type == "code_block":
                 code = repr(vo.get("code", "# code"))
@@ -367,7 +364,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text(r'{label[:20]}', font_size=16)"
+                        f"        {var_name}_label = Text({label[:20]!r}, font_size=16)"
                         f".move_to({var_name}.get_center())"
                     )
                     code_lines.append(f"        {var_name} = VGroup({var_name}, {var_name}_label)")
@@ -380,7 +377,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text(r'{label[:20]}', font_size=16)"
+                        f"        {var_name}_label = Text({label[:20]!r}, font_size=16)"
                         f".next_to({var_name}, DOWN)"
                     )
 
@@ -400,7 +397,10 @@ class ManimScriptGenerator:
             anim_type = anim.get("type", "appear")
             target_id = anim.get("target", "")
             duration = anim.get("duration_ms", 500) / 1000.0
-            var_name = obj_vars.get(target_id, target_id)
+            var_name = obj_vars.get(target_id) or prev_objects.get(target_id)
+            if not var_name:
+                lines.append(f"        # Skip animation with unknown target: {target_id!r}")
+                continue
 
             if anim_type == "appear":
                 lines.append(f"        self.play(FadeIn({var_name}), run_time={duration:.1f})")
@@ -417,7 +417,10 @@ class ManimScriptGenerator:
                 lines.append(f"        self.play(Indicate({var_name}, color=GREEN), run_time={duration:.1f})")
             elif anim_type == "swap":
                 target_2 = anim.get("target_2", "")
-                var_name_2 = obj_vars.get(target_2, target_2)
+                var_name_2 = obj_vars.get(target_2) or prev_objects.get(target_2)
+                if not var_name_2:
+                    lines.append(f"        # Skip swap with unknown target: {target_2!r}")
+                    continue
                 lines.append(f"        self.play(CyclicReplace({var_name}, {var_name_2}), run_time={duration:.1f})")
             else:
                 anim_class = ANIMATION_MAP.get(anim_type, "FadeIn")

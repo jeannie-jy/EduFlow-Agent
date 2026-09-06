@@ -164,7 +164,7 @@ export function VideoStudioCard({
     : status === "rendering"
       ? Math.min(2, Math.max(1, Math.floor(progress / 40) + 1))
       : status === "completed" ? 3 : -1;
-  const friendlyError = error ? toUserFacingError(error) : null;
+  const friendlyError = error ? toUserFacingError(error, "video") : null;
 
   useEffect(() => {
     setSelectedFrameIndex((current) => Math.min(current, Math.max(frames.frames.length - 1, 0)));

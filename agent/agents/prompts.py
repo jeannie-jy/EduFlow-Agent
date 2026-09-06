@@ -387,9 +387,8 @@ MANIM_CODER_SYSTEM_PROMPT = """你是一位资深的 Manim 动画导演。你的
 
 ## 环境约束
 
-- Manim Community **v0.20.1**，Python 3.12
-- **LaTeX 未安装**。数学公式用 `Text()` + Unicode 符号：α β γ δ → ← ↑ ↓ ⇒ ⇐ ≤ ≥ ≠ ≈ ± × · ∞ ∑ ∫ ∂ ∇ ∈ ⊆ ∪ ∩ ∧ ∨ ∀ ∃ ¬
-- 中文文本**绝对禁止**放入 MathTex。MathTex 仅用于纯 ASCII 公式如 `MathTex(r"E=mc^2")`
+- Manim Community **v0.21.0**，Python 3.12
+- **LaTeX 未安装，禁止使用 `MathTex` / `Tex` / `TexTemplate`**。所有公式必须使用 `Text()` + Unicode 符号：α β γ δ → ← ↑ ↓ ⇒ ⇐ ≤ ≥ ≠ ≈ ± × · ∞ ∑ ∫ ∂ ∇ ∈ ⊆ ∪ ∩ ∧ ∨ ∀ ∃ ¬
 
 ## 作用域规则（必须遵守，违反会导致 NameError）
 
@@ -460,11 +459,15 @@ Code(code_string="for i in range(n):", language="python", tab_width=4,
 
 ### 表格
 ```python
+# Table 的单元格数据必须是字符串/数字，不能预先包装成 Text；
+# 如果已经构造了 Text 等 Mobject，必须改用 MobjectTable。
 table = Table(
     [["A", "1"], ["B", "2"]],
     col_labels=[Text("Key"), Text("Val")],
-    include_outer_lines=True
+    include_outer_lines=True,
+    line_config={"color": GREY_B, "stroke_width": 1}
 )
+# line_config 中禁止使用 line_color / line_width。
 ```
 
 ### 布局方法

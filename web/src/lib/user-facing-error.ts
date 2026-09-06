@@ -4,10 +4,23 @@ export interface UserFacingError {
   suggestion: string;
 }
 
+export type ErrorContext = "general" | "video";
+
 /** Keep service details out of the learning UI while preserving an actionable cause. */
-export function toUserFacingError(error: unknown): UserFacingError {
+export function toUserFacingError(error: unknown, context: ErrorContext = "general"): UserFacingError {
   const raw = String(error ?? "").trim();
   const text = raw.toLowerCase();
+
+  if (
+    context === "video" &&
+    /video_export_unavailable|video export is disabled|manim execution is disabled|isolated render worker|视频制作服务未启动/.test(text)
+  ) {
+    return {
+      title: "视频制作服务未启动",
+      message: "教学分镜已经生成完成，但本地视频 Worker 与隔离渲染沙箱尚未启动。",
+      suggestion: "请使用视频开发模式启动服务后，再按当前设置开始制作。",
+    };
+  }
 
   if (/402|insufficient[ _-]?balance|余额|欠费|quota.*exceed|credit/.test(text)) {
     return {
@@ -45,6 +58,13 @@ export function toUserFacingError(error: unknown): UserFacingError {
     };
   }
   if (/render|compile|syntax|unexpected token|渲染|编译|脚本/.test(text)) {
+    if (context === "video") {
+      return {
+        title: "视频渲染未完成",
+        message: "视频脚本生成或隔离渲染阶段出现异常，已有教学成果不会丢失。",
+        suggestion: "请重新开始制作；如果问题持续出现，请检查视频 Worker 日志。",
+      };
+    }
     return {
       title: "互动内容暂时无法展示",
       message: "这份互动内容的展示格式不完整，页面无法正常呈现。",

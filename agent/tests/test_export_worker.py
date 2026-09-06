@@ -119,6 +119,85 @@ async def test_claim_marks_job_rendering_and_assigns_lease():
     session.commit.assert_awaited_once()
 
 
+def _export_dsl() -> dict:
+    return {
+        "project_id": "p1",
+        "topic": "formula",
+        "frames": [
+            {
+                "frame_id": "f_001",
+                "title": "Formula",
+                "narration": "Explain the formula",
+                "visual_objects": [
+                    {"id": "formula-1", "type": "formula", "latex": r"E=mc^2"}
+                ],
+                "animations": [{"type": "appear", "target": "formula-1"}],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_llm_static_validation_failure_falls_back_without_job_retry(tmp_path):
+    from api.export import _do_export_async
+
+    invalid_llm_files = {
+        "main.py": (
+            "from manim import *\n"
+            "class Lesson(Scene):\n"
+            "    def construct(self):\n"
+            "        self.add(MathTex(r'E=mc^2'))\n"
+        ),
+        "render_config.json": "{}",
+        "subtitles.srt": "",
+    }
+    llm_convert = AsyncMock(return_value=invalid_llm_files)
+
+    async def successful_sandbox(export_dir, *, quality, fps):
+        script = (export_dir / "scripts" / "main.py").read_text(encoding="utf-8")
+        assert "MathTex(" not in script
+        (export_dir / "lesson.mp4").write_bytes(b"video")
+        return {
+            "status": "completed",
+            "artifact": {"type": "mp4", "filename": "lesson.mp4"},
+        }
+
+    settings = MagicMock(
+        export_dir=str(tmp_path),
+        manim_script_mode="llm",
+        export_max_artifact_bytes=1024,
+    )
+    redis_client = MagicMock()
+    publish = AsyncMock(
+        side_effect=lambda _dir, _job, artifacts, **_: (True, artifacts)
+    )
+    with (
+        patch("api.export.get_settings", return_value=settings),
+        patch("redis.from_url", return_value=redis_client),
+        patch(
+            "adapters.manim_llm_adapter.convert_dsl_to_manim_llm", llm_convert
+        ),
+        patch(
+            "api.export._submit_and_wait_for_sandbox",
+            side_effect=successful_sandbox,
+        ) as sandbox,
+        patch("api.export._publish_and_persist_export_artifacts", new=publish),
+    ):
+        await _do_export_async(
+            "00000000-0000-0000-0000-000000000999",
+            _export_dsl(),
+            {"quality": "l", "fps": 24},
+            "redis://unused",
+            MagicMock(),
+        )
+
+    assert llm_convert.await_count == 1
+    assert sandbox.call_count == 1
+    debug_dir = tmp_path / "00000000-0000-0000-0000-000000000999" / "debug"
+    assert (debug_dir / "llm-main.py").is_file()
+    assert (debug_dir / "llm-validation-errors.json").is_file()
+
+
 def test_export_retry_delay_is_exponential_and_capped():
     from services.export_worker import export_retry_delay_seconds
 

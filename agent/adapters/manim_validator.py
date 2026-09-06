@@ -37,6 +37,7 @@ def validate_script(script: str) -> list[dict[str, Any]]:
         return issues  # 语法错误时其余检查没有意义
 
     issues.extend(_check_mathtex_cjk(script))
+    issues.extend(_check_latex_dependency(script))
     issues.extend(_check_invalid_lexer(script))
     issues.extend(_check_code_api(script))
     issues.extend(_check_code_block_attr(script))
@@ -79,6 +80,32 @@ def _check_mathtex_cjk(script: str) -> list[dict]:
                 "rule": "mathtex-cjk", "severity": "error",
                 "line": lineno,
                 "detail": f"MathTex 含 CJK: {arg[:60]}",
+            })
+    return issues
+
+
+def _check_latex_dependency(script: str) -> list[dict]:
+    """The isolated production sandbox intentionally contains no LaTeX."""
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return []
+    forbidden = {"MathTex", "Tex", "TexTemplate", "SingleStringMathTex"}
+    issues = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in forbidden
+        ):
+            issues.append({
+                "rule": "latex-dependency",
+                "severity": "error",
+                "line": getattr(node, "lineno", None),
+                "detail": (
+                    f"隔离渲染环境未安装 LaTeX，禁止使用 {node.func.id}；"
+                    "请改用 Text + Unicode 数学符号"
+                ),
             })
     return issues
 

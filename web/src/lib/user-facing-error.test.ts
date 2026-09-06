@@ -15,4 +15,13 @@ describe("toUserFacingError", () => {
     expect(result.title).toBe(title);
     expect(result.message).not.toContain(raw);
   });
+
+  it.each([
+    ["Video export is disabled because an isolated render worker is not configured", "视频制作服务未启动"],
+    ["render compile syntax error", "视频渲染未完成"],
+  ])("uses video-specific guidance for %s", (raw, title) => {
+    const result = toUserFacingError(raw, "video");
+    expect(result.title).toBe(title);
+    expect(result.message).not.toContain(raw);
+  });
 });

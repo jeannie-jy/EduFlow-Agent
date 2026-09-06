@@ -125,10 +125,17 @@ async def create_export_job(
     if settings.manim_execution_mode != "queue":
         raise HTTPException(
             status_code=503,
-            detail=(
-                "Manim execution is disabled because an isolated render worker is not configured. "
-                "Start the isolated render worker and set MANIM_EXECUTION_MODE=queue."
-            ),
+            detail={
+                "error": {
+                    "code": "VIDEO_EXPORT_UNAVAILABLE",
+                    "message": (
+                        "Video export is disabled because an isolated render worker "
+                        "is not configured. Start the video worker profile and set "
+                        "MANIM_EXECUTION_MODE=queue."
+                    ),
+                    "details": {"required_mode": "queue"},
+                }
+            },
         )
     from db.models import ExportJobModel, Project
 
@@ -337,20 +344,73 @@ async def _do_export_async(
     logger.info("导出开始: job=%s", job_id)
 
     try:
-        # 1. DSL → Manim 脚本（LLM 生成，使用线程本地 LLM 客户端）
-        from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
+        # 1. DSL → Manim script. Deterministic compilation is the production
+        # default; the optional LLM director can never be a single point of
+        # failure because it falls back before rendering.
         from adapters.manim_validator import has_errors, validate_script
 
-        files = await convert_dsl_to_manim_llm(dsl, dsl.get("teaching_plan"))
+        settings = get_settings()
+        script_mode = getattr(settings, "manim_script_mode", "deterministic")
+        used_deterministic = script_mode != "llm"
+        if script_mode == "llm":
+            try:
+                from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
+
+                files = await convert_dsl_to_manim_llm(
+                    dsl, dsl.get("teaching_plan")
+                )
+            except Exception:
+                logger.exception(
+                    "LLM Manim script generation failed; using deterministic compiler: job=%s",
+                    job_id,
+                )
+                from adapters.manim_adapter import convert_dsl_to_manim
+
+                files = convert_dsl_to_manim(dsl)
+                used_deterministic = True
+        else:
+            from adapters.manim_adapter import convert_dsl_to_manim
+
+            files = convert_dsl_to_manim(dsl)
 
         issues = validate_script(files["main.py"])
+        if has_errors(issues) and not used_deterministic:
+            detail = "; ".join(
+                f"[{i['rule']}] {i['detail']}"
+                for i in issues
+                if i["severity"] == "error"
+            )
+            logger.warning(
+                "LLM Manim script failed static validation; using deterministic "
+                "compiler: job=%s issues=%s",
+                job_id,
+                detail,
+            )
+            debug_dir = export_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            (debug_dir / "llm-main.py").write_text(
+                files["main.py"], encoding="utf-8"
+            )
+            (debug_dir / "llm-validation-errors.json").write_text(
+                json.dumps(issues, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            from adapters.manim_adapter import convert_dsl_to_manim
+
+            files = convert_dsl_to_manim(dsl)
+            used_deterministic = True
+            issues = validate_script(files["main.py"])
+
         if has_errors(issues):
             detail = "; ".join(
                 f"[{i['rule']}] {i['detail']}"
                 for i in issues
                 if i["severity"] == "error"
             )
-            logger.warning("Manim 脚本校验发现问题: %s", detail)
+            raise RuntimeError(
+                f"Deterministic Manim compiler produced an invalid script: {detail}"
+            )
         elif issues:
             for i in issues:
                 logger.info("Manim 脚本校验 warn: [%s] %s", i["rule"], i["detail"])
@@ -382,6 +442,45 @@ async def _do_export_async(
         render_result = await _submit_and_wait_for_sandbox(
             export_dir, quality=quality, fps=fps
         )
+
+        # Creative LLM scripts may still hit runtime-only Manim API errors that
+        # static validation cannot prove. Fall back in the same attempt instead
+        # of re-running another expensive model request through job retry.
+        if (
+            render_result.get("status") != "completed"
+            and not used_deterministic
+        ):
+            logger.warning(
+                "LLM Manim render failed; using deterministic compiler: job=%s error_code=%s",
+                job_id,
+                render_result.get("error_code"),
+            )
+            debug_dir = export_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            _shutil.copy2(scripts_dir / "main.py", debug_dir / "llm-main.py")
+
+            from adapters.manim_adapter import convert_dsl_to_manim
+
+            files = convert_dsl_to_manim(dsl)
+            for src_name in ["main.py", "render_config.json", "subtitles.srt"]:
+                src = scripts_dir / src_name
+                src.write_text(files[src_name], encoding="utf-8")
+                _shutil.copy2(src, export_dir / src_name)
+
+            fallback_issues = validate_script(files["main.py"])
+            if has_errors(fallback_issues):
+                detail = "; ".join(
+                    f"[{issue['rule']}] {issue['detail']}"
+                    for issue in fallback_issues
+                    if issue["severity"] == "error"
+                )
+                raise RuntimeError(
+                    f"Deterministic Manim compiler produced an invalid script: {detail}"
+                )
+            render_result = await _submit_and_wait_for_sandbox(
+                export_dir, quality=quality, fps=fps
+            )
+            used_deterministic = True
 
         artifacts.append(
             {
@@ -425,7 +524,13 @@ async def _do_export_async(
                 )
             logger.info("导出完成: job=%s | artifacts=%d", job_id, len(artifacts))
         else:
-            retryable = render_result.get("retryable", True) is not False
+            # Repeating the exact deterministic compiler output cannot repair a
+            # script/API incompatibility. Infrastructure timeouts still raise
+            # above and retain the worker-level retry path.
+            retryable = (
+                render_result.get("retryable", True) is not False
+                and not used_deterministic
+            )
             error_code = str(render_result.get("error_code") or "render_failed")
             try:
                 persisted = await _update_db_export_status(

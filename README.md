@@ -130,6 +130,8 @@ chmod +x start.sh
 .\start.ps1 -Infra
 .\start.ps1 -Backend
 .\start.ps1 -Frontend
+.\start.ps1 -Video       # 基础设施 + 视频 Worker/沙箱 + queue 模式后端
+.\start.ps1 -All -Video  # 完整开发栈并启用视频制作
 .\start.ps1 -All
 ```
 
@@ -138,8 +140,15 @@ chmod +x start.sh
 ./start.sh infra
 ./start.sh backend
 ./start.sh frontend
+./start.sh video
+./start.sh all-video
 ./start.sh all
 ```
+
+常规 `-All` / `all` 保持视频执行关闭，避免开发 API 意外执行生成代码；需要联调视频时，
+使用 `-Video` / `video`。脚本会启动 `render-worker` 与无网络 `render-sandbox`，并仅对
+新启动的本地 API 设置 `MANIM_EXECUTION_MODE=queue` 和 MinIO 产物存储。若 8000 端口
+已有旧后端，请先在原后端终端按 `Ctrl+C`，再运行视频模式。
 
 ### 方式二：Docker Compose（完整应用容器化）
 
@@ -200,6 +209,10 @@ docker compose --profile video --profile observability up -d --build
 能力移除及 CPU/内存/PID 限制。Worker 对失败 attempt 执行带 jitter 的指数退避；
 沙箱运行期间还会检查每任务目录的总字节和文件数，超限或超时都会回收整个渲染进程组。
 当前仍是常驻沙箱而非每任务临时容器，更完整的恶意样本与压力验证仍属后续加固项。
+
+视频脚本默认使用 `MANIM_SCRIPT_MODE=deterministic`，直接把已校验的逐帧 DSL 编译为
+Manim，不增加模型调用。需要实验更自由的视觉编排时可设为 `llm`；LLM 调用或脚本渲染
+失败会在同一任务内自动降级到确定性编译，不再通过整任务重试重复消耗模型 Token。
 
 Compose 不再为数据库和 MinIO 提供隐式默认口令，启动前必须在 `.env` 设置
 `DB_PASSWORD`、`MINIO_USER`、`MINIO_PASSWORD`。数据库、Redis、API 与 MinIO 端口
@@ -300,8 +313,8 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端完整本地回归：**1051 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例）；无跳过测试。
-- 前端门禁：**41 files / 295 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
+- 后端完整本地回归：**1077 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例）；无跳过测试。
+- 前端门禁：**41 files / 297 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
 

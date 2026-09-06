@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # ── 项目 ──────────────────────────────────────────────
@@ -142,8 +143,17 @@ class Settings(BaseSettings):
     artifact_store_dir: Path = Path("data/artifacts")
     minio_endpoint: str = "localhost:9000"
     minio_public_endpoint: str = "localhost:9000"
-    minio_access_key: str = ""
-    minio_secret_key: str = ""
+    # Compose historically names these MINIO_USER / MINIO_PASSWORD while the
+    # application-facing names are MINIO_ACCESS_KEY / MINIO_SECRET_KEY. Accept
+    # both so a host-run API and container workers share one .env file.
+    minio_access_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MINIO_ACCESS_KEY", "MINIO_USER"),
+    )
+    minio_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MINIO_SECRET_KEY", "MINIO_PASSWORD"),
+    )
     minio_bucket: str = "eduflow-artifacts"
     minio_secure: bool = False
 
@@ -151,7 +161,11 @@ class Settings(BaseSettings):
     # 默认放到用户目录下，避免放在项目内触发 uvicorn --reload 重启
     export_dir: Path = Path.home() / ".eduflow" / "exports"
     manim_timeout_seconds: int = 600
+    # Host/API remains disabled by default; video startup explicitly selects queue.
     manim_execution_mode: Literal["disabled", "queue", "worker"] = "disabled"
+    # Deterministic compilation is the reliable/fast default. The optional LLM
+    # director always falls back to the same compiler before a job can fail.
+    manim_script_mode: Literal["deterministic", "llm"] = "deterministic"
     export_worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60)
     export_worker_heartbeat_seconds: float = Field(default=30.0, ge=1, le=300)
     export_worker_max_attempts: int = Field(default=3, ge=1, le=10)

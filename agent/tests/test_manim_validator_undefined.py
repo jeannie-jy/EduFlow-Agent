@@ -384,3 +384,34 @@ class DemoScene(Scene):
 """
         issues = validate_script(script)
         assert not any(i["rule"] == "unknown-scene-method" for i in issues)
+
+
+class TestLatexDependencyCheck:
+    """The credential-free render sandbox intentionally has no LaTeX packages."""
+
+    @pytest.mark.parametrize("constructor", ["MathTex", "Tex", "SingleStringMathTex"])
+    def test_latex_mobject_is_rejected_before_sandbox(self, constructor):
+        script = f"""
+from manim import *
+
+class DemoScene(Scene):
+    def construct(self):
+        self.add({constructor}(r"E=mc^2"))
+"""
+
+        issues = validate_script(script)
+
+        assert any(i["rule"] == "latex-dependency" for i in issues)
+
+    def test_unicode_text_formula_is_allowed(self):
+        script = """
+from manim import *
+
+class DemoScene(Scene):
+    def construct(self):
+        self.add(Text("E = mc²"))
+"""
+
+        issues = validate_script(script)
+
+        assert not any(i["rule"] == "latex-dependency" for i in issues)
