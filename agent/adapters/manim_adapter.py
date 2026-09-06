@@ -179,6 +179,10 @@ class ManimScriptGenerator:
             "",
             "from manim import *",
             "import json",
+            "",
+            '# The render image installs this family; selecting it explicitly avoids',
+            '# Pango choosing a Latin-only default and rendering CJK as tofu boxes.',
+            'EDUFLOW_CJK_FONT = "Noto Sans CJK SC"',
         ]
 
         # 收集需要的动画类
@@ -220,7 +224,9 @@ class ManimScriptGenerator:
         ]
 
         if not self.frames:
-            lines.append('        self.add(Text("No frames generated"))')
+            lines.append(
+                '        self.add(Text("No frames generated", font=EDUFLOW_CJK_FONT))'
+            )
             lines.append("        self.wait(1)")
             return "\n".join(lines)
 
@@ -249,7 +255,10 @@ class ManimScriptGenerator:
             if narration:
                 safe_narration = " ".join(str(narration).split())[:200]
                 lines.append(f'        # Narration: "{safe_narration}"')
-                lines.append(f"        subtitle = Text({safe_narration!r}, font_size=24, color=WHITE)")
+                lines.append(
+                    f"        subtitle = Text({safe_narration!r}, "
+                    "font=EDUFLOW_CJK_FONT, font_size=24, color=WHITE)"
+                )
                 lines.append("        subtitle.to_edge(DOWN)")
                 lines.append("        self.play(FadeIn(subtitle), run_time=0.5)")
                 lines.append("        self.wait(2)")
@@ -307,7 +316,8 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, font_size=20)"
+                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=20)"
                         f".next_to({var_name}, DOWN, buff=0.1)"
                     )
                     code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
@@ -322,7 +332,8 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, font_size=16)"
+                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, UP, buff=0.1)"
                     )
 
@@ -331,7 +342,8 @@ class ManimScriptGenerator:
                 headers = vo.get("headers", [])
                 code_lines.append(
                     f"        {var_name} = Table("
-                    f"[{headers!r}] + {rows_data!r}"
+                    f"[{headers!r}] + {rows_data!r}, element_to_mobject=Text, "
+                    "element_to_mobject_config={'font': EDUFLOW_CJK_FONT}"
                     f").scale(0.5).move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
 
@@ -340,7 +352,8 @@ class ManimScriptGenerator:
                 # 生产沙箱不安装 LaTeX，始终编译为 Unicode Text。
                 safe = _strip_latex(latex_raw)[:200]
                 code_lines.append(
-                    f"        {var_name} = Text({safe!r}, font_size=24, color=WHITE)"
+                    f"        {var_name} = Text({safe!r}, font=EDUFLOW_CJK_FONT, "
+                    "font_size=24, color=WHITE)"
                     f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
 
@@ -364,7 +377,8 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, font_size=16)"
+                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".move_to({var_name}.get_center())"
                     )
                     code_lines.append(f"        {var_name} = VGroup({var_name}, {var_name}_label)")
@@ -377,7 +391,8 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, font_size=16)"
+                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, DOWN)"
                     )
 

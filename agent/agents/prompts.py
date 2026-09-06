@@ -389,6 +389,7 @@ MANIM_CODER_SYSTEM_PROMPT = """你是一位资深的 Manim 动画导演。你的
 
 - Manim Community **v0.21.0**，Python 3.12
 - **LaTeX 未安装，禁止使用 `MathTex` / `Tex` / `TexTemplate`**。所有公式必须使用 `Text()` + Unicode 符号：α β γ δ → ← ↑ ↓ ⇒ ⇐ ≤ ≥ ≠ ≈ ± × · ∞ ∑ ∫ ∂ ∇ ∈ ⊆ ∪ ∩ ∧ ∨ ∀ ∃ ¬
+- 镜像内置中文字体 `Noto Sans CJK SC`。模块级定义 `CJK_FONT = "Noto Sans CJK SC"`，所有 `Text`、`Paragraph` 和表格文字必须显式使用该字体，避免中文渲染为方块
 
 ## 作用域规则（必须遵守，违反会导致 NameError）
 
@@ -402,17 +403,20 @@ MANIM_CODER_SYSTEM_PROMPT = """你是一位资深的 Manim 动画导演。你的
 ```python
 FONT_SIZE = 24            # ✅ 模块级常量，整个脚本可见
 ACCENT_COLOR = "#F4D03F"  # ✅ 模块级常量
+CJK_FONT = "Noto Sans CJK SC"
 
 def make_table(headers, rows, font_size=FONT_SIZE):  # ✅ 自包含：常量或参数
     ...
-    return Table(rows, col_labels=[Text(h, font_size=font_size) for h in headers])
+    return Table(rows, element_to_mobject=Text,
+                 element_to_mobject_config={"font": CJK_FONT},
+                 col_labels=[Text(h, font=CJK_FONT, font_size=font_size) for h in headers])
 
 class EduFlow_Scene(Scene):
     def construct(self):
         table = make_table(["Key", "Val"], [["A", "1"]])  # ✅ 不引用 construct 局部变量
 ```
 
-## Manim v0.20 API 参考
+## Manim v0.21 API 参考
 
 ### 基本形状
 ```python
@@ -426,15 +430,15 @@ Line(start=LEFT, end=RIGHT, color="#HEX", stroke_width=2)
 
 ### 文本
 ```python
-Text("内容", font_size=24, color="#HEX")  # 普通文本
-Text("内容", font_size=36, color=WHITE, weight=BOLD)  # 加粗标题
+Text("内容", font=CJK_FONT, font_size=24, color="#HEX")  # 普通文本
+Text("内容", font=CJK_FONT, font_size=36, color=WHITE, weight=BOLD)  # 加粗标题
 # 长文本自动换行：
-Text("长长长文本", font_size=22, color="#AAAAAA", width=12)
+Text("长长长文本", font=CJK_FONT, font_size=22, color="#AAAAAA", width=12)
 ```
 
 ### 代码块
 ```python
-# ⚠️ 必须用 code_string= 而不是 code= ！Manim v0.20 改了参数名
+# ⚠️ 必须用 code_string= 而不是 code= ！
 Code(code_string="for i in range(n):", language="python", tab_width=4,
      add_line_numbers=False, background="window")
 # ⚠️ Code 不接受任何 Text 样式参数：font / font_size / color / fill_color /
@@ -463,7 +467,9 @@ Code(code_string="for i in range(n):", language="python", tab_width=4,
 # 如果已经构造了 Text 等 Mobject，必须改用 MobjectTable。
 table = Table(
     [["A", "1"], ["B", "2"]],
-    col_labels=[Text("Key"), Text("Val")],
+    element_to_mobject=Text,
+    element_to_mobject_config={"font": CJK_FONT},
+    col_labels=[Text("Key", font=CJK_FONT), Text("Val", font=CJK_FONT)],
     include_outer_lines=True,
     line_config={"color": GREY_B, "stroke_width": 1}
 )
