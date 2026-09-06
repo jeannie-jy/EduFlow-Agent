@@ -24,6 +24,7 @@ httpx>=0.28.0
 
 # ── Infrastructure ────────────────────────────────────────
 redis>=5.2.0
+minio>=7.2.0
 
 # ── Video Rendering ───────────────────────────────────────
 # CI 环境不需要 Manim 视频渲染依赖，本地开发请用 requirements.txt
@@ -42,3 +43,4 @@ pytest-mock>=3.14.0
 httpx>=0.28.0
 faker>=30.0.0
 aiosqlite>=0.20.0
+ruff>=0.16.0
