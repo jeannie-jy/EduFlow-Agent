@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # ── 项目 ──────────────────────────────────────────────
     project_root: Path = Path(__file__).resolve().parent.parent
-    app_version: str = "0.8.0"  # 版本号唯一来源（/api/health 与 FastAPI version 同源）
+    app_version: str = "0.9.0"  # 版本号唯一来源（/api/health 与 FastAPI version 同源）
     log_level: str = "INFO"
     log_format: str = "text"  # text | json
 

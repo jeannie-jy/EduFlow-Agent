@@ -12,8 +12,8 @@
 ### 实施进度（2026-09-06）
 
 - Phase 0 已完成：前后端 CI、Python 3.12 锁文件、生命周期关闭、文档事实对齐；
-  前端 41 files / 295 tests 通过，后端 1037 passed / 6 skipped；剩余跳过项全部为本机
-  未安装 Manim 的真实渲染门控用例，历史无条件 skip 已清零。
+  前端 41 files / 295 tests 通过，后端 1051 passed（Python 3.12 虚拟环境，含真实 Manim
+  渲染用例），无跳过测试。
 - Phase 1 基础设施已完成：50 个核心案例、8 个注入案例、10 个检索案例，确定性
   grader、检索指标、在线 opt-in runner、Judge 契约、人工校准与回归比较器已落地。
   核心 50 例已通过一方 `live_workflow` 适配器接入生产 LangGraph，并提供凭据门控的手动 CI；
@@ -169,8 +169,8 @@ daemon、模型/Judge 凭据与成本授权、Manim 环境和人工评审后，�
 
 ### 2.2 经验证的工程基线
 
-- 后端最近一次完整离线基线为 **1037 passed / 6 skipped**；
-  真实 Manim 渲染和在线评测按标记单独运行。
+- 后端最近一次完整离线基线为 **1051 passed**；Python 3.12 虚拟环境中的真实 Manim
+  渲染用例已通过，在线评测仍按标记单独运行。
 - 前端最新结果为 **41 files / 295 tests 全绿**，TypeScript 与生产构建通过；
   Hook dependency 警告已清零，Lint 仍报告组件与共享导出同文件的既有 Fast Refresh 警告，
   未作为零警告宣称。

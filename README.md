@@ -94,47 +94,71 @@ EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语�
   - macOS: `brew install ffmpeg`
   - Linux: `apt install ffmpeg`
 
-### 方式一：一键启动脚本
+### 方式一：混合开发模式（推荐）
+
+此模式在 Docker 中运行 PostgreSQL、Redis 和 MinIO，在宿主机上以热更新方式运行
+FastAPI 与 Vite。启动脚本会等待 PostgreSQL 就绪，并在启动后端前自动检查/升级数据库迁移。
 
 **Windows PowerShell：**
+
 ```powershell
-# 1. 配置环境变量
-copy .env.example .env
+# 首次使用：配置环境变量并创建 Python 3.12 虚拟环境
+Copy-Item .env.example .env
+py -3.12 -m venv agent/.venv
 # 编辑 .env：替换数据库/MinIO 凭证，并填入 LLM 与 Embedding API Key
 
-# 2. 一键启动全部服务
+# 启动基础设施、后端和前端（不传参等价于 -All）
 .\start.ps1
 ```
 
 **Linux / macOS / Git Bash：**
-```bash
-# 1. 配置环境变量
-cp .env.example .env
-# 编辑 .env，填入 API Key
 
-# 2. 一键启动
+```bash
+# 首次使用：配置环境变量并创建 Python 3.12 虚拟环境
+cp .env.example .env
+python3.12 -m venv agent/.venv
+# 编辑 .env，替换数据库/MinIO 凭证并填入 API Key
+
 chmod +x start.sh
 ./start.sh
 ```
 
-也可以按模块启动：
+也可按模块启动。`Backend` 模式要求 PostgreSQL/Redis 已运行，`Frontend` 模式要求后端已运行：
+
+```powershell
+# Windows PowerShell
+.\start.ps1 -Infra
+.\start.ps1 -Backend
+.\start.ps1 -Frontend
+.\start.ps1 -All
+```
+
 ```bash
-./start.sh infra     # 仅启动 Docker 基础设施
-./start.sh backend   # 仅启动 FastAPI 后端
-./start.sh frontend  # 仅启动 Vite 前端
+# Linux / macOS / Git Bash
+./start.sh infra
+./start.sh backend
+./start.sh frontend
+./start.sh all
 ```
 
 ### 方式二：Docker Compose（完整应用容器化）
 
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env：必须替换 DB_PASSWORD、MINIO_USER 和 MINIO_PASSWORD，按需填入 API Key
+docker compose up -d --build
+```
+
+Linux / macOS 将第一行换为：
+
 ```bash
 cp .env.example .env
-# 编辑 .env 填入 API Key
-docker compose up -d
 ```
 
 启动后访问 `http://localhost:5173`。Web 通过同源 `/api` 反向代理后端。
 
-默认启动 7 个容器；启用视频导出时增加 2 个可选服务：
+默认启动 7 个容器；`video` profile 增加 2 个视频服务，`observability` profile
+增加 Prometheus 和 Grafana：
 
 | 服务 | 端口 | 说明 |
 |------|------|------|
@@ -152,8 +176,23 @@ docker compose up -d
 API 进程执行模型生成的 Python。需要视频导出时，显式设置 API 为排队模式并启用
 独立 Worker：
 
+```powershell
+# Windows PowerShell
+$env:MANIM_EXECUTION_MODE = "queue"
+docker compose --profile video up -d --build
+Remove-Item Env:MANIM_EXECUTION_MODE
+```
+
 ```bash
-MANIM_EXECUTION_MODE=queue docker compose --profile video up -d
+# Linux / macOS / Git Bash
+MANIM_EXECUTION_MODE=queue docker compose --profile video up -d --build
+```
+
+也可将 `MANIM_EXECUTION_MODE=queue` 写入 `.env`，再直接启动 profile。可观测与组合模式：
+
+```powershell
+docker compose --profile observability up -d
+docker compose --profile video --profile observability up -d --build
 ```
 
 准备器使用数据库 lease 保证任务可恢复，并把已校验脚本的 SHA-256 随请求写入共享任务目录；
@@ -166,7 +205,8 @@ Compose 不再为数据库和 MinIO 提供隐式默认口令，启动前必须�
 `DB_PASSWORD`、`MINIO_USER`、`MINIO_PASSWORD`。数据库、Redis、API 与 MinIO 端口
 默认只绑定回环地址，仅 Web 入口对外监听；后端镜像采用构建/运行双阶段并移除编译工具链。
 
-验证：
+验证（PowerShell 可将 `curl` 替换为 `Invoke-RestMethod -Uri`）：
+
 ```bash
 curl http://localhost:8000/api/health
 # → {"status":"ok","version":"0.9.0"}
@@ -174,39 +214,81 @@ curl http://localhost:8000/api/ready
 # → PostgreSQL、Redis、ArtifactStore 均可用时返回 {"status":"ready",...}
 ```
 
+日常停止使用 `docker compose down`，数据卷会被保留。`docker compose down -v`
+会删除 PostgreSQL、Redis 和 MinIO 数据，仅在明确需要重置本地环境时使用。
+
 专用测试环境可运行
 `python agent/scripts/compose_fault_smoke.py --services redis postgres minio`
 做真实依赖停服/恢复验收；仓库也提供手动 `Compose Fault Injection` CI 工作流。
 该脚本不触发付费模型调用，真实模型 Tool Calling 仍通过显式授权的 EduFlowBench
 online runner 验证。
 
-### 方式三：手动启动（开发模式）
+### 方式三：手动启动（分终端调试）
+
+以下命令均从仓库根目录开始执行。本地后端默认使用文件型
+`ArtifactStore`，因此常规开发只需启动 PostgreSQL 和 Redis：
+
+```powershell
+# Windows PowerShell：环境变量与基础设施
+Copy-Item .env.example .env
+docker compose up -d postgres redis
+
+# 终端 1：后端
+cd agent
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.lock.txt
+python -m scripts.adopt_legacy_database
+python -m scripts.adopt_legacy_database --apply
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# 终端 2（从仓库根目录开始）：前端
+cd web
+npm ci
+npm run dev
+```
 
 ```bash
-# 1. 环境变量
+# Linux / macOS / Git Bash：环境变量与基础设施
 cp .env.example .env
+docker compose up -d postgres redis
 
-# 2. 基础设施
-docker compose up -d postgres redis minio
-
-# 3. 后端（终端 1）
+# 终端 1：后端
 cd agent
-pip install -r requirements.lock.txt
-# Python 3.12 推荐（3.14 部分包无预编译 wheel）
-# Windows 用户注意：pycairo 可能需要手动下载 wheel
-# 下载地址: https://github.com/cgohlke/pycairo-build/releases
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 --reload-dir agents --reload-dir api --reload-dir adapters --reload-dir db --reload-dir generators --reload-dir plugins --reload-dir schema --reload-dir services --reload-dir tools --reload-dir alembic --reload-dir scripts --reload-dir main.py
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.lock.txt
+python -m scripts.adopt_legacy_database
+python -m scripts.adopt_legacy_database --apply
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# 4. 前端（终端 2）
+# 终端 2（从仓库根目录开始）：前端
 cd web
-npm install
+npm ci
 npm run dev
+```
+
+`adopt_legacy_database` 第一次调用仅做诊断，`--apply` 会创建空库结构、升级已由
+Alembic 管理的数据库，或在验证表结构兼容后安全接管旧版 `create_all` 数据库。
+
+如需在宿主机后端中联调 MinIO，额外启动 `minio` 服务，并在 `.env` 中配置：
+
+```dotenv
+ARTIFACT_STORE_BACKEND=minio
+MINIO_ENDPOINT=localhost:9000
+MINIO_PUBLIC_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=<与 MINIO_USER 一致>
+MINIO_SECRET_KEY=<与 MINIO_PASSWORD 一致>
+```
+
+```powershell
+docker compose up -d postgres redis minio
 ```
 
 打开浏览器访问：
 - **前端**: http://localhost:5173
 - **后端 API 文档**: http://localhost:8000/docs
-- **MinIO 控制台**: http://localhost:9001
+- **MinIO 控制台**（启用 MinIO 时）: http://localhost:9001
 
 ### 知识库初始化（可选）
 
@@ -218,7 +300,7 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端完整本地回归：**1037 passed / 6 skipped**；剩余 6 项均为需安装 Manim 的真实渲染用例，无无条件跳过测试。
+- 后端完整本地回归：**1051 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例）；无跳过测试。
 - 前端门禁：**41 files / 295 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
@@ -307,7 +389,12 @@ Docker 部署时 `agent-api` 启动前会自动执行 `alembic upgrade head`；�
 
 ```bash
 cd agent
-# 执行增量迁移（首次部署及已有数据库升级均必须）
+# 开发环境推荐入口：识别空库、正常 Alembic 库，以及旧版 create_all 遗留库
+# 默认只读检查；确认输出后加 --apply 执行安全接管/升级
+python -m scripts.adopt_legacy_database
+python -m scripts.adopt_legacy_database --apply
+
+# 已由 Alembic 管理的部署也可直接执行
 alembic upgrade head
 
 # 默认只读检查版本、活动快照和 Frames 投影一致性

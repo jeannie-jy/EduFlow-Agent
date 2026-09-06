@@ -223,7 +223,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-最近一次完整本地后端回归为 **1037 passed / 6 skipped**，剩余 6 项均为本机未安装 Manim 的真实渲染门控；无无条件跳过测试。前端最近一次为 **41 files / 295 tests**，TypeScript、生产构建和 Bundle Budget 通过。真实在线模型评测仍需显式授权，不计入这些离线数据。离线回归覆盖 Agent 节点、真实 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 验证。
+最近一次完整本地后端回归为 **1051 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例），无跳过测试。前端最近一次为 **41 files / 295 tests**，TypeScript、生产构建和 Bundle Budget 通过。真实在线模型评测仍需显式授权，不计入这些离线数据。离线回归覆盖 Agent 节点、真实 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 验证。
 
 ## 数据流
 

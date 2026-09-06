@@ -7,7 +7,7 @@
 
 | 证据 | 当前值 | 复验入口 |
 |---|---:|---|
-| 后端完整测试 | 1037 passed / 6 skipped | `python -m pytest agent/tests -q`；6 项均为缺少 Manim 的真实渲染门控 |
+| 后端完整测试 | 1051 passed | Python 3.12 虚拟环境运行 `python -m pytest agent/tests -q`；含真实 Manim 渲染用例，无 skip |
 | 前端测试 | 41 files / 295 tests | `cd web && npm run test` |
 | 核心质量案例 | 50 | `agent/evals/datasets/eduflowbench_v1.jsonl` |
 | Prompt Injection 案例 | 8 | `agent/evals/datasets/injection_cases.jsonl` |
@@ -38,7 +38,7 @@ Manim 双端渲染。
 - 构建受控多轮 Tool Calling Runtime，接入 3 个真实只读工具，以 Pydantic Schema、owner 二次鉴权、轮次/调用/并发/结果预算及持久化 Tool Trace 约束模型执行，并建设 16 个确定性与 8 个在线 Tool 案例。
 - 将 pgvector 多查询、RRF、上下文预算、来源引用和不可信内容隔离接入生成主链，建设含 50 个核心、10 个检索及 8 个注入案例的 EduFlowBench，并提供独立 Judge、成本闸门和匿名人工校准流程。
 - 设计 RenderScript DSL 与确定性 Guardrails，以状态不变量、锁帧、影响分析和范围合并约束模型输出；Frames 真源、不可变 ProjectVersion 与版本绑定导出支持局部重算及可追溯恢复。
-- 建设 LLM Gateway、PostgreSQL lease Worker、持久化 SSE 与无网络/无凭据执行沙箱，覆盖重试/熔断/fallback、Token/成本限制、审计归档和故障恢复；当前后端 1037 项、前端 295 项测试通过。
+- 建设 LLM Gateway、PostgreSQL lease Worker、持久化 SSE 与无网络/无凭据执行沙箱，覆盖重试/熔断/fallback、Token/成本限制、审计归档和故障恢复；当前后端 1051 项、前端 295 项测试通过。
 
 ## 面试陈述边界
 
