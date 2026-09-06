@@ -15,7 +15,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-_LONG_TEXT_FIELDS = {"code", "starter_code", "full_solution", "latex"}
+_SYNTAX_TEXT_FIELDS = {"code", "starter_code", "full_solution", "latex"}
 
 
 def _bounded_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -35,7 +35,7 @@ def _bounded_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
             elif node.get("type") == "string":
                 node.setdefault(
                     "maxLength",
-                    8000 if field_name in _LONG_TEXT_FIELDS else 1000,
+                    12000 if field_name in _SYNTAX_TEXT_FIELDS else 1000,
                 )
             properties = node.get("properties")
             if isinstance(properties, dict):
@@ -55,22 +55,34 @@ def _bounded_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return bounded
 
 
-def _bound_output_to_schema(value: Any, schema: dict[str, Any]) -> Any:
-    """Apply array/string limits even when a provider ignores prompt schema."""
+def _bound_output_to_schema(
+    value: Any,
+    schema: dict[str, Any],
+    field_name: str = "",
+) -> Any:
+    """Apply safe limits even when a provider ignores prompt schema.
+
+    Syntax-bearing strings must never be sliced after generation: truncating
+    source code or LaTeX creates a corrupt artifact that can still look
+    superficially non-empty. Their limits remain in the prompt/schema and the
+    owning generator must reject or replace an oversized invalid artifact.
+    """
     schema_type = schema.get("type")
     if schema_type == "string" and isinstance(value, str):
+        if field_name in _SYNTAX_TEXT_FIELDS:
+            return value
         return value[: int(schema.get("maxLength", len(value)))]
     if schema_type == "array" and isinstance(value, list):
         limit = int(schema.get("maxItems", len(value)))
         item_schema = schema.get("items", {})
         return [
-            _bound_output_to_schema(item, item_schema)
+            _bound_output_to_schema(item, item_schema, field_name)
             for item in value[:limit]
         ]
     if schema_type == "object" and isinstance(value, dict):
         properties = schema.get("properties", {})
         return {
-            key: _bound_output_to_schema(item, properties.get(key, {}))
+            key: _bound_output_to_schema(item, properties.get(key, {}), key)
             for key, item in value.items()
         }
     return value

@@ -6,7 +6,9 @@ LLM 生成完整的单文件 React 组件代码字符串，
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from .base import BaseGenerator
@@ -119,6 +121,10 @@ const InteractiveDemo = () => {
 
 ## 输出格式
 
+**资源预算：** `code` 总长度不得超过 9000 字符；步骤控制在 4～8 个，
+不要内联大段 CSS、SVG path 或重复保存每一步的完整数据。优先用数组 + map、
+纯函数和派生状态复用数据，以减少输出长度并提高加载速度。
+
 直接输出纯 JSX 代码字符串，以 `const InteractiveDemo = () => {` 开头，
 以 `};` 结尾。不要有任何前缀或后缀文字。
 """
@@ -126,10 +132,153 @@ const InteractiveDemo = () => {
 INTERACTIVE_DEMO_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "code": {"type": "string", "description": "完整的 React 组件 JSX 代码字符串"},
+        "code": {
+            "type": "string",
+            "maxLength": 12000,
+            "description": "完整且可编译的 React 组件 JSX 代码字符串",
+        },
     },
     "required": ["code"],
 }
+
+
+def _normalize_interactive_code(value: Any) -> str:
+    """Remove transport-only markdown fences without altering program text."""
+    if not isinstance(value, str):
+        return ""
+    code = value.strip()
+    if code.startswith("```"):
+        code = re.sub(r"^```(?:jsx|tsx|javascript|js)?\s*", "", code, count=1)
+        code = re.sub(r"\s*```$", "", code, count=1)
+    return code.strip()
+
+
+def _has_balanced_delimiters(source: str) -> bool:
+    """Cheap deterministic corruption check for generated JSX.
+
+    This is intentionally not a JavaScript parser, but it reliably catches the
+    dominant failure mode here: a response cut inside a string, expression,
+    array, or component body. The browser's Babel compiler remains the final
+    sandbox boundary.
+    """
+    pairs = {")": "(", "]": "[", "}": "{"}
+    stack: list[str] = []
+    quote = ""
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = 0
+    while index < len(source):
+        char = source[index]
+        nxt = source[index + 1] if index + 1 < len(source) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if char == "*" and nxt == "/":
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char == "/" and nxt == "/":
+            line_comment = True
+            index += 2
+            continue
+        if char == "/" and nxt == "*":
+            block_comment = True
+            index += 2
+            continue
+        if char in "'\"`":
+            quote = char
+        elif char in "([{":
+            stack.append(char)
+        elif char in ")]}":
+            if not stack or stack.pop() != pairs[char]:
+                return False
+        index += 1
+    return not stack and not quote and not block_comment
+
+
+def _fallback_interactive_code(context: dict[str, Any]) -> str:
+    """Build a compact, always-runnable stepper without another LLM call."""
+    topic = str(context.get("topic") or "课程主题")[:120]
+    concepts = [str(item)[:80] for item in context.get("concepts", [])[:8] if item]
+    outline = [str(item)[:100] for item in context.get("outline", [])[:8] if item]
+    objectives = [str(item)[:140] for item in context.get("objectives", [])[:6] if item]
+    titles = outline or objectives or concepts or ["概念导入", "关键过程", "总结"]
+    steps = [
+        {
+            "title": title,
+            "narration": (
+                objectives[index % len(objectives)]
+                if objectives
+                else f"观察并理解 {title}。"
+            ),
+        }
+        for index, title in enumerate(titles[:8])
+    ]
+    payload = json.dumps(
+        {"topic": topic, "concepts": concepts, "steps": steps},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return f"""const demoData = {payload};
+const InteractiveDemo = () => {{
+  const [step, setStep] = React.useState(0);
+  const current = demoData.steps[step];
+  const last = demoData.steps.length - 1;
+  const move = (next) => setStep(Math.max(0, Math.min(last, next)));
+  return (
+    <div className="eduflow-demo">
+      <header className="eduflow-demo__header">
+        <div><p className="eduflow-demo__eyebrow">交互案例 · 概念推演</p><h2>{{demoData.topic}}</h2></div>
+        <span className="eduflow-demo__mode">步骤 {{step + 1}} / {{demoData.steps.length}}</span>
+      </header>
+      <div className="eduflow-demo__stage">
+        <section className="eduflow-demo__visual">
+          <div role="list" style={{{{display:'flex',flexWrap:'wrap',gap:12,alignItems:'center',justifyContent:'center'}}}}>
+            {{(demoData.concepts.length ? demoData.concepts : demoData.steps.map(item => item.title)).map((item, index) => (
+              <div key={{item + index}} role="listitem" className={{`eduflow-demo__data-item ${{index === step ? 'is-active' : index < step ? 'is-complete' : ''}}`}} style={{{{padding:'16px 18px',minWidth:120,textAlign:'center'}}}}>
+                <span style={{{{fontFamily:'ui-monospace,monospace',fontWeight:700}}}}>{{item}}</span>
+              </div>
+            ))}}
+          </div>
+        </section>
+        <aside className="eduflow-demo__status">
+          <p className="eduflow-demo__eyebrow">实时状态</p><h3>{{current.title}}</h3>
+          <p>{{current.narration}}</p>
+          <p style={{{{marginTop:12}}}}>已完成 {{step}} 个步骤，剩余 {{last - step}} 个步骤。</p>
+        </aside>
+      </div>
+      <section className="eduflow-demo__explanation">
+        <div className="eduflow-demo__narration"><p className="eduflow-demo__eyebrow">当前步骤</p><p>{{current.narration}}</p></div>
+        <div className="eduflow-demo__controls">
+          <button className="eduflow-demo__button is-icon" aria-label="上一步" disabled={{step === 0}} onClick={{() => move(step - 1)}}>上一步</button>
+          <button className="eduflow-demo__button" onClick={{() => setStep(0)}}>重置</button>
+          <button className="eduflow-demo__button is-primary is-icon" aria-label="下一步" disabled={{step === last}} onClick={{() => move(step + 1)}}>下一步</button>
+        </div>
+      </section>
+      <section className="eduflow-demo__timeline">
+        <div className="eduflow-demo__timeline-header"><p className="eduflow-demo__eyebrow">推演进度</p><output>{{String(step + 1).padStart(2,'0')}} / {{String(demoData.steps.length).padStart(2,'0')}}</output></div>
+        <ol className="eduflow-demo__timeline-track">
+          {{demoData.steps.map((item, index) => <li key={{item.title + index}} className={{`eduflow-demo__timeline-item ${{index === step ? 'is-current' : index < step ? 'is-complete' : ''}}`}}><button onClick={{() => move(index)}}>{{index + 1}}</button><span>{{item.title}}</span></li>)}}
+        </ol>
+      </section>
+    </div>
+  );
+}};"""
 
 
 class InteractiveDemoGenerator(BaseGenerator):
@@ -146,7 +295,7 @@ class InteractiveDemoGenerator(BaseGenerator):
     priority = 10
     version = "1.0.0"
     temperature = 0.3
-    max_tokens = 16384
+    max_tokens = 8192
 
     @property
     def output_schema(self) -> dict[str, Any]:
@@ -165,6 +314,58 @@ class InteractiveDemoGenerator(BaseGenerator):
             "outline": [s.get("title", "") for s in teaching_plan.get("outline", [])],
         }
 
+    async def generate(
+        self,
+        teaching_plan: dict[str, Any],
+        knowledge_graph: dict[str, Any],
+        user_input: str,
+        constraints: dict[str, Any],
+        project_id: str,
+        existing_outputs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Generate one compact component, falling back locally when corrupt.
+
+        A malformed source artifact is never repaired by slicing or by another
+        paid model call. The deterministic fallback keeps the workbench usable
+        and makes latency bounded even when the provider ignores the contract.
+        """
+        context = self._build_context(
+            teaching_plan,
+            knowledge_graph,
+            user_input,
+            constraints,
+        )
+        try:
+            result = await self._call_llm(context)
+            normalized = {
+                **result,
+                "code": _normalize_interactive_code(result.get("code")),
+            }
+            blocking = [
+                issue for issue in self.validate(normalized)
+                if issue.get("severity") == "high"
+            ]
+            if not blocking:
+                normalized["generation_mode"] = "llm"
+                return normalized
+            reason = ",".join(str(issue.get("type")) for issue in blocking)
+            logger.warning(
+                "Interactive demo rejected; using deterministic fallback | reason=%s",
+                reason,
+            )
+        except Exception as exc:
+            reason = type(exc).__name__
+            logger.warning(
+                "Interactive demo generation unavailable; using deterministic fallback | error=%s",
+                reason,
+            )
+
+        return {
+            "code": _fallback_interactive_code(context),
+            "generation_mode": "deterministic_fallback",
+            "fallback_reason": reason,
+        }
+
     def validate(self, output):
         issues = super().validate(output)
         if any(i["severity"] == "high" and i["type"] == "schema_error" for i in issues):
@@ -180,6 +381,33 @@ class InteractiveDemoGenerator(BaseGenerator):
         if len(code) < 50:
             issues.append({"severity": "high", "type": "too_short", "description": f"代码过短 ({len(code)} 字符)"})
             return issues
+        if len(code) > 12000:
+            issues.append({
+                "severity": "high",
+                "type": "code_too_long",
+                "description": f"代码超过交互运行时预算 ({len(code)} > 12000 字符)",
+            })
+        if not re.search(r"\b(?:const|function)\s+InteractiveDemo\b", code):
+            issues.append({
+                "severity": "high",
+                "type": "missing_component",
+                "description": "缺少 InteractiveDemo 组件定义",
+            })
+        if "return" not in code or not _has_balanced_delimiters(code):
+            issues.append({
+                "severity": "high",
+                "type": "incomplete_code",
+                "description": "JSX 字符串、括号或组件主体不完整",
+            })
+        if re.search(
+            r"(?:\bimport\s|\brequire\s*\(|\bfetch\s*\(|XMLHttpRequest|localStorage)",
+            code,
+        ):
+            issues.append({
+                "severity": "high",
+                "type": "forbidden_runtime_api",
+                "description": "代码包含沙箱禁止的导入、网络或持久化 API",
+            })
         if code.strip().startswith("```"):
             issues.append({"severity": "low", "type": "markdown_wrapped", "description": "代码被 markdown 包裹，前端会自动剥离"})
         return issues
