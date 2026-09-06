@@ -313,7 +313,7 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端完整本地回归：**1077 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例）；无跳过测试。
+- 后端完整本地回归：**1078 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例）；无跳过测试。
 - 前端门禁：**41 files / 297 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
