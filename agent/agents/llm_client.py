@@ -10,9 +10,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
+import time
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -27,19 +29,45 @@ _llm_client_local = threading.local()
 _embedding_client_local = threading.local()
 
 
-def _get_llm_client() -> AsyncOpenAI:
+def _get_llm_client(provider: str = "primary") -> AsyncOpenAI:
     """获取当前线程的 LLM 客户端（每个线程首次调用时创建）。"""
-    client = getattr(_llm_client_local, "client", None)
+    attribute = "client" if provider == "primary" else "backup_client"
+    client = getattr(_llm_client_local, attribute, None)
     if client is None:
         import httpx
         settings = get_settings()
+        if provider == "backup":
+            if not _backup_available(settings):
+                raise RuntimeError("Backup LLM provider is not configured")
+            endpoint = settings.llm_backup_endpoint
+            api_key = settings.llm_backup_api_key
+        else:
+            endpoint = settings.llm_endpoint
+            api_key = settings.llm_api_key
         client = AsyncOpenAI(
-            base_url=settings.llm_endpoint,
-            api_key=settings.llm_api_key,
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            base_url=endpoint,
+            api_key=api_key,
+            timeout=httpx.Timeout(settings.llm_timeout_seconds, connect=10.0),
+            max_retries=0,
         )
-        _llm_client_local.client = client
+        setattr(_llm_client_local, attribute, client)
     return client
+
+
+def _backup_available(settings) -> bool:
+    return bool(
+        getattr(settings, "llm_backup_endpoint", "")
+        and getattr(settings, "llm_backup_model", "")
+        and getattr(settings, "llm_backup_api_key", "")
+    )
+
+
+def _routed_model(settings, explicit_model: str | None, routing_key: str | None) -> str:
+    if explicit_model:
+        return explicit_model
+    route = (routing_key or "").split(":", 1)[0]
+    configured = getattr(settings, f"llm_{route}_model", "") if route else ""
+    return configured or settings.llm_model
 
 
 def _get_embedding_client() -> AsyncOpenAI:
@@ -50,6 +78,8 @@ def _get_embedding_client() -> AsyncOpenAI:
         client = AsyncOpenAI(
             base_url=settings.embedding_endpoint,
             api_key=settings.embedding_api_key,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=0,
         )
         _embedding_client_local.client = client
     return client
@@ -79,7 +109,9 @@ async def call_llm(
     temperature: float = 0.3,
     max_tokens: int = 4096,
     model: str | None = None,
+    routing_key: str | None = None,
     disable_thinking: bool = False,
+    conversation: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """通用 LLM 调用封装。
 
@@ -98,15 +130,21 @@ async def call_llm(
         }
     """
     settings = get_settings()
-    client = _get_llm_client()
+    client = _get_llm_client("primary")
+    selected_model = _routed_model(settings, model, routing_key)
+    prompt_version = _prompt_fingerprint(system_prompt)
 
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    if conversation is None:
+        messages.append({"role": "user", "content": user_message})
+    else:
+        # The runtime, not the model, creates tool-result messages. Keep this
+        # explicit so a caller can continue a standards-compliant multi-turn
+        # OpenAI-compatible tool conversation.
+        messages.extend(conversation)
 
     kwargs: dict[str, Any] = dict(
-        model=model or settings.llm_model,
+        model=selected_model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -121,7 +159,25 @@ async def call_llm(
         # 长代码生成场景：thinking 模式耗尽 token 预算导致空内容/超时
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
-    response = await client.chat.completions.create(**kwargs)
+    request_started = time.perf_counter()
+    from services.llm_gateway import execute_llm_call_with_fallback
+
+    backup_client = _get_llm_client("backup") if _backup_available(settings) else None
+    backup_kwargs = {key: value for key, value in kwargs.items() if key != "extra_body"}
+    response, used_fallback = await execute_llm_call_with_fallback(
+        settings.llm_endpoint,
+        "chat",
+        lambda: client.chat.completions.create(**kwargs),
+        fallback_provider=settings.llm_backup_endpoint if backup_client else None,
+        fallback_call=(
+            lambda: backup_client.chat.completions.create(
+                **{**backup_kwargs, "model": settings.llm_backup_model}
+            )
+            if backup_client
+            else None
+        ),
+    )
+    duration_ms = (time.perf_counter() - request_started) * 1000
 
     if not response.choices:
         logger.warning("LLM returned empty choices")
@@ -143,9 +199,34 @@ async def call_llm(
                 "arguments": arguments,
             })
 
+    _log_usage(
+        response,
+        model=settings.llm_backup_model if used_fallback else kwargs["model"],
+        operation="chat",
+        duration_ms=duration_ms,
+        prompt_version=prompt_version,
+        endpoint=(
+            settings.llm_backup_endpoint if used_fallback else settings.llm_endpoint
+        ),
+    )
     return {
         "content": choice.message.content,
         "tool_calls": tool_calls,
+        "assistant_message": {
+            "role": "assistant",
+            "content": choice.message.content,
+            "tool_calls": [
+                {
+                    "id": item["id"],
+                    "type": "function",
+                    "function": {
+                        "name": item["name"],
+                        "arguments": json.dumps(item["arguments"], ensure_ascii=False),
+                    },
+                }
+                for item in tool_calls
+            ],
+        },
         # 诊断字段：空内容时靠 finish_reason/refusal 区分限流、内容过滤等
         "finish_reason": choice.finish_reason,
         "refusal": getattr(choice.message, "refusal", None),
@@ -164,6 +245,7 @@ async def call_llm_structured(
     temperature: float = 0.2,
     max_tokens: int = 8192,
     model: str | None = None,
+    routing_key: str | None = None,
 ) -> dict[str, Any]:
     """调用 LLM 并以结构化 JSON 格式输出。
 
@@ -171,7 +253,9 @@ async def call_llm_structured(
     DeepSeek 的 function calling 中文长文本场景格式不稳定。
     """
     settings = get_settings()
-    client = _get_llm_client()
+    client = _get_llm_client("primary")
+    selected_model = _routed_model(settings, model, routing_key)
+    backup_client = _get_llm_client("backup") if _backup_available(settings) else None
 
     schema_json = json.dumps(output_schema, ensure_ascii=False, indent=2)
 
@@ -182,6 +266,7 @@ async def call_llm_structured(
         + "严格按照以下 JSON Schema：\n"
         + schema_json
     )
+    prompt_version = _prompt_fingerprint(system_full)
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_full},
@@ -194,14 +279,30 @@ async def call_llm_structured(
     # 逐次加倍 max_tokens 直到成功解析或达到上限（最多 4 次尝试：初始 + 3 次加倍）
     current_max_tokens = max_tokens
     prev_max_tokens = 0
-    import httpx as _httpx
     for attempt in range(4):
-        response = await client.chat.completions.create(
-            model=model or settings.llm_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=current_max_tokens,
-            timeout=_httpx.Timeout(120.0),
+        request_started = time.perf_counter()
+        from services.llm_gateway import execute_llm_call_with_fallback
+
+        response, used_fallback = await execute_llm_call_with_fallback(
+            settings.llm_endpoint,
+            "structured",
+            lambda: client.chat.completions.create(
+                model=selected_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=current_max_tokens,
+            ),
+            fallback_provider=settings.llm_backup_endpoint if backup_client else None,
+            fallback_call=(
+                lambda: backup_client.chat.completions.create(
+                    model=settings.llm_backup_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=current_max_tokens,
+                )
+                if backup_client
+                else None
+            ),
         )
 
         if not response.choices:
@@ -218,7 +319,18 @@ async def call_llm_structured(
         result = _extract_and_parse_json(raw_text)
 
         if result is not None:
-            _log_usage(response)
+            _log_usage(
+                response,
+                model=settings.llm_backup_model if used_fallback else selected_model,
+                operation="structured",
+                duration_ms=(time.perf_counter() - request_started) * 1000,
+                prompt_version=prompt_version,
+                endpoint=(
+                    settings.llm_backup_endpoint
+                    if used_fallback
+                    else settings.llm_endpoint
+                ),
+            )
             return result
 
         # 检查是否因截断导致解析失败
@@ -240,10 +352,12 @@ async def call_llm_structured(
 
     # 解析失败 — 输出诊断
     _diagnose_json_error(raw_text)
-    logger.error("JSON 解析失败，原始内容(前 1000 字符): %s", raw_text[:1000])
-    raise RuntimeError(
-        f"Failed to parse structured LLM output: {raw_text[:200]}"
+    logger.error(
+        "JSON 解析失败 | output_chars=%d output_sha256=%s",
+        len(raw_text),
+        hashlib.sha256(raw_text.encode("utf-8", errors="replace")).hexdigest()[:16],
     )
+    raise RuntimeError("Failed to parse structured LLM output")
 
 
 def _extract_and_parse_json(text: str) -> dict[str, Any] | None:
@@ -393,7 +507,7 @@ def _fix_truncated_json(text: str) -> str:
 
 
 def _diagnose_json_error(text: str) -> None:
-    """诊断 JSON 解析错误，输出错误位置附近的上下文。"""
+    """Log parse coordinates without recording model-generated content."""
     import re
 
     # 提取有效 JSON 部分
@@ -417,34 +531,69 @@ def _diagnose_json_error(text: str) -> None:
             "JSON 解析错误: %s | line=%d col=%d pos=%d",
             e.msg, lineno, colno, pos,
         )
-        # 输出错误位置前后各 100 字符
-        ctx_start = max(0, pos - 100)
-        ctx_end = min(len(cleaned), pos + 100)
-        logger.error(
-            "JSON 错误上下文 [%d:%d]: ...%s[>>>HERE<<<]%s...",
-            ctx_start, ctx_end,
-            cleaned[ctx_start:pos], cleaned[pos:ctx_end],
-        )
 
 
-def _log_usage(response) -> None:
+def _log_usage(
+    response,
+    *,
+    model: str = "unknown",
+    operation: str = "unknown",
+    duration_ms: float = 0,
+    prompt_version: str = "unknown",
+    endpoint: str | None = None,
+) -> None:
     """记录 token 使用量。"""
     if response.usage:
+        from services.telemetry import record_llm_call, request_id_var
+
+        record_llm_call(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            duration_ms=duration_ms,
+            model=model,
+            operation=operation,
+            estimated_cost_usd=(
+                response.usage.prompt_tokens * get_settings().llm_input_cost_per_million
+                + response.usage.completion_tokens
+                * get_settings().llm_output_cost_per_million
+            )
+            / 1_000_000,
+            endpoint=endpoint,
+            prompt_version=prompt_version,
+        )
         logger.info(
-            "LLM token usage | prompt=%d | completion=%d | total=%d",
+            "LLM call | request_id=%s model=%s operation=%s prompt_version=%s duration_ms=%.1f "
+            "prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+            request_id_var.get(),
+            model,
+            operation,
+            prompt_version,
+            duration_ms,
             response.usage.prompt_tokens,
             response.usage.completion_tokens,
             response.usage.total_tokens,
         )
 
 
+def _prompt_fingerprint(prompt: str) -> str:
+    """Content-address prompts without logging their potentially sensitive text."""
+    return hashlib.sha256(prompt.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
 async def generate_embedding(text: str) -> list[float]:
     """生成文本的向量嵌入。"""
     client = _get_embedding_client()
 
-    response = await client.embeddings.create(
-        model=get_settings().embedding_model,
-        input=text,
+    settings = get_settings()
+    from services.llm_gateway import execute_llm_call
+
+    response = await execute_llm_call(
+        settings.embedding_endpoint,
+        "embedding",
+        lambda: client.embeddings.create(
+            model=settings.embedding_model,
+            input=text,
+        ),
     )
 
     if not response.data:

@@ -5,14 +5,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-
 from generators.registry import clear_registry, register_generator
-
+from httpx import ASGITransport, AsyncClient
 
 # ============================================================================
 # Mock Generator（用于注册表）
@@ -137,8 +135,8 @@ def _clean_registry():
 @pytest_asyncio.fixture
 async def client():
     """创建异步 HTTP 测试客户端（无真实 DB）。"""
+    from db.database import get_readonly_session, get_session
     from main import app
-    from db.database import get_session, get_readonly_session
 
     app.dependency_overrides[get_session] = lambda: _make_session(with_project=True)
     app.dependency_overrides[get_readonly_session] = lambda: _make_session(with_project=True)
@@ -267,6 +265,42 @@ class TestStartModuleGeneration:
         app.dependency_overrides[get_session] = lambda: _make_session(with_project=True)
 
 
+class TestModuleCostEstimate:
+    async def test_returns_unavailable_without_priced_history(self, client):
+        res = await client.post(
+            "/api/projects/00000000-0000-0000-0000-000000000001/generate/modules/cost-estimate",
+            json={"modules": ["cards", "mindmap"]},
+        )
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["available"] is False
+        assert body["estimated_cost_usd"] is None
+        assert body["method"] == "unavailable"
+        assert body["hard_limit_cost_usd"] > 0
+        assert body["hard_limit_tokens"] > 0
+
+    async def test_uses_median_historical_cost_per_module(self):
+        from api.generate import _estimate_module_cost
+
+        session = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [
+            MagicMock(attributes={"module_count": 2}, estimated_cost_usd=0.04),
+            MagicMock(attributes={"module_count": 1}, estimated_cost_usd=0.03),
+            MagicMock(attributes={"module_count": 4}, estimated_cost_usd=0.0),
+        ]
+        session.execute.return_value = result
+
+        estimate = await _estimate_module_cost(
+            session, "00000000-0000-0000-0000-000000000001", 3
+        )
+
+        assert estimate.available is True
+        assert estimate.sample_count == 2
+        assert estimate.estimated_cost_usd == pytest.approx(0.075)
+
+
 # ============================================================================
 # Tests: GET /modules/stream
 # ============================================================================
@@ -301,9 +335,14 @@ class TestModuleGenerationStream:
         ))
 
         app.dependency_overrides[get_session] = lambda: session
-        res = await client.get("/api/projects/00000000-0000-0000-0000-000000000001/generate/modules/stream")
+        async def module_stream(*args, **kwargs):
+            yield {"event": "done", "data": '{"phase":"done","pct":100}'}
+
+        with patch("api.generate.run_modules_stream", side_effect=module_stream) as run:
+            res = await client.get("/api/projects/00000000-0000-0000-0000-000000000001/generate/modules/stream")
         assert res.status_code == 200
         assert "text/event-stream" in res.headers.get("content-type", "")
+        assert run.call_args.args[2] == ["cards"]
         app.dependency_overrides.clear()
         app.dependency_overrides[get_session] = lambda: _make_session(with_project=True)
 

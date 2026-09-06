@@ -19,7 +19,6 @@ from .dsl import (
     RenderScript,
 )
 
-
 # ============================================================================
 # 项目
 # ============================================================================
@@ -132,6 +131,7 @@ class ParameterResponse(BaseModel):
     current_value: Any = None
     constraints: dict[str, Any] = Field(default_factory=dict)
     recompute_scope: str = "all_frames"
+    affects_frame_ids: list[str] = Field(default_factory=list)
 
 
 class ParameterListResponse(BaseModel):
@@ -142,6 +142,10 @@ class ParameterListResponse(BaseModel):
 class RecomputeRequest(BaseModel):
     """参数变更重算请求。"""
     changed_params: dict[str, Any] = Field(..., description="key → new_value 映射")
+    expected_impact_token: str | None = Field(
+        default=None,
+        description="预览返回的并发保护令牌；状态变化后执行会被拒绝",
+    )
 
 
 # ============================================================================
@@ -183,6 +187,17 @@ class ModuleInfo(BaseModel):
 class ModuleListResponse(BaseModel):
     """可用模块列表响应。"""
     modules: list[ModuleInfo] = Field(default_factory=list)
+
+
+class ModuleCostEstimateResponse(BaseModel):
+    """Historical module-run estimate; a workflow budget is never an estimate."""
+    available: bool
+    requested_module_count: int
+    estimated_cost_usd: float | None = None
+    sample_count: int = 0
+    method: Literal["historical_median_per_module", "unavailable"]
+    hard_limit_cost_usd: float
+    hard_limit_tokens: int
 
 
 class RegenerateRequest(BaseModel):
@@ -324,6 +339,7 @@ class FeedbackRequest(BaseModel):
 class FeedbackResponse(BaseModel):
     """提交反馈响应。"""
     id: str
+    reflection_job_id: str | None = None
 
 
 # ============================================================================

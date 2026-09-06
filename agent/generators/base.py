@@ -36,6 +36,8 @@ class BaseGenerator(ABC):
     category: str = "visual"
     priority: int = 5
     version: str = "1.0.0"
+    requires: tuple[str, ...] = ()
+    optional_requires: tuple[str, ...] = ()
 
     # ── LLM 生成参数（子类可覆写）─────────────────────────────
 
@@ -160,6 +162,7 @@ class BaseGenerator(ABC):
                 output_schema=self.output_schema,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                routing_key=f"module:{self.module_id}",
             )
             return result
         except Exception as exc:

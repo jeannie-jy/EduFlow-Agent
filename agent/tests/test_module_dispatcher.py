@@ -10,12 +10,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from generators.registry import clear_registry, register_generator
-
+from services.module_dispatcher import dispatch_modules
 
 # ============================================================================
 # Mock Generator（带可控行为）
@@ -185,6 +187,65 @@ class TestDispatchModulesBasic:
         last = events[-1]
         assert last["event"] == "done"
 
+    async def test_independent_modules_run_with_bounded_concurrency(self):
+        active = 0
+        peak = 0
+
+        class ConcurrentGen(_MockWorkingGen):
+            def __init__(self, module_id):
+                self.module_id = module_id
+
+            async def generate(self, **kwargs):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                await asyncio.sleep(0.02)
+                active -= 1
+                return {"status": "ok"}
+
+        for module_id in ("independent_a", "independent_b", "independent_c"):
+            register_generator(ConcurrentGen(module_id))
+        settings = MagicMock(module_generation_concurrency=2)
+        with patch("config.get_settings", return_value=settings):
+            events = [
+                event async for event in dispatch_modules(
+                    "test-proj-001",
+                    _make_minimal_state(),
+                    ["independent_a", "independent_b", "independent_c"],
+                )
+            ]
+        assert peak == 2
+        assert sum(event["event"] == "module_done" for event in events) == 3
+
+    async def test_required_module_runs_in_later_dag_wave(self):
+        call_order = []
+
+        class FramesGen(_MockWorkingGen):
+            module_id = "frames"
+
+            async def generate(self, **kwargs):
+                call_order.append("frames")
+                return {"frames": [{"frame_id": "f_001"}]}
+
+        class DependentGen(_MockWorkingGen):
+            module_id = "dependent"
+            requires = ("frames",)
+
+            async def generate(self, **kwargs):
+                assert "frames" in kwargs["existing_outputs"]
+                call_order.append("dependent")
+                return {"status": "ok"}
+
+        register_generator(FramesGen())
+        register_generator(DependentGen())
+        events = [
+            event async for event in dispatch_modules(
+                "test-proj-001", _make_minimal_state(), ["dependent"]
+            )
+        ]
+        assert call_order == ["frames", "dependent"]
+        assert json.loads(events[-1]["data"])["module_errors"] is None
+
 
 class TestDispatchModulesErrors:
     """测试错误处理。"""
@@ -210,6 +271,8 @@ class TestDispatchModulesErrors:
 
         error_data = json.loads(error_events[0]["data"])
         assert error_data["module_id"] == "mock_fail"
+        assert error_data["error"] == "模块生成失败，请稍后重试"
+        assert "Simulated generator failure" not in error_events[0]["data"]
 
     async def test_unknown_module_produces_error(self):
         from services.module_dispatcher import dispatch_modules
@@ -289,9 +352,17 @@ class TestDispatchModulesWithKnowledge:
         state.pop("knowledge_graph", None)
         state.pop("key_terms", None)
 
-        events = []
-        async for evt in dispatch_modules("test-proj-001", state, ["mock_ok"]):
-            events.append(evt)
+        knowledge_result = {
+            "knowledge_graph": {"concepts": [{"id": "c1", "name": "test"}]},
+            "key_terms": ["test"],
+        }
+        with patch(
+            "agents.nodes.knowledge_node",
+            new=AsyncMock(return_value=knowledge_result),
+        ) as mock_knowledge:
+            events = []
+            async for evt in dispatch_modules("test-proj-001", state, ["mock_ok"]):
+                events.append(evt)
 
         # 应该有一个 knowledge phase 的 progress 事件
         knowledge_events = []
@@ -303,16 +374,61 @@ class TestDispatchModulesWithKnowledge:
                     knowledge_events.append(e)
                     break  # 只记录第一个
 
-        # knowledge_node 可能实际调用 LLM 或失败，这里只验证调度器尝试了
+        mock_knowledge.assert_awaited_once()
+        assert knowledge_events
 
 
 class TestDispatchModulesPersist:
     """测试持久化逻辑（mock DB）。"""
 
-    @pytest.mark.skip(reason="DB session mock requires full SQLAlchemy async context — tested via integration tests")
-    async def test_dispatch_persists_on_success(self):
-        pass
+    project_id = "00000000-0000-0000-0000-000000000021"
 
-    @pytest.mark.skip(reason="DB session mock requires full SQLAlchemy async context — tested via integration tests")
-    async def test_dispatch_handles_persist_failure_gracefully(self):
-        pass
+    async def test_dispatch_persists_on_success(self):
+        register_generator(_MockWorkingGen())
+        project = MagicMock(dsl_snapshot={})
+        session = MagicMock()
+        session.get = AsyncMock(return_value=project)
+        session.commit = AsyncMock()
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=session)
+        context.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("db.database.async_session_factory", return_value=context),
+            patch("api.versions.save_version", new=AsyncMock()) as save_version,
+        ):
+            events = [
+                event
+                async for event in dispatch_modules(
+                    self.project_id,
+                    _make_minimal_state(project_id=self.project_id),
+                    ["mock_ok"],
+                )
+            ]
+
+        assert project.status == "done"
+        assert project.dsl_snapshot["module_outputs"]["mock_ok"]["data"] == "test output"
+        save_version.assert_awaited_once()
+        session.commit.assert_awaited_once()
+        assert events[-1]["event"] == "done"
+
+    async def test_dispatch_handles_persist_failure_gracefully(self, caplog):
+        register_generator(_MockWorkingGen())
+
+        with patch(
+            "db.database.async_session_factory",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            events = [
+                event
+                async for event in dispatch_modules(
+                    self.project_id,
+                    _make_minimal_state(project_id=self.project_id),
+                    ["mock_ok"],
+                )
+            ]
+
+        assert events[-1]["event"] == "done"
+        payload = json.loads(events[-1]["data"])
+        assert payload["module_outputs"]["mock_ok"]["data"] == "test output"
+        assert "模块产出持久化失败" in caplog.text

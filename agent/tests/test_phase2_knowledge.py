@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import AsyncMock, patch
 
 
 class TestKnowledgeAgentPrompt:
@@ -28,9 +29,10 @@ class TestKnowledgeNodeOutputSchema:
 
     def test_schema_has_required_fields(self):
         """schema 定义了 concepts/edges/key_terms 必填。"""
-        from agents.nodes import knowledge_node
         # 检查节点里的 output_schema
         import inspect
+
+        from agents.nodes import knowledge_node
         source = inspect.getsource(knowledge_node)
         assert "concepts" in source
         assert "edges" in source
@@ -40,6 +42,7 @@ class TestKnowledgeNodeOutputSchema:
     def test_concept_schema_includes_id_name_type(self):
         """concept 必须包含 id, name, type。"""
         import inspect
+
         from agents.nodes import knowledge_node
         source = inspect.getsource(knowledge_node)
         assert '"id"' in source
@@ -49,6 +52,7 @@ class TestKnowledgeNodeOutputSchema:
     def test_edge_schema_includes_source_target_relation(self):
         """edge 必须包含 source, target, relation。"""
         import inspect
+
         from agents.nodes import knowledge_node
         source = inspect.getsource(knowledge_node)
         assert '"source"' in source
@@ -104,7 +108,6 @@ class TestKnowledgeNodeFallback:
 class TestGraphKnowledgeTopology:
     """验证 LangGraph 图中 Knowledge 节点的拓扑位置。"""
 
-    @pytest.mark.skipif(True, reason="langgraph 未安装，跳过图拓扑测试")
     def test_knowledge_node_exists(self):
         """图中应包含 'knowledge' 节点。"""
         from agents.graph import build_graph
@@ -112,31 +115,26 @@ class TestGraphKnowledgeTopology:
         nodes = graph.get_graph().nodes
         assert "knowledge" in nodes, f"knowledge node missing from graph nodes: {list(nodes.keys())}"
 
-    @pytest.mark.skipif(True, reason="langgraph 未安装")
     def test_planner_to_knowledge_edge(self):
         """Planner → Knowledge 边应存在。"""
         from agents.graph import build_graph
         graph = build_graph()
         # 检查编译后的图结构
         edges = graph.get_graph().edges
-        # edges 是一个 dict，key 是源节点，value 是目标节点集合
-        assert "planner" in edges, "planner should have outgoing edges"
-        targets = list(edges["planner"])
-        assert "knowledge" in targets or any(
-            "knowledge" in str(t) for t in targets
-        ), f"planner should connect to knowledge, got: {targets}"
+        assert any(
+            edge.source == "planner" and edge.target == "knowledge"
+            for edge in edges
+        ), f"planner should connect to knowledge, got: {edges}"
 
-    @pytest.mark.skipif(True, reason="langgraph 未安装")
     def test_knowledge_to_coder_edge(self):
         """Knowledge → Coder 边应存在。"""
         from agents.graph import build_graph
         graph = build_graph()
         edges = graph.get_graph().edges
-        assert "knowledge" in edges, "knowledge should have outgoing edges"
-        targets = list(edges["knowledge"])
-        assert "coder" in targets or any(
-            "coder" in str(t) for t in targets
-        ), f"knowledge should connect to coder, got: {targets}"
+        assert any(
+            edge.source == "knowledge" and edge.target == "coder"
+            for edge in edges
+        ), f"knowledge should connect to coder, got: {edges}"
 
 
 class TestQualityAgentUpgrade:
@@ -145,6 +143,7 @@ class TestQualityAgentUpgrade:
     def test_quality_node_includes_llm_scoring(self):
         """quality_node 应包含 LLM 六维度评分逻辑。"""
         import inspect
+
         from agents.nodes import quality_node
         source = inspect.getsource(quality_node)
         # Phase 2 应有 LLM 评分调用的证据
@@ -157,6 +156,7 @@ class TestQualityAgentUpgrade:
     def test_quality_node_layer3_condition(self):
         """Layer 3 (LLM 评分) 仅在 frames 非空时执行。"""
         import inspect
+
         from agents.nodes import quality_node
         source = inspect.getsource(quality_node)
         assert "if frames:" in source, "LLM scoring should be conditional on frames"

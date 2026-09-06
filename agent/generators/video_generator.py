@@ -44,6 +44,7 @@ class VideoGenerator(BaseGenerator):
     category = "export"
     priority = 5
     version = "1.0.0"
+    requires = ("frames",)
 
     temperature = 0.3
     max_tokens = 16384
@@ -81,11 +82,15 @@ class VideoGenerator(BaseGenerator):
                 from db.database import async_session_factory
                 from db.models import Project as ProjectModel
                 from api.deps import parse_project_id
-                from services.project_persistence import resolve_export_dsl
+                from services.project_persistence import load_canonical_project_dsl
 
                 async with async_session_factory() as db_session:
                     project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                    dsl = resolve_export_dsl(project.dsl_snapshot) if project else None
+                    dsl = (
+                        await load_canonical_project_dsl(project, db_session)
+                        if project
+                        else None
+                    )
             except Exception:
                 pass
 

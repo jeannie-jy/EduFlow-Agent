@@ -10,33 +10,201 @@ GET    /api/projects/{id}/generate/modules/stream 模块生成 SSE 流
 
 from __future__ import annotations
 
+import json
 import logging
+import statistics
 import uuid
-
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
-from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from sse_starlette.sse import EventSourceResponse
+from typing import Annotated
+from urllib.parse import urlencode
 
 from db.database import get_session
-from services.generate_service import run_generation_stream, resume_generation_stream, run_regenerate_stream
-from services.module_dispatcher import dispatch_modules
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from generators.registry import get_generator, list_generators
 from schema.project import (
     ApprovePlanRequest,
     ApprovePlanResponse,
     GenerateRequest,
+    ModuleCostEstimateResponse,
     ModuleInfo,
     ModuleListResponse,
     ModuleSelectRequest,
     RegenerateRequest,
     RejectPlanRequest,
 )
+from services.generate_service import (
+    resume_generation_stream,
+    run_generation_stream,
+    run_modules_stream,
+    run_regenerate_stream,
+    with_sse_metadata,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+
+from .auth import get_current_user, require_editor
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/projects", tags=["generate"])
+router = APIRouter(
+    prefix="/projects",
+    tags=["generate"],
+    dependencies=[Depends(require_editor)],
+)
+
+
+async def _estimate_module_cost(
+    session: AsyncSession, project_id: str, requested_count: int
+) -> ModuleCostEstimateResponse:
+    """Estimate from recent successful, non-zero module-node traces."""
+    from config import get_settings
+    from db.models import WorkflowNodeRun, WorkflowRun
+    from sqlalchemy import select
+
+    rows = (
+        await session.execute(
+            select(WorkflowNodeRun)
+            .join(WorkflowRun, WorkflowNodeRun.workflow_run_id == WorkflowRun.id)
+            .where(
+                WorkflowRun.project_id == parse_project_id(project_id),
+                WorkflowNodeRun.node_name == "modules",
+                WorkflowNodeRun.status == "succeeded",
+            )
+            .order_by(WorkflowNodeRun.started_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    unit_costs: list[float] = []
+    for row in rows:
+        attributes = row.attributes if isinstance(row.attributes, dict) else {}
+        module_count = attributes.get("module_count")
+        cost = float(row.estimated_cost_usd or 0)
+        if isinstance(module_count, int) and module_count > 0 and cost > 0:
+            unit_costs.append(cost / module_count)
+
+    settings = get_settings()
+    estimate = (
+        round(statistics.median(unit_costs) * requested_count, 8)
+        if unit_costs
+        else None
+    )
+    return ModuleCostEstimateResponse(
+        available=estimate is not None,
+        requested_module_count=requested_count,
+        estimated_cost_usd=estimate,
+        sample_count=len(unit_costs),
+        method="historical_median_per_module" if unit_costs else "unavailable",
+        hard_limit_cost_usd=settings.llm_request_max_cost_usd,
+        hard_limit_tokens=settings.llm_request_max_tokens,
+    )
+
+
+def _active_stream_url(project_id: str, stream_id: str, kind: str) -> str | None:
+    query = urlencode({"stream_id": stream_id})
+    if kind == "generation":
+        path = "generate/stream"
+    elif kind == "modules":
+        path = "generate/modules/stream"
+    elif kind == "regenerate":
+        path = "generate/regenerate/stream"
+    elif kind.startswith("module:"):
+        module_id = kind.removeprefix("module:")
+        if not module_id or "/" in module_id or "\\" in module_id:
+            return None
+        path = f"generate/module/{module_id}/stream"
+    else:
+        # Reject/resume URLs may contain teacher feedback. They are deliberately
+        # not reconstructed or exposed by discovery.
+        return None
+    return f"/api/projects/{project_id}/{path}?{query}"
+
+
+@router.get("/{project_id}/generate/active-stream")
+async def get_active_stream(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object | None]:
+    """Discover the latest replayable project stream without leaking its payload."""
+    from db.models import SSEStream
+    from sqlalchemy import select
+
+    parsed_project_id = parse_project_id(project_id)
+    rows = (
+        await session.scalars(
+            select(SSEStream)
+            .where(
+                SSEStream.project_id == parsed_project_id,
+                SSEStream.status == "active",
+            )
+            .order_by(SSEStream.created_at.desc())
+            .limit(20)
+        )
+    ).all()
+    for stream in rows:
+        stream_url = _active_stream_url(project_id, str(stream.id), stream.kind)
+        if stream_url is not None:
+            return {
+                "stream_url": stream_url,
+                "stream_id": str(stream.id),
+                "kind": stream.kind,
+                "last_event_id": stream.last_event_id,
+                "created_at": stream.created_at,
+            }
+    return {"stream_url": None}
+
+
+async def _instrument_sse(source):
+    from services.telemetry import (
+        record_sse_connection_closed,
+        record_sse_connection_started,
+    )
+
+    record_sse_connection_started()
+    outcome = "disconnected"
+    try:
+        async for event in source:
+            if event.get("event") in {"done", "error", "waiting_approval"}:
+                outcome = str(event["event"])
+            yield event
+    except Exception:
+        outcome = "error"
+        raise
+    finally:
+        record_sse_connection_closed(outcome)
+
+
+def _last_event_id(request: Request) -> int:
+    raw = request.headers.get("last-event-id", "0")
+    try:
+        return max(int(raw), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resume_capable_stream(
+    source, request: Request, *, project_id: str, kind: str, stream_id: str | None
+):
+    if stream_id:
+        try:
+            uuid.UUID(stream_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="Invalid SSE stream ID"
+            ) from exc
+        from services.sse_ledger import durable_sse_stream
+
+        return _instrument_sse(
+            durable_sse_stream(
+                source,
+                stream_id=stream_id,
+                project_id=project_id,
+                kind=kind,
+                last_event_id=_last_event_id(request),
+            )
+        )
+    return _instrument_sse(
+        with_sse_metadata(source, last_event_id=_last_event_id(request))
+    )
 
 
 @router.post("/{project_id}/generate", status_code=202)
@@ -53,13 +221,6 @@ async def start_generation(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 获取输入内容
-    input_content = ""
-    constraints = {}
-    if project.dsl_snapshot:
-        input_content = project.dsl_snapshot.get("input_content", "")
-        constraints = project.dsl_snapshot.get("constraints", {})
-
     # 更新状态；记录本次生成模式供 GET stream 读取（stream 无 body）
     project.status = "planning"
     snap = dict(project.dsl_snapshot or {})
@@ -70,8 +231,9 @@ async def start_generation(
 
     logger.info("生成启动: project=%s | action=%s", project_id, body.action)
 
+    stream_id = str(uuid.uuid4())
     return {
-        "stream_url": f"/api/projects/{project_id}/generate/stream",
+        "stream_url": f"/api/projects/{project_id}/generate/stream?stream_id={stream_id}"
     }
 
 
@@ -80,6 +242,8 @@ async def generation_stream(
     project_id: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+    stream_id: str | None = None,
 ):
     """SSE 流式推送生成进度。"""
     from db.models import Project as ProjectModel
@@ -92,28 +256,47 @@ async def generation_stream(
     input_content = ""
     constraints = {}
     action = "full"
+    selected_modules: list[str] = []
     if project.dsl_snapshot:
         input_content = project.dsl_snapshot.get("input_content", project.title)
         constraints = project.dsl_snapshot.get("constraints", {})
         action = project.dsl_snapshot.get("_pending_action", "full")
+        selected_modules = project.dsl_snapshot.get("_pending_modules", [])
 
-    # file_upload 素材接线：载入已上传素材的解析文本供 Planner 使用
+    # Generation consumes the persisted parse result. Parsing belongs to the
+    # material endpoint/worker boundary and must not block an SSE request.
     materials: list[dict] = []
-    material_ids = constraints.get("material_ids", []) if isinstance(constraints, dict) else []
+    material_ids = (
+        constraints.get("material_ids", []) if isinstance(constraints, dict) else []
+    )
     if material_ids:
-        from api.materials import parse_material_file
-        for mid in material_ids:
+        from db.models import Material
+        from sqlalchemy import select
+
+        parsed_ids = []
+        for material_id in material_ids:
             try:
-                parsed = parse_material_file(str(mid))
-            except Exception as exc:
-                logger.warning("素材解析失败 material=%s: %s", mid, exc)
-                parsed = None
+                parsed_ids.append(uuid.UUID(str(material_id)))
+            except ValueError:
+                continue
+        query = select(Material).where(Material.id.in_(parsed_ids))
+        if project.owner_id:
+            query = query.where(Material.owner_id == uuid.UUID(project.owner_id))
+        rows = await session.scalars(query)
+        by_id = {str(material.id): material for material in rows.all()}
+        for mid in material_ids:
+            record = by_id.get(str(mid))
+            parsed = record.parsed_result if record is not None else None
             if parsed and parsed.get("raw_text"):
-                materials.append({
-                    "material_id": str(mid),
-                    "content_text": parsed["raw_text"],
-                    "topics": parsed.get("topics", []),
-                })
+                materials.append(
+                    {
+                        "material_id": str(mid),
+                        "content_text": parsed["raw_text"],
+                        "topics": parsed.get("topics", []),
+                    }
+                )
+            elif record is not None:
+                logger.info("跳过未解析素材: material=%s", mid)
         logger.info("生成载入素材: project=%s | count=%d", project_id, len(materials))
 
     async def event_generator():
@@ -123,13 +306,24 @@ async def generation_stream(
             action=action,
             constraints=constraints,
             materials=materials,
+            selected_modules=selected_modules,
+            actor_id=str(current_user.id) if current_user is not None else None,
+            actor_role=current_user.role if current_user is not None else None,
         ):
             # 检查客户端是否断开
             if await request.is_disconnected():
                 break
             yield sse_chunk
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        _resume_capable_stream(
+            event_generator(),
+            request,
+            project_id=project_id,
+            kind="generation",
+            stream_id=stream_id,
+        )
+    )
 
 
 @router.get("/{project_id}/generate/resume/stream")
@@ -139,6 +333,7 @@ async def generation_resume_stream(
     decision: str = "approve",
     feedback: str = "",
     session: AsyncSession = Depends(get_session),
+    stream_id: str | None = None,
 ):
     """从 HITL 中断点恢复生成流程的 SSE 流。
 
@@ -164,7 +359,15 @@ async def generation_resume_stream(
                 break
             yield sse_chunk
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        _resume_capable_stream(
+            event_generator(),
+            request,
+            project_id=project_id,
+            kind="resume",
+            stream_id=stream_id,
+        )
+    )
 
 
 @router.post("/{project_id}/regenerate", status_code=202)
@@ -186,10 +389,30 @@ async def regenerate_frames(
 
     scope = body.scope
 
-    logger.info("重生成: project=%s | scope=%s", project_id, scope.get("type", "unknown"))
+    from services.regeneration import normalize_regeneration_scope
 
+    try:
+        scope = normalize_regeneration_scope(scope)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Invalid regeneration scope"
+        ) from exc
+
+    logger.info(
+        "重生成: project=%s | scope=%s", project_id, scope.get("type", "unknown")
+    )
+
+    stream_id = str(uuid.uuid4())
     return {
-        "stream_url": f"/api/projects/{project_id}/generate/regenerate/stream",
+        "stream_url": (
+            f"/api/projects/{project_id}/generate/regenerate/stream?"
+            + urlencode(
+                {
+                    "scope": json.dumps(scope, separators=(",", ":")),
+                    "stream_id": stream_id,
+                }
+            )
+        ),
     }
 
 
@@ -198,6 +421,9 @@ async def regenerate_stream(
     project_id: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+    scope_json: Annotated[str | None, Query(alias="scope", max_length=4000)] = None,
+    stream_id: str | None = None,
 ):
     """局部重生成的 SSE 进度流（跳过 Planner+Knowledge，直接到 Coder）。"""
     from db.models import Project as ProjectModel
@@ -206,16 +432,37 @@ async def regenerate_stream(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    from services.regeneration import normalize_regeneration_scope
+
+    try:
+        scope = normalize_regeneration_scope(
+            json.loads(scope_json) if scope_json else {"type": "all_frames"}
+        )
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=422, detail="Invalid regeneration scope"
+        ) from exc
+
     async def event_generator():
         async for sse_chunk in run_regenerate_stream(
             project_id=project_id,
-            scope={"type": "from_frame"},
+            scope=scope,
+            actor_id=str(current_user.id) if current_user is not None else None,
+            actor_role=current_user.role if current_user is not None else None,
         ):
             if await request.is_disconnected():
                 break
             yield sse_chunk
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        _resume_capable_stream(
+            event_generator(),
+            request,
+            project_id=project_id,
+            kind="regenerate",
+            stream_id=stream_id,
+        )
+    )
 
 
 @router.post("/{project_id}/generate/approve", status_code=200)
@@ -246,8 +493,12 @@ async def approve_plan(
 
     logger.info("教学计划已批准: project=%s modules=%s", project_id, body.modules)
 
+    stream_id = str(uuid.uuid4())
     return ApprovePlanResponse(
-        stream_url=f"/api/projects/{project_id}/generate/resume/stream?decision=approve",
+        stream_url=(
+            f"/api/projects/{project_id}/generate/resume/stream?"
+            + urlencode({"decision": "approve", "stream_id": stream_id})
+        )
     )
 
 
@@ -275,14 +526,18 @@ async def reject_plan(
         project.dsl_snapshot = snap
     project.status = "draft"
 
-    logger.info("教学计划被拒绝: project=%s | feedback=%s", project_id, body.feedback[:100])
+    logger.info(
+        "教学计划被拒绝: project=%s | feedback=%s", project_id, body.feedback[:100]
+    )
 
     # 连接 resume 流注入拒绝决定，让图正常消费中断点后结束
     from urllib.parse import quote
+
+    stream_id = str(uuid.uuid4())
     return ApprovePlanResponse(
         stream_url=(
             f"/api/projects/{project_id}/generate/resume/stream"
-            f"?decision=reject&feedback={quote(body.feedback)}"
+            f"?decision=reject&feedback={quote(body.feedback)}&stream_id={stream_id}"
         ),
     )
 
@@ -304,21 +559,50 @@ async def list_available_modules(
     """
     modules = []
     for gen in list_generators():
-        modules.append(ModuleInfo(
-            module_id=gen.module_id,
-            display_name=gen.display_name,
-            description=gen.description,
-            icon=gen.icon,
-            category=gen.category,
-            priority=gen.priority,
-            estimated_seconds=30,  # 默认预估，各模块可覆写
-        ))
+        modules.append(
+            ModuleInfo(
+                module_id=gen.module_id,
+                display_name=gen.display_name,
+                description=gen.description,
+                icon=gen.icon,
+                category=gen.category,
+                priority=gen.priority,
+                estimated_seconds=30,  # 默认预估，各模块可覆写
+            )
+        )
 
     # 按优先级排序
     modules.sort(key=lambda m: m.priority)
 
     logger.info("可用模块列表: project=%s count=%d", project_id, len(modules))
     return ModuleListResponse(modules=modules)
+
+
+@router.post(
+    "/{project_id}/generate/modules/cost-estimate",
+    response_model=ModuleCostEstimateResponse,
+)
+async def estimate_module_generation_cost(
+    project_id: str,
+    body: ModuleSelectRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ModuleCostEstimateResponse:
+    """Return a non-binding estimate derived only from priced historical traces."""
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    unknown = [module_id for module_id in body.modules if get_generator(module_id) is None]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown module(s): {', '.join(unknown)}",
+        )
+    scheduled_modules = set(body.modules)
+    if get_generator("frames") is not None:
+        scheduled_modules.add("frames")
+    return await _estimate_module_cost(session, project_id, len(scheduled_modules))
 
 
 @router.post("/{project_id}/generate/modules", status_code=202)
@@ -354,8 +638,9 @@ async def start_module_generation(
 
     logger.info("模块生成启动: project=%s modules=%s", project_id, body.modules)
 
+    stream_id = str(uuid.uuid4())
     return {
-        "stream_url": f"/api/projects/{project_id}/generate/modules/stream",
+        "stream_url": f"/api/projects/{project_id}/generate/modules/stream?stream_id={stream_id}",
         "modules": body.modules,
     }
 
@@ -365,14 +650,15 @@ async def module_generation_stream(
     project_id: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    stream_id: str | None = None,
 ):
     """SSE 流式推送多模块生成进度。
 
     从 DB 读取已审批的 teaching_plan + 选中的模块列表，
     通过 ModuleDispatcher 调度生成。
     """
-    from db.models import Project as ProjectModel
     from agents.state import AgentState
+    from db.models import Project as ProjectModel
 
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
@@ -399,16 +685,20 @@ async def module_generation_stream(
     }
 
     async def event_generator():
-        async for sse_chunk in dispatch_modules(
-            project_id=project_id,
-            state=state,
-            selected_modules=selected_modules,
-        ):
+        async for sse_chunk in run_modules_stream(project_id, state, selected_modules):
             if await request.is_disconnected():
                 break
             yield sse_chunk
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        _resume_capable_stream(
+            event_generator(),
+            request,
+            project_id=project_id,
+            kind="modules",
+            stream_id=stream_id,
+        )
+    )
 
 
 # ============================================================================
@@ -422,11 +712,11 @@ async def single_module_stream(
     module_id: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    stream_id: str | None = None,
 ):
     """SSE 流式推送单个模块的重新生成进度。"""
-    from db.models import Project as ProjectModel
     from agents.state import AgentState
-    from services.module_dispatcher import dispatch_modules
+    from db.models import Project as ProjectModel
 
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
@@ -450,7 +740,17 @@ async def single_module_stream(
     }
 
     async def event_generator():
-        async for chunk in dispatch_modules(project_id, state, [module_id]):
+        async for chunk in run_modules_stream(project_id, state, [module_id]):
+            if await request.is_disconnected():
+                break
             yield chunk
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        _resume_capable_stream(
+            event_generator(),
+            request,
+            project_id=project_id,
+            kind=f"module:{module_id}",
+            stream_id=stream_id,
+        )
+    )

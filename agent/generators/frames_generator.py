@@ -92,11 +92,35 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                     "animations": {"type": "array"},
                     "interaction_hooks": {"type": "array"},
                     "checks": {"type": "array"},
+                    "depends_on_parameters": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                 },
                 "required": ["frame_id", "title", "narration", "visual_objects", "state_snapshot"],
             },
         },
-        "parameters": {"type": "array"},
+        "parameters": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "label": {"type": "string"},
+                    "param_type": {"type": "string"},
+                    "default_value": {},
+                    "current_value": {},
+                    "constraints": {"type": "object"},
+                    "visibility": {"type": "string"},
+                    "recompute_scope": {"type": "string"},
+                    "affects_frame_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["key", "label", "param_type", "recompute_scope"],
+            },
+        },
     },
     "required": ["frames"],
 }

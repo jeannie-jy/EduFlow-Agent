@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from agents.llm_client import (
     generate_embedding,
     create_llm_client,
     create_embedding_client,
+    _routed_model,
 )
 
 
@@ -85,6 +87,17 @@ class TestClientSingleton:
         settings = get_settings()
         c = _get_embedding_client()
         assert settings.embedding_endpoint in str(c.base_url)
+
+    def test_node_model_routing_prefers_explicit_then_route_then_default(self):
+        settings = MagicMock(
+            llm_model="default-model",
+            llm_coder_model="coder-model",
+            llm_module_model="module-model",
+        )
+        assert _routed_model(settings, "explicit-model", "coder") == "explicit-model"
+        assert _routed_model(settings, None, "coder") == "coder-model"
+        assert _routed_model(settings, None, "module:frames") == "module-model"
+        assert _routed_model(settings, None, None) == "default-model"
 
 
 # ============================================================================
@@ -497,6 +510,30 @@ class TestCallLLMStructured:
         call_kwargs = mock_llm_client.chat.completions.create.call_args
         if call_kwargs and call_kwargs[1]:
             assert call_kwargs[1].get("temperature") == 0.2
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_does_not_log_or_raise_model_content(
+        self, mock_llm_client, caplog
+    ):
+        secret_content = '{"lesson": TOP-SECRET-PROMPT}'
+        response = MagicMock()
+        choice = MagicMock()
+        choice.message.content = secret_content
+        choice.message.tool_calls = None
+        choice.finish_reason = "stop"
+        response.choices = [choice]
+        response.usage = None
+        mock_llm_client.chat.completions.create.return_value = response
+
+        with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError) as exc:
+            await call_llm_structured(
+                system_prompt="助手",
+                user_message="测试",
+                output_schema={"type": "object"},
+            )
+
+        assert "TOP-SECRET-PROMPT" not in caplog.text
+        assert "TOP-SECRET-PROMPT" not in str(exc.value)
 
 
 # ============================================================================

@@ -467,6 +467,46 @@ class TestCoderNode:
         for field in required_top_level:
             assert field in dsl, f"DSL missing top-level field: {field}"
 
+    @pytest.mark.asyncio
+    async def test_scoped_regeneration_only_replaces_requested_unlocked_frame(self):
+        """Coder prompt and deterministic merge must honor the regeneration boundary."""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_dsl()
+        original_frames = state["dsl"]["frames"]
+        state["regenerate_scope"] = {
+            "type": "single_frame",
+            "frame_ids": ["f_002"],
+        }
+        state["locked_frame_ids"] = ["f_001"]
+        generated = {
+            "frames": [
+                {
+                    "frame_id": "f_002",
+                    "title": "重新生成的第二帧",
+                    "narration": "replacement",
+                    "visual_objects": [],
+                    "state_snapshot": {},
+                }
+            ],
+            "parameters": [{"key": "must_not_replace"}],
+            "assets": [{"id": "must_not_replace"}],
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = generated
+            result = await coder_node(state)
+
+        prompt = mock_llm.call_args.kwargs["user_message"]
+        assert '"frame_id": "f_002"' in prompt
+        assert '"frame_id": "f_001"' not in prompt
+        assert "<active_parameters" in prompt
+        assert result["dsl"]["frames"][0] == original_frames[0]
+        assert result["dsl"]["frames"][1]["frame_id"] == "f_002"
+        assert result["dsl"]["frames"][1]["title"] == "重新生成的第二帧"
+        assert result["dsl"]["parameters"] == state["dsl"]["parameters"]
+        assert result["dsl"]["assets"] == state["dsl"]["assets"]
+
 
 # ============================================================================
 # Quality Node
@@ -797,6 +837,30 @@ class TestReflectionNode:
         history = result["revision_history"]
         assert len(history) == 2
         assert history[1]["reflection_round"] == state["reflection_count"] + 1
+
+    @pytest.mark.asyncio
+    async def test_reflection_prompt_carries_feedback_as_untrusted_data(self):
+        from agents.nodes import reflection_node
+
+        state = AgentStateFactory.with_quality_report()
+        state["user_feedback"] = {
+            "type": "correction",
+            "frame_id": "f_002",
+            "content": "第二步方向相反",
+        }
+        state["locked_frame_ids"] = ["f_001"]
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "revision_summary": "no-op",
+                "updated_frames": [],
+                "inserted_frames": [],
+            }
+            await reflection_node(state)
+
+        prompt = mock_llm.call_args.kwargs["user_message"]
+        assert "第二步方向相反" in prompt
+        assert "untrusted task data" in prompt
+        assert "f_001" in prompt
 
 
 # ============================================================================

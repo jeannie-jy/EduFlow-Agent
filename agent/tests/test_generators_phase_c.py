@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ============================================================================
 # Setup
 # ============================================================================
@@ -17,7 +16,7 @@ import pytest
 
 def _ensure_registered():
     """确保所有 6 个生成器已注册（绕过 import 缓存）。"""
-    from generators.registry import register_generator, has_generator
+    from generators.registry import has_generator, register_generator
 
     # 直接实例化 + 注册，避免 reload 的不确定性
     if not has_generator("quiz"):
@@ -42,8 +41,12 @@ def _ensure_registered():
 
 @pytest.fixture(autouse=True)
 def _setup():
+    from generators.registry import clear_registry
+
+    clear_registry()
     _ensure_registered()
     yield
+    clear_registry()
 
 
 @pytest.fixture
@@ -555,34 +558,28 @@ class TestDispatcherPhaseC:
 
 
 class TestPhaseCIntegration:
-    """Phase C 集成验证（在隔离或显式指定时运行）。
+    """Phase C 集成验证；fixture 为每个用例隔离全局 Registry。"""
 
-    注：在全量 suite 中因与其他测试模块的 registry autouse fixture
-    存在执行顺序冲突，建议单独运行本文件或通过 -k 筛选。
-    """
-
-    @pytest.mark.skip(reason="与其他测试模块的 registry 清理 fixture 有顺序依赖，单独运行本文件时通过")
     def test_quiz_and_comparison_registered(self):
-        from generators.registry import register_generator, list_generators
-        from generators.quiz_generator import QuizGenerator
-        from generators.comparison_generator import ComparisonGenerator
-        from generators.mindmap_generator import MindmapGenerator
         from generators.card_generator import CardGenerator
+        from generators.comparison_generator import ComparisonGenerator
         from generators.frames_generator import FramesGenerator
+        from generators.mindmap_generator import MindmapGenerator
+        from generators.quiz_generator import QuizGenerator
+        from generators.registry import list_generators, register_generator
         from generators.video_generator import VideoGenerator
         for cls in (MindmapGenerator, CardGenerator, FramesGenerator, VideoGenerator, QuizGenerator, ComparisonGenerator):
             register_generator(cls())
         ids = {g.module_id for g in list_generators()}
         assert ids == {"mindmap", "cards", "quiz", "frames", "video", "comparison"}
 
-    @pytest.mark.skip(reason="与其他测试模块的 registry 清理 fixture 有顺序依赖，单独运行本文件时通过")
     def test_all_metadata_valid(self):
-        from generators.registry import register_generator, list_generators
-        from generators.quiz_generator import QuizGenerator
-        from generators.comparison_generator import ComparisonGenerator
-        from generators.mindmap_generator import MindmapGenerator
         from generators.card_generator import CardGenerator
+        from generators.comparison_generator import ComparisonGenerator
         from generators.frames_generator import FramesGenerator
+        from generators.mindmap_generator import MindmapGenerator
+        from generators.quiz_generator import QuizGenerator
+        from generators.registry import list_generators, register_generator
         from generators.video_generator import VideoGenerator
         for cls in (MindmapGenerator, CardGenerator, FramesGenerator, VideoGenerator, QuizGenerator, ComparisonGenerator):
             register_generator(cls())

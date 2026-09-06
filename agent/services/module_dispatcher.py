@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from agents.state import AgentState
 
@@ -22,6 +24,8 @@ async def dispatch_modules(
     project_id: str,
     state: AgentState,
     selected_modules: list[str],
+    *,
+    persist_result: bool = True,
 ) -> AsyncGenerator[dict[str, str], None]:
     """调度选中模块的生成流程，以 SSE 事件格式 yield 进度。
 
@@ -42,6 +46,7 @@ async def dispatch_modules(
 
     module_outputs: dict[str, Any] = {}
     module_errors: dict[str, str] = {}
+    module_dependencies: dict[str, list[str]] = {}
     # 通用逐帧 DSL 是所有主题（包括用户自定义算法）的基础交互产物。
     # API 调用方即使没有显式选择，也自动补充；注册检查保留单元测试和
     # 可裁剪部署中不加载 frames generator 的兼容性。
@@ -72,11 +77,11 @@ async def dispatch_modules(
                     "pct": 10,
                     "knowledge_graph": kg,
                 })
-            except Exception as exc:
+            except Exception:
                 logger.exception("Knowledge Node 失败，使用空知识图谱继续")
                 yield _sse("progress", {
                     "phase": "knowledge",
-                    "message": f"知识图谱构建失败，部分模块可能降级生成（缺少知识上下文）",
+                    "message": "知识图谱构建失败，部分模块可能降级生成（缺少知识上下文）",
                     "pct": 10,
                 })
 
@@ -86,6 +91,7 @@ async def dispatch_modules(
         user_input = state.get("user_input", "")
         constraints = state.get("constraints", {})
 
+        generators = {}
         for idx, mod_id in enumerate(selected_modules):
             gen = get_generator(mod_id)
             if gen is None:
@@ -96,106 +102,163 @@ async def dispatch_modules(
                     "error": f"未知模块: {mod_id}",
                     "pct": _pct_for_index(idx, total),
                 })
-                continue
+            else:
+                generators[mod_id] = gen
+        module_dependencies = {
+            mod_id: list(getattr(generator, "requires", ()))
+            for mod_id, generator in generators.items()
+        }
 
-            # 模块开始
-            base_pct = _pct_for_index(idx, total)
-            yield _sse("module_start", {
-                "module_id": mod_id,
-                "display_name": gen.display_name,
-                "message": f"正在生成 {gen.display_name}...",
-                "pct": base_pct,
-            })
+        from config import get_settings
 
-            try:
-                output = await gen.generate(
+        semaphore = asyncio.Semaphore(get_settings().module_generation_concurrency)
+        pending = list(generators)
+        finished = len(module_errors)
+        while pending:
+            blocked = [
+                mod_id for mod_id in pending
+                if any(
+                    dependency in module_errors or dependency not in generators
+                    for dependency in getattr(generators[mod_id], "requires", ())
+                )
+            ]
+            for mod_id in blocked:
+                dependencies = list(getattr(generators[mod_id], "requires", ()))
+                error = f"依赖模块未成功: {', '.join(dependencies)}"
+                module_errors[mod_id] = error
+                pending.remove(mod_id)
+                finished += 1
+                yield _sse("module_error", {
+                    "module_id": mod_id,
+                    "display_name": generators[mod_id].display_name,
+                    "error": error,
+                    "pct": _pct_for_index(finished, total),
+                })
+
+            ready = [
+                mod_id for mod_id in pending
+                if set(getattr(generators[mod_id], "requires", ())) <= set(module_outputs)
+            ]
+            if not ready and pending:
+                for mod_id in list(pending):
+                    error = "模块依赖存在循环，无法调度"
+                    module_errors[mod_id] = error
+                    pending.remove(mod_id)
+                    finished += 1
+                    yield _sse("module_error", {
+                        "module_id": mod_id,
+                        "display_name": generators[mod_id].display_name,
+                        "error": error,
+                        "pct": _pct_for_index(finished, total),
+                    })
+                break
+
+            existing_outputs = dict(module_outputs)
+            for mod_id in ready:
+                yield _sse("module_start", {
+                    "module_id": mod_id,
+                    "display_name": generators[mod_id].display_name,
+                    "message": f"正在生成 {generators[mod_id].display_name}...",
+                    "pct": _pct_for_index(finished, total),
+                })
+
+            results = await asyncio.gather(*(
+                _run_module(
+                    mod_id,
+                    generators[mod_id],
+                    semaphore=semaphore,
                     teaching_plan=teaching_plan,
                     knowledge_graph=kg or {},
                     user_input=user_input,
                     constraints=constraints,
                     project_id=project_id,
-                    existing_outputs=module_outputs,
+                    existing_outputs=existing_outputs,
+                )
+                for mod_id in ready
+            ))
+            for mod_id, output, issues, error in results:
+                pending.remove(mod_id)
+                finished += 1
+                gen = generators[mod_id]
+                if error is not None:
+                    module_errors[mod_id] = error
+                    yield _sse("module_error", {
+                        "module_id": mod_id,
+                        "display_name": gen.display_name,
+                        "error": error,
+                        "pct": _pct_for_index(finished, total),
+                    })
+                else:
+                    module_outputs[mod_id] = output
+                    yield _sse("module_done", {
+                        "module_id": mod_id,
+                        "display_name": gen.display_name,
+                        "output": output,
+                        "issues": issues or None,
+                        "pct": _pct_for_index(finished, total),
+                    })
+                    logger.info("Module '%s' 生成完成", mod_id)
+
+        # Direct callers retain compatibility. The canonical LangGraph node
+        # disables this branch so graph finalization remains the sole writer.
+        if persist_result:
+            try:
+                from api.deps import parse_project_id
+                from api.versions import save_version
+                from db.database import async_session_factory
+                from db.models import Project as ProjectModel
+
+                from services.project_persistence import (
+                    merge_dsl_snapshot,
+                    persist_frames_to_table,
                 )
 
-                # 校验（severity 语义：high=阻断性错误 / medium=警告 / low=提示）
-                issues = gen.validate(output)
-                if issues:
-                    errors_only = [i for i in issues if i.get("severity") == "high"]
-                    warnings_only = [i for i in issues if i.get("severity") != "high"]
-                    if errors_only:
-                        logger.warning("Module '%s' 校验发现 %d 个 high 级问题: %s",
-                                       mod_id, len(errors_only),
-                                       "; ".join(i.get("description", "")[:60] for i in errors_only))
-                    if warnings_only:
-                        logger.info("Module '%s' 校验发现 %d 个警告/提示", mod_id, len(warnings_only))
-
-                module_outputs[mod_id] = output
-                yield _sse("module_done", {
-                    "module_id": mod_id,
-                    "display_name": gen.display_name,
-                    "output": output,
-                    "issues": issues if issues else None,
-                    "pct": _pct_for_index(idx + 1, total),
-                })
-                logger.info("Module '%s' 生成完成", mod_id)
-
-            except Exception as exc:
-                logger.exception("Module '%s' 生成失败", mod_id)
-                module_errors[mod_id] = str(exc)[:500]
-                yield _sse("module_error", {
-                    "module_id": mod_id,
-                    "display_name": gen.display_name,
-                    "error": str(exc)[:500],
-                    "pct": _pct_for_index(idx, total),
-                })
-
-        # ── 3. 持久化 ─────────────────────────────────────────────
-        try:
-            from db.database import async_session_factory
-            from db.models import Project as ProjectModel
-            from services.project_persistence import (
-                merge_dsl_snapshot,
-                persist_frames_to_table,
-            )
-            from api.deps import parse_project_id
-
-            async with async_session_factory() as db_session:
-                project = await db_session.get(ProjectModel, parse_project_id(project_id))
-                if project is not None:
-                    # frames 模块产出的是完整 DSL 对象 → 提升到快照顶层，
-                    # 与 generate_service 全量流一致（导出 API 从顶层读 frames）
-                    frames_out = module_outputs.get("frames")
-                    frames_dsl = (
-                        frames_out
-                        if isinstance(frames_out, dict) and frames_out.get("frames")
-                        else None
+                async with async_session_factory() as db_session:
+                    project = await db_session.get(
+                        ProjectModel, parse_project_id(project_id)
                     )
-                    project.dsl_snapshot = merge_dsl_snapshot(
-                        project.dsl_snapshot,
-                        frames_dsl,  # 无 frames 产出时为 None，仅更新 module_outputs 等
-                        teaching_plan=teaching_plan,
-                        module_outputs=module_outputs,
-                        module_errors=module_errors,
-                        knowledge_graph=kg,
-                        selected_modules=selected_modules,
-                    )
-                    # frames 模块产出同步写入 frames 表（与 generate_service 路径一致，
-                    # 消除「模块流不落表 → frames API 双真源」问题）
-                    if frames_dsl is not None:
-                        await persist_frames_to_table(
-                            project_id, frames_dsl.get("frames", []), db_session
+                    if project is not None:
+                        # frames 模块产出的是完整 DSL 对象 → 提升到快照顶层，
+                        # 与 generate_service 全量流一致（导出 API 从顶层读 frames）
+                        frames_out = module_outputs.get("frames")
+                        frames_dsl = (
+                            frames_out
+                            if isinstance(frames_out, dict) and frames_out.get("frames")
+                            else None
                         )
-                    # 状态机：有产出 → done；全部失败 → failed；均无 → 维持原状态
-                    if module_outputs:
-                        project.status = "done"
-                    elif module_errors:
-                        project.status = "failed"
-                    await db_session.commit()
-                    logger.info("模块产出已持久化: project=%s modules=%s errors=%s",
-                                project_id, list(module_outputs.keys()),
-                                list(module_errors.keys()) if module_errors else [])
-        except Exception as perr:
-            logger.warning("模块产出持久化失败: %s", perr)
+                        project.dsl_snapshot = merge_dsl_snapshot(
+                            project.dsl_snapshot,
+                            frames_dsl,
+                            teaching_plan=teaching_plan,
+                            module_outputs=module_outputs,
+                            module_errors=module_errors,
+                            knowledge_graph=kg,
+                            selected_modules=selected_modules,
+                            module_dependencies=module_dependencies,
+                        )
+                        if frames_dsl is not None:
+                            await persist_frames_to_table(
+                                project_id, frames_dsl.get("frames", []), db_session
+                            )
+                        if module_outputs:
+                            await save_version(
+                                project_id,
+                                project.dsl_snapshot,
+                                "模块产物生成",
+                                db_session,
+                            )
+                            project.status = "done"
+                        elif module_errors:
+                            project.status = "failed"
+                        await db_session.commit()
+                        logger.info(
+                            "模块产出已持久化: project=%s modules=%s errors=%s",
+                            project_id,
+                            list(module_outputs.keys()),
+                            list(module_errors.keys()) if module_errors else [],
+                        )
+            except Exception as perr:
+                logger.warning("模块产出持久化失败: %s", perr)
 
     except Exception:
         logger.exception("dispatch_modules 未处理异常")
@@ -206,12 +269,29 @@ async def dispatch_modules(
             "pct": 100,
             "module_outputs": module_outputs,
             "module_errors": module_errors if module_errors else None,
+            "module_dependencies": module_dependencies,
             "message": f"已完成 {len(module_outputs)}/{total} 个模块生成"
                 + (f"，{len(module_errors)} 个失败" if module_errors else ""),
         })
 
 
 # ── Helpers ─────────────────────────────────────────────────────
+
+
+async def _run_module(mod_id: str, gen, *, semaphore: asyncio.Semaphore, **kwargs):
+    try:
+        async with semaphore:
+            output = await gen.generate(**kwargs)
+        issues = gen.validate(output)
+        blocking = [issue for issue in issues if issue.get("severity") == "high"]
+        if blocking:
+            logger.warning("Module '%s' has %d blocking validation issues", mod_id, len(blocking))
+        return mod_id, output, issues, None
+    except Exception:
+        logger.exception("Module '%s' 生成失败", mod_id)
+        from services.redaction import public_failure_message
+
+        return mod_id, None, [], public_failure_message("module")
 
 
 def _sse(event: str, data: dict[str, Any]) -> dict[str, str]:

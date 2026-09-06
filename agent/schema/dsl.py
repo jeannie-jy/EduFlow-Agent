@@ -443,6 +443,7 @@ class Frame(BaseModel):
     animations: list[Animation] = Field(default_factory=list)
     interaction_hooks: list[InteractionHook] = Field(default_factory=list)
     checks: list[Check] = Field(default_factory=list)
+    depends_on_parameters: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="allow")
 
@@ -500,6 +501,7 @@ class Parameter(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     visibility: Literal["student", "teacher"] = "student"
     recompute_scope: Literal["local", "all_frames"] = "all_frames"
+    affects_frame_ids: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="allow")
 

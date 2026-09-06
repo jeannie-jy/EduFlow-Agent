@@ -10,12 +10,12 @@
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from generators.registry import clear_registry, register_generator
-
 
 # ============================================================================
 # 1. manim_llm_adapter — visual_objects 字段白名单
@@ -209,12 +209,16 @@ class TestDispatchFailurePersistence:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("db.database.async_session_factory", return_value=mock_cm):
+        with (
+            patch("db.database.async_session_factory", return_value=mock_cm),
+            patch("api.versions.save_version", new=AsyncMock()) as save_version,
+        ):
             async for _ in dispatch_modules(PROJECT_ID, _make_state(), ["always_ok"]):
                 pass
 
         assert mock_project.status == "done"
         assert "module_outputs" in mock_project.dsl_snapshot
+        save_version.assert_awaited_once()
 
 
 # ============================================================================
@@ -255,15 +259,15 @@ class TestGeneratorValidateMalformed:
     async def test_malformed_input_no_crash(self, module_id, output, expected_issue_type):
         import importlib
 
-        from generators.registry import get_generator
+        import generators.card_generator
+        import generators.comparison_generator
+        import generators.frames_generator
+        import generators.interactive_demo_generator
 
         # autouse fixture 在每个测试前 clear_registry()，
         # 因此需要 reload 模块重新触发 register_generator（模块级 import 有缓存）
         import generators.mindmap_generator
-        import generators.card_generator
-        import generators.frames_generator
-        import generators.comparison_generator
-        import generators.interactive_demo_generator
+        from generators.registry import get_generator
 
         for mod in (generators.mindmap_generator, generators.card_generator,
                     generators.frames_generator, generators.comparison_generator,
@@ -346,12 +350,17 @@ class TestFramesSnapshotPromotion:
         assert snapshot["parameters"][0]["id"] == "speed"
         assert snapshot["artifact_version"] == "abcd1234abcd"
         assert snapshot["topic"] == "Test topic"
-        # module_outputs.frames 副本仍在（视频分镜、成果页读取处）
-        assert snapshot["module_outputs"]["frames"]["frames"]
+        # module_outputs.frames 仅保留不可变版本引用，不再重复存整组帧。
+        frames_output = snapshot["module_outputs"]["frames"]
+        assert "frames" not in frames_output
+        assert frames_output["artifact_ref"]["type"] == "project_version_frames"
+        uuid.UUID(frames_output["artifact_ref"]["version_id"])
 
         # frames 表同步写入（persist_frames_to_table 内 session.add(Frame)）
         added_frame_ids = [
-            c.args[0].frame_id for c in mock_session.add.call_args_list if c.args
+            c.args[0].frame_id
+            for c in mock_session.add.call_args_list
+            if c.args and hasattr(c.args[0], "frame_id")
         ]
         assert "f_001" in added_frame_ids
 
@@ -403,3 +412,111 @@ class TestResolveExportDsl:
         assert resolve_export_dsl(
             {"module_outputs": {"frames": {"status": "skipped"}}}
         ) is None
+
+    async def test_active_reads_overlay_snapshot_caches_from_frame_table(self):
+        from types import SimpleNamespace
+
+        from services.project_persistence import load_canonical_project_dsl
+
+        old = {"frame_id": "f_001", "title": "stale"}
+        snapshot = {
+            "frames": [old],
+            "module_outputs": {
+                "frames": {
+                    "schema_version": "1.0",
+                    "artifact_ref": {
+                        "type": "project_version_frames",
+                        "version_id": str(uuid.uuid4()),
+                    },
+                }
+            },
+        }
+        project = SimpleNamespace(id=uuid.uuid4(), dsl_snapshot=snapshot)
+        row = SimpleNamespace(
+            frame_id="f_001",
+            title="edited",
+            learning_goal="goal",
+            narration="new narration",
+            visual_objects=[],
+            state_snapshot={"step": 2},
+            animations=[],
+            interaction_hooks=[],
+            checks=[],
+            quality_status="ok",
+            is_locked=True,
+        )
+        scalar_result = MagicMock()
+        scalar_result.all.return_value = [row]
+        result = MagicMock()
+        result.scalars.return_value = scalar_result
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=result)
+
+        canonical = await load_canonical_project_dsl(project, session)
+
+        assert canonical["frames"][0]["title"] == "edited"
+        assert canonical["frames"][0]["is_locked"] is True
+        assert canonical["module_outputs"]["frames"]["frames"] == canonical["frames"]
+        assert snapshot["frames"][0]["title"] == "stale"
+
+
+class TestFramesArtifactReference:
+    def test_compacts_duplicate_frames_without_mutating_input(self):
+        from services.project_persistence import compact_frames_artifact_reference
+
+        version_id = uuid.uuid4()
+        source = {
+            "frames": [{"frame_id": "f_001"}],
+            "module_outputs": {
+                "frames": {
+                    "frames": [{"frame_id": "f_001"}],
+                    "schema_version": "1.0",
+                    "artifact_version": "abc123",
+                },
+                "quiz": {"questions": []},
+            },
+        }
+
+        compacted = compact_frames_artifact_reference(source, version_id)
+
+        assert compacted["frames"] == source["frames"]
+        assert compacted["module_outputs"]["quiz"] == {"questions": []}
+        frames_output = compacted["module_outputs"]["frames"]
+        assert "frames" not in frames_output
+        assert frames_output["schema_version"] == "1.0"
+        assert frames_output["artifact_version"] == "abc123"
+        assert frames_output["artifact_ref"] == {
+            "type": "project_version_frames",
+            "version_id": str(version_id),
+        }
+        assert source["module_outputs"]["frames"]["frames"] == [
+            {"frame_id": "f_001"}
+        ]
+
+    def test_rebinds_an_existing_reference_to_the_new_version(self):
+        from services.project_persistence import compact_frames_artifact_reference
+
+        old_version_id = uuid.uuid4()
+        new_version_id = uuid.uuid4()
+        source = {
+            "frames": [{"frame_id": "f_001"}],
+            "module_outputs": {
+                "frames": {
+                    "schema_version": "1.0",
+                    "artifact_ref": {
+                        "type": "project_version_frames",
+                        "version_id": str(old_version_id),
+                    },
+                }
+            },
+        }
+
+        compacted = compact_frames_artifact_reference(source, new_version_id)
+
+        assert compacted["module_outputs"]["frames"]["artifact_ref"] == {
+            "type": "project_version_frames",
+            "version_id": str(new_version_id),
+        }
+        assert source["module_outputs"]["frames"]["artifact_ref"][
+            "version_id"
+        ] == str(old_version_id)
