@@ -53,18 +53,29 @@ async def run_online_cases(
 
     async def execute(case: EvalCase) -> dict[str, Any]:
         nonlocal budget_exhausted, spent_cost_usd
-        started = time.perf_counter()
+        queued_at = time.perf_counter()
+        execution_started: float | None = None
         try:
             async with semaphore:
+                execution_started = time.perf_counter()
                 if budget_usd is not None and spent_cost_usd >= budget_usd:
                     budget_exhausted = True
+                    finished = time.perf_counter()
                     return {
                         "case_id": case.case_id,
                         "passed": False,
                         "metrics": {},
                         "issues": ["generation skipped: run cost budget exhausted"],
-                        "latency_ms": round(
-                            (time.perf_counter() - started) * 1000, 2
+                        "latency_ms": round((finished - execution_started) * 1000, 2),
+                        "processing_latency_ms": round(
+                            (finished - execution_started) * 1000, 2
+                        ),
+                        "latency_recorded": False,
+                        "queue_wait_ms": round(
+                            (execution_started - queued_at) * 1000, 2
+                        ),
+                        "wall_clock_latency_ms": round(
+                            (finished - queued_at) * 1000, 2
                         ),
                         "usage": {},
                         "cost_usd": 0.0,
@@ -125,9 +136,6 @@ async def run_online_cases(
                                 f"judge failed: {type(exc).__name__}: {exc}"
                             )
                             result["judge_error"] = type(exc).__name__
-                result["latency_ms"] = round(
-                    (time.perf_counter() - started) * 1000, 2
-                )
                 # Backward-compatible aggregate fields used by report summaries.
                 result["usage"] = generated.get("usage", {})
                 result["cost_usd"] = round(total_case_cost, 8)
@@ -140,27 +148,85 @@ async def run_online_cases(
                         json.dumps(artifact, ensure_ascii=False, indent=2) + "\n",
                         encoding="utf-8",
                     )
+                finished = time.perf_counter()
+                processing_latency_ms = round(
+                    (finished - execution_started) * 1000, 2
+                )
+                result["latency_ms"] = processing_latency_ms
+                result["processing_latency_ms"] = processing_latency_ms
+                result["latency_recorded"] = True
+                result["queue_wait_ms"] = round(
+                    (execution_started - queued_at) * 1000, 2
+                )
+                result["wall_clock_latency_ms"] = round(
+                    (finished - queued_at) * 1000, 2
+                )
                 return result
         except Exception as exc:  # noqa: BLE001 - isolate each external case failure
+            finished = time.perf_counter()
+            processing_latency_ms = round(
+                (finished - execution_started) * 1000, 2
+            ) if execution_started is not None else 0.0
             return {
                 "case_id": case.case_id,
                 "passed": False,
                 "metrics": {},
                 "issues": [f"generation failed: {type(exc).__name__}: {exc}"],
-                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                "latency_ms": processing_latency_ms,
+                "processing_latency_ms": processing_latency_ms,
+                "latency_recorded": execution_started is not None,
+                "queue_wait_ms": round(
+                    ((execution_started or finished) - queued_at) * 1000, 2
+                ),
+                "wall_clock_latency_ms": round(
+                    (finished - queued_at) * 1000, 2
+                ),
             }
 
     results = await asyncio.gather(*(execute(case) for case in cases))
     summary = _aggregate(results, len(cases))
-    latencies = sorted(float(item["latency_ms"]) for item in results)
+    # `latency_ms` is retained as a compatibility alias, but percentile metrics
+    # deliberately use processing time after semaphore acquisition.  In budgeted
+    # runs the semaphore serializes cases, so timing before acquisition would
+    # incorrectly include queue wait and make later cases look progressively slower.
+    latencies = sorted(
+        float(item["processing_latency_ms"])
+        for item in results
+        if item.get("latency_recorded", True)
+        and isinstance(item.get("processing_latency_ms"), (int, float))
+    )
+    queue_waits = [
+        float(item["queue_wait_ms"])
+        for item in results
+        if isinstance(item.get("queue_wait_ms"), (int, float))
+    ]
+    wall_clock_latencies = sorted(
+        float(item["wall_clock_latency_ms"])
+        for item in results
+        if isinstance(item.get("wall_clock_latency_ms"), (int, float))
+    )
     costs = [
         float(item["cost_usd"])
         for item in results
         if isinstance(item.get("cost_usd"), (int, float))
     ]
     if latencies:
+        p50_index = max(0, math.ceil(len(latencies) * 0.50) - 1)
         p95_index = max(0, math.ceil(len(latencies) * 0.95) - 1)
+        summary["latency_basis"] = "processing_latency_ms"
+        summary["latency_sample_count"] = len(latencies)
+        summary["mean_latency_ms"] = round(sum(latencies) / len(latencies), 2)
+        summary["p50_latency_ms"] = latencies[p50_index]
         summary["p95_latency_ms"] = latencies[p95_index]
+    if queue_waits:
+        summary["mean_queue_wait_ms"] = round(sum(queue_waits) / len(queue_waits), 2)
+    if wall_clock_latencies:
+        wall_clock_p95_index = max(
+            0, math.ceil(len(wall_clock_latencies) * 0.95) - 1
+        )
+        summary["wall_clock_p95_latency_ms"] = wall_clock_latencies[
+            wall_clock_p95_index
+        ]
     if costs:
         summary["mean_cost_usd"] = round(sum(costs) / len(costs), 6)
         summary["total_cost_usd"] = round(sum(costs), 6)

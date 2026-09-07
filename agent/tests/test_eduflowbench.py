@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from evals.graders import grade_artifact
 from evals.graders.human_calibration import calibration_report
 from evals.graders.llm_judge import (
@@ -231,6 +230,28 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
         "overall_score"
     ] == 0.8
     assert len(list(tmp_path.glob("*.json"))) == 4
+
+
+@pytest.mark.asyncio
+async def test_online_runner_excludes_semaphore_queue_wait_from_percentiles():
+    async def slow_generator(_case):
+        await __import__("asyncio").sleep(0.03)
+        return {"artifact": _artifact(), "cost_usd": 0.01}
+
+    cases = [
+        _case().model_copy(update={"case_id": f"alg_timing_{index}"})
+        for index in range(2)
+    ]
+    report = await run_online_cases(cases, slow_generator, budget_usd=1.0)
+    first, second = report["results"]
+
+    assert first["latency_ms"] == first["processing_latency_ms"]
+    assert second["latency_ms"] == second["processing_latency_ms"]
+    assert second["queue_wait_ms"] > 10
+    assert second["wall_clock_latency_ms"] > second["processing_latency_ms"]
+    assert report["summary"]["latency_basis"] == "processing_latency_ms"
+    assert report["summary"]["p50_latency_ms"] <= report["summary"]["p95_latency_ms"]
+    assert report["summary"]["wall_clock_p95_latency_ms"] >= report["summary"]["p95_latency_ms"]
 
 
 def test_online_runner_exit_code_enforces_reported_cost_budget():
