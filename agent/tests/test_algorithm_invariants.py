@@ -59,6 +59,90 @@ async def test_dijkstra_queue_cannot_disappear_without_dequeue():
 
 
 @pytest.mark.asyncio
+async def test_dijkstra_scalar_empty_queue_sentinel_is_not_a_vertex():
+    frames = [
+        _graph_frame(
+            "f_001",
+            {"visited": ["A", "B", "C"], "priority_queue": "empty"},
+        ),
+        _graph_frame(
+            "f_002",
+            {"visited": ["A", "B", "C"], "priority_queue": []},
+        ),
+    ]
+
+    result = await check_algorithm_invariants(frames, topic="Dijkstra 最短路径")
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+def _negative_counterexample_frame(
+    *, visited: list[str], wrong_dist: dict[str, int]
+) -> dict:
+    return {
+        "frame_id": "f_001",
+        "visual_objects": [{
+            "id": "negative_graph",
+            "type": "graph",
+            "graph_role": "secondary",
+            "directed": True,
+            "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+            "edges": [
+                {"source": "A", "target": "B", "weight": 2},
+                {"source": "A", "target": "C", "weight": 1},
+                {"source": "C", "target": "B", "weight": -3},
+            ],
+        }],
+        "state_snapshot": {
+            "visited_wrong": visited,
+            "wrong_dist": wrong_dist,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_dijkstra_negative_counterexample_rejects_non_minimum_selection():
+    frame = _negative_counterexample_frame(
+        visited=["A", "B", "C"],
+        wrong_dist={"A": 0, "B": 2, "C": 1},
+    )
+
+    result = await check_algorithm_invariants([frame], topic="Dijkstra 最短路径")
+
+    assert result["consistent"] is False
+    assert any("当前最小距离" in issue["description"] for issue in result["issues"])
+
+
+@pytest.mark.asyncio
+async def test_dijkstra_negative_counterexample_rejects_missing_relaxation():
+    frame = _negative_counterexample_frame(
+        visited=["A", "C", "B"],
+        wrong_dist={"A": 0, "B": 2, "C": 1},
+    )
+
+    result = await check_algorithm_invariants([frame], topic="Dijkstra 最短路径")
+
+    assert result["consistent"] is False
+    assert any("必要松弛" in issue["description"] for issue in result["issues"])
+
+
+@pytest.mark.asyncio
+async def test_dijkstra_accepts_valid_negative_edge_counterexample_trace():
+    frame = _negative_counterexample_frame(
+        visited=["A", "B", "C"],
+        wrong_dist={"A": 0, "B": 2, "C": 5},
+    )
+    frame["visual_objects"][0]["edges"][1]["weight"] = 5
+    frame["visual_objects"][0]["edges"][2]["weight"] = -10
+
+    result = await check_algorithm_invariants([frame], topic="Dijkstra 最短路径")
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
 async def test_dijkstra_may_discard_only_infinite_queue_tail_on_early_stop():
     frames = [
         _graph_frame(

@@ -102,9 +102,17 @@ def main() -> int:
     parser.add_argument("--model")
     parser.add_argument("--prompt-version")
     parser.add_argument("--workflow-version")
+    parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--limit", type=int)
     args = parser.parse_args()
 
     cases = load_cases(args.dataset)
+    if args.offset < 0:
+        parser.error("--offset must be non-negative")
+    if args.limit is not None and args.limit <= 0:
+        parser.error("--limit must be greater than zero")
+    end = None if args.limit is None else args.offset + args.limit
+    cases = cases[args.offset:end]
     metadata = {
         key: value
         for key, value in {

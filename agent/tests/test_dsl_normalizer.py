@@ -98,6 +98,25 @@ def test_normalize_dsl_preserves_chart_as_renderable_table_or_card():
     RenderScript.model_validate(normalized)
 
 
+def test_normalize_dsl_canonicalizes_scalar_empty_queue_sentinels():
+    source = _legacy_dsl()
+    source["frames"][0]["state_snapshot"].update({
+        "queue": "空队列",
+        "priority_queue": "empty",
+        "heap": "[]",
+        "unvisited": "null",
+    })
+
+    normalized = normalize_dsl(source)
+    snapshot = normalized["frames"][0]["state_snapshot"]
+
+    assert snapshot["queue"] == []
+    assert snapshot["priority_queue"] == []
+    assert snapshot["heap"] == []
+    assert snapshot["unvisited"] == []
+    assert source["frames"][0]["state_snapshot"]["priority_queue"] == "empty"
+
+
 def test_normalize_dsl_repairs_array_cells_and_preserves_quiz_content():
     source = _legacy_dsl()
     source["frames"][0]["visual_objects"] = [

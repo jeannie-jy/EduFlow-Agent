@@ -15,6 +15,30 @@ import logging
 from copy import deepcopy
 from typing import Any
 
+_EMPTY_QUEUE_SENTINELS = {
+    "",
+    "[]",
+    "empty",
+    "none",
+    "null",
+    "空",
+    "空队列",
+}
+_QUEUE_STATE_KEYS = ("queue", "priority_queue", "heap", "unvisited")
+
+
+def _normalise_queue_sentinels(snapshot: Any) -> Any:
+    """Canonicalize scalar empty-queue markers while preserving real node lists."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    result = deepcopy(snapshot)
+    for key in _QUEUE_STATE_KEYS:
+        value = result.get(key)
+        if isinstance(value, str) and value.strip().casefold() in _EMPTY_QUEUE_SENTINELS:
+            result[key] = []
+    return result
+
+
 logger = logging.getLogger(__name__)
 
 _AUDIENCES = {"undergraduate_cs", "graduate_cs", "high_school", "self_learner"}
@@ -305,6 +329,8 @@ def _normalise_frame(frame: Any) -> dict[str, Any] | None:
     if not isinstance(frame, dict):
         return None
     item = deepcopy(frame)
+    if "state_snapshot" in item:
+        item["state_snapshot"] = _normalise_queue_sentinels(item["state_snapshot"])
     visual_objects = item.get("visual_objects", [])
     item["visual_objects"] = [
         normalised

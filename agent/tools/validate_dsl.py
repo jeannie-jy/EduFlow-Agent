@@ -14,6 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _INFINITY_VALUES = {"∞", "inf", "+inf", "infinity", "无穷", "无穷大"}
+_EMPTY_QUEUE_SENTINELS = {"", "[]", "empty", "none", "null", "空", "空队列"}
 _SHORTEST_PATH_MARKERS = ("dijkstra", "shortest path", "最短路径")
 _SECONDARY_GRAPH_MARKERS = (
     "negative",
@@ -47,6 +48,8 @@ def _distance_value(value: Any) -> float | None:
 def _queue_values(value: Any) -> list[str]:
     """Extract vertex ids from queue/heap snapshots without assuming one format."""
     if isinstance(value, str):
+        if value.strip().casefold() in _EMPTY_QUEUE_SENTINELS:
+            return []
         return [match for match in re.findall(r"([A-Za-z0-9_\-]+)\s*(?:\([^)]*\))?", value)]
     if not isinstance(value, list):
         return []
@@ -63,6 +66,126 @@ def _queue_values(value: Any) -> list[str]:
     return result
 
 
+def _negative_counterexample_issues(frame: dict[str, Any]) -> list[str]:
+    """Validate an explicit Dijkstra trace on a secondary negative-edge graph.
+
+    A counterexample may intentionally produce a wrong shortest-path result,
+    but it must still execute Dijkstra faithfully: extract the smallest current
+    tentative distance, relax outgoing edges, and only then demonstrate how a
+    later negative edge would improve an already-settled vertex.
+    """
+    snapshot = frame.get("state_snapshot", {})
+    if not isinstance(snapshot, dict):
+        return []
+    explicitly_wrong_trace = "visited_wrong" in snapshot or "wrong_dist" in snapshot
+    if any(_graph_role(graph) == "primary" for graph in _graph_visuals(frame)) and not explicitly_wrong_trace:
+        # In a mixed comparison frame, ordinary ``visited``/``dist`` belongs
+        # to the primary graph.  Only explicitly named wrong-trace fields may
+        # be evaluated against the secondary counterexample.
+        return []
+    raw_visited = snapshot.get("visited_wrong", snapshot.get("visited"))
+    raw_dist = snapshot.get("wrong_dist", snapshot.get("dist"))
+    if not isinstance(raw_visited, list) or not isinstance(raw_dist, dict):
+        return []
+
+    visited = [str(vertex) for vertex in raw_visited]
+    claimed_dist = {
+        str(vertex): distance
+        for vertex, value in raw_dist.items()
+        if (distance := _distance_value(value)) is not None
+    }
+    if not visited or not claimed_dist:
+        return []
+
+    issues: list[str] = []
+    for graph in _graph_visuals(frame):
+        if _graph_role(graph) != "secondary":
+            continue
+        raw_edges = graph.get("edges", graph.get("graph_edges", []))
+        if not isinstance(raw_edges, list):
+            continue
+        edges: list[tuple[str, str, float]] = []
+        vertices = {
+            str(node.get("id", node.get("label")))
+            for node in graph.get("nodes", [])
+            if isinstance(node, dict)
+            and node.get("id", node.get("label")) is not None
+        }
+        for edge in raw_edges:
+            if not isinstance(edge, dict):
+                continue
+            source, target = edge.get("source"), edge.get("target")
+            weight = _distance_value(edge.get("weight"))
+            if (
+                source is None
+                or target is None
+                or weight is None
+                or not math.isfinite(weight)
+            ):
+                continue
+            source_id, target_id = str(source), str(target)
+            vertices.update((source_id, target_id))
+            edges.append((source_id, target_id, weight))
+            if not bool(graph.get("directed", False)):
+                edges.append((target_id, source_id, weight))
+        if not edges or not any(weight < 0 for _, _, weight in edges):
+            continue
+
+        source = visited[0]
+        tentative = {vertex: math.inf for vertex in vertices}
+        tentative[source] = 0.0
+        settled: set[str] = set()
+        trace_invalid = False
+        for vertex in visited:
+            if vertex not in tentative or vertex in settled:
+                issues.append(f"负权反例的 visited 顺序包含无效或重复顶点 {vertex}")
+                trace_invalid = True
+                break
+            unsettled_finite = {
+                candidate: distance
+                for candidate, distance in tentative.items()
+                if candidate not in settled and math.isfinite(distance)
+            }
+            minimum = min(unsettled_finite.values()) if unsettled_finite else math.inf
+            if tentative[vertex] > minimum + 1e-9:
+                smaller = sorted(
+                    candidate
+                    for candidate, distance in unsettled_finite.items()
+                    if abs(distance - minimum) <= 1e-9
+                )
+                issues.append(
+                    f"负权反例未按当前最小距离选择顶点: 选择 {vertex}，"
+                    f"应先选择 {smaller}"
+                )
+                trace_invalid = True
+                break
+            settled.add(vertex)
+            for edge_source, target, weight in edges:
+                if edge_source != vertex or target in settled:
+                    continue
+                tentative[target] = min(tentative[target], tentative[vertex] + weight)
+
+        if trace_invalid:
+            continue
+        mismatches = sorted(
+            vertex
+            for vertex in set(claimed_dist) & set(tentative)
+            if (
+                math.isinf(claimed_dist[vertex]) != math.isinf(tentative[vertex])
+                or (
+                    math.isfinite(claimed_dist[vertex])
+                    and abs(claimed_dist[vertex] - tentative[vertex]) > 1e-9
+                )
+            )
+        )
+        if mismatches:
+            issues.append(
+                "负权反例的 Dijkstra 状态未执行必要松弛: "
+                f"距离不一致顶点 {mismatches}"
+            )
+    return issues
+
+
 def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str, Any]]]:
     """Collect the first explicit graph definition used by the frames."""
     vertices: set[str] = set()
@@ -71,7 +194,7 @@ def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str,
         for visual in frame.get("visual_objects", []):
             if not isinstance(visual, dict):
                 continue
-            if visual.get("type") == "graph":
+            if visual.get("type") == "graph" and _graph_role(visual) == "primary":
                 for node in visual.get("nodes", []):
                     if isinstance(node, dict):
                         node_id = node.get("id", node.get("label"))
@@ -372,6 +495,11 @@ async def check_algorithm_invariants(
         snapshot = frame.get("state_snapshot", {})
         if not isinstance(snapshot, dict):
             continue
+
+        issues.extend(
+            {"frame_id": frame_id, "description": description}
+            for description in _negative_counterexample_issues(frame)
+        )
 
         # A derived path-tree visual is not a replacement for the primary
         # graph, but its edges still form an executable claim that must be

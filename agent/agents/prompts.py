@@ -229,6 +229,10 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
 
 6. 主执行图的 visual_object 使用稳定 `id=primary_graph`、`graph_role=primary`；路径树、
    负权反例和练习图必须分别使用 `graph_role=derived` 或 `graph_role=secondary`，不能覆盖主图。
+7. 如果展示负权边反例，仍必须严格执行 Dijkstra：每轮选择当前暂定距离最小的未处理节点，
+   并松弛其出边。有效反例应让负权边在目标节点已经 settled 后才揭示更短路径；不要为了说明
+   算法失效而伪造错误选点顺序或漏掉本应执行的松弛。
+   除非教学计划明确要求负权边反例，否则只说明“要求非负权重”即可，不要额外引入反例图。
 
 生成完成前逐项复核上述不变量；如果材料没有足够信息，不要编造边权或状态，明确标记信息不足。
 """
@@ -247,6 +251,7 @@ array 的 `cells` 必须是对象数组（如 `[{"index":0,"value":3}]`），不
 dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `id=primary_graph`、
 `graph_role=primary`；其他反例/练习图必须标记为 `secondary`，不要让它们重置主轨迹。
 距离为无穷大的不可达节点不得加入 visited，后续总结帧必须继承主轨迹的终态。
+负权反例也必须按当前最小暂定距离选点并执行所有可用松弛，不能用错误步骤证明算法失效。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 
@@ -352,6 +357,8 @@ REFLECTION_SYSTEM_PROMPT = """你是一位教学修订专家，负责根据质�
   不可达节点保持无穷大；最终 `shortest_path_tree` 只能引用图中真实存在的边。
 - Dijkstra 中距离为无穷大的节点不得进入 `visited`，总结、对比和应用帧必须继承主轨迹终态；
   secondary 辅助图不能覆盖 primary 状态。
+- 如果负权边反例违反最小暂定距离选点或漏做松弛，应替换为严格执行 Dijkstra 的有效反例；
+  若教学目标没有明确要求该反例，则直接删除反例并保留“要求非负权重”的准确说明。
 - 如果报告指出交互性不足，优先在已有帧补充一个 `checks` 或 `interaction_hooks`，
    不要为了增加交互而重写无关帧。
 - `required_concept_missing` 必须通过在可见帧的 narration、visual label 或 code_block
