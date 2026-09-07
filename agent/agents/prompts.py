@@ -221,6 +221,7 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
    `dist[u] + weight(u,v)` 的计算式；距离只能保持或下降，不能从有限值回到无穷大。
 3. `visited` 只能追加已经从最小距离队列取出的节点，不能重复、回退或把未定义节点加入。
    如果展示 `queue` / `priority_queue`，队列清空前必须明确记录最后一次出队；不可达节点应保留为无穷大。
+   距离仍为无穷大的不可达节点不得加入 `visited`；算法终止后的总结/应用帧必须原样继承终态。
 4. 最后一帧的 `shortest_path_tree` 必须使用图中真实存在的边，并满足
    `dist[child] = dist[parent] + edge_weight`；不要凭视觉猜测路径树。
 5. 至少一个帧必须提供 `checks` 或 `interaction_hooks`，用于让学习者验证一次松弛、
@@ -245,6 +246,7 @@ array 的 `cells` 必须是对象数组（如 `[{"index":0,"value":3}]`），不
 如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足
 dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `id=primary_graph`、
 `graph_role=primary`；其他反例/练习图必须标记为 `secondary`，不要让它们重置主轨迹。
+距离为无穷大的不可达节点不得加入 visited，后续总结帧必须继承主轨迹的终态。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 
@@ -348,6 +350,8 @@ REFLECTION_SYSTEM_PROMPT = """你是一位教学修订专家，负责根据质�
 - Dijkstra / 最短路径问题必须同步复核：所有松弛满足
   `dist[child] = dist[parent] + edge_weight`，`visited` 只追加且不重复，
   不可达节点保持无穷大；最终 `shortest_path_tree` 只能引用图中真实存在的边。
+- Dijkstra 中距离为无穷大的节点不得进入 `visited`，总结、对比和应用帧必须继承主轨迹终态；
+  secondary 辅助图不能覆盖 primary 状态。
 - 如果报告指出交互性不足，优先在已有帧补充一个 `checks` 或 `interaction_hooks`，
    不要为了增加交互而重写无关帧。
 - `required_concept_missing` 必须通过在可见帧的 narration、visual label 或 code_block

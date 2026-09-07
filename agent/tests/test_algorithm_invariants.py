@@ -1,6 +1,6 @@
 import pytest
 
-from tools.validate_dsl import check_algorithm_invariants
+from tools.validate_dsl import check_algorithm_invariants, stabilize_algorithm_trace
 
 
 def _graph_frame(frame_id: str, snapshot: dict) -> dict:
@@ -56,6 +56,150 @@ async def test_dijkstra_queue_cannot_disappear_without_dequeue():
 
     assert result["consistent"] is False
     assert any("队列" in issue["description"] for issue in result["issues"])
+
+
+@pytest.mark.asyncio
+async def test_dijkstra_may_discard_only_infinite_queue_tail_on_early_stop():
+    frames = [
+        _graph_frame(
+            "f_001",
+            {
+                "dist": {"A": 0, "B": 1, "C": "∞"},
+                "visited": ["A", "B"],
+                "queue": ["C(∞)"],
+            },
+        ),
+        _graph_frame(
+            "f_002",
+            {
+                "dist": {"A": 0, "B": 1, "C": "∞"},
+                "visited": ["A", "B"],
+            },
+        ),
+    ]
+
+    result = await check_algorithm_invariants(
+        frames, topic="演示 Dijkstra 不可达节点"
+    )
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_dijkstra_rejects_infinite_distance_vertex_in_visited():
+    frames = [
+        _graph_frame(
+            "f_001",
+            {
+                "dist": {"A": 0, "B": 1, "C": "∞"},
+                "visited": ["A", "C"],
+            },
+        )
+    ]
+
+    result = await check_algorithm_invariants(
+        frames, topic="演示 Dijkstra 不可达节点"
+    )
+
+    assert result["consistent"] is False
+    assert any("不可达顶点" in issue["description"] for issue in result["issues"])
+
+
+def test_dijkstra_guardrail_filters_unreachable_and_prevents_visited_regression():
+    dsl = {
+        "topic": "Dijkstra 不可达节点",
+        "frames": [
+            _graph_frame(
+                "f_001",
+                {
+                    "dist": {"A": 0, "B": 1, "C": "∞"},
+                    "visited": ["A", "B"],
+                },
+            ),
+            _graph_frame(
+                "f_002",
+                {
+                    "dist": {"A": 0, "B": 1, "C": "∞"},
+                    "visited": ["A", "B", "C"],
+                },
+            ),
+            _graph_frame(
+                "f_003",
+                {
+                    "dist": {"A": 0, "B": 1, "C": "∞"},
+                    "visited": ["A"],
+                },
+            ),
+        ],
+    }
+
+    stabilized = stabilize_algorithm_trace(dsl)
+
+    assert dsl["frames"][1]["state_snapshot"]["visited"] == ["A", "B", "C"]
+    assert [
+        frame["state_snapshot"]["visited"] for frame in stabilized["frames"]
+    ] == [["A", "B"], ["A", "B"], ["A", "B"]]
+
+
+def test_secondary_trace_cannot_reset_primary_guardrail_baseline():
+    first = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A", "B"]},
+    )
+    secondary = {
+        "frame_id": "f_002",
+        "visual_objects": [
+            {
+                "id": "practice_graph",
+                "type": "graph",
+                "graph_role": "secondary",
+                "nodes": [{"id": "X"}, {"id": "Y"}],
+                "edges": [{"source": "X", "target": "Y", "weight": 2}],
+            }
+        ],
+        "state_snapshot": {"dist": {"X": 0, "Y": 2}, "visited": ["X", "Y"]},
+    }
+    resumed = _graph_frame(
+        "f_003",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A"]},
+    )
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 最短路径",
+        "frames": [first, secondary, resumed],
+    })
+
+    assert stabilized["frames"][1]["state_snapshot"]["visited"] == ["X", "Y"]
+    assert stabilized["frames"][2]["state_snapshot"]["visited"] == ["A", "B"]
+
+
+def test_mixed_primary_secondary_frame_still_stabilizes_primary_snapshot():
+    first = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": "∞"}, "visited": ["A", "B"]},
+    )
+    mixed = _graph_frame(
+        "f_002",
+        {
+            "dist": {"A": 0, "B": 1, "C": "∞"},
+            "visited": ["A", "B", "C"],
+        },
+    )
+    mixed["visual_objects"].append({
+        "id": "practice_graph",
+        "type": "graph",
+        "graph_role": "secondary",
+        "nodes": [{"id": "X"}, {"id": "Y"}],
+        "edges": [{"source": "X", "target": "Y", "weight": 2}],
+    })
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 最短路径",
+        "frames": [first, mixed],
+    })
+
+    assert stabilized["frames"][1]["state_snapshot"]["visited"] == ["A", "B"]
 
 
 @pytest.mark.asyncio

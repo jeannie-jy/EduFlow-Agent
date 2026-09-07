@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from copy import deepcopy
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,102 @@ def _extract_tree_edges(value: Any) -> list[tuple[str, str]]:
     return result
 
 
+def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
+    """Apply deterministic, semantics-preserving guards to model state traces.
+
+    Dijkstra's ``visited`` set is monotonic on the primary execution trace and
+    a vertex whose distance is explicitly infinite is unreachable from the
+    source, so it must not be presented as settled.  These two facts let us
+    repair common model drift without another LLM call.  Secondary/practice
+    graphs are kept independent and never replace the primary trace baseline.
+    """
+    if not isinstance(dsl, dict):
+        return {}
+    result = deepcopy(dsl)
+    topic_text = str(result.get("topic", "")).casefold()
+    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
+        return result
+
+    frames = result.get("frames", [])
+    if not isinstance(frames, list):
+        return result
+    primary_graph_id = _primary_graph_id(frames)
+    previous_visited: list[Any] = []
+    secondary_trace_active = False
+    repairs = 0
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        has_secondary = _frame_has_secondary_graph(frame)
+        has_primary = _frame_has_primary_graph(frame, primary_graph_id)
+        # A mixed comparison frame can show a secondary graph beside the
+        # primary graph.  Its state snapshot still belongs to the explicitly
+        # present primary trace; only a secondary-only frame starts an
+        # independent trace.
+        if has_secondary and not has_primary:
+            secondary_trace_active = True
+            continue
+        if secondary_trace_active and not has_primary:
+            continue
+        if has_primary:
+            secondary_trace_active = False
+
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        visited_key = (
+            "visited"
+            if isinstance(snapshot.get("visited"), list)
+            else "processed"
+            if isinstance(snapshot.get("processed"), list)
+            else None
+        )
+        if visited_key is None:
+            continue
+
+        raw_dist = snapshot.get(
+            "dist", snapshot.get("distances", snapshot.get("distance"))
+        )
+        distances = {
+            str(vertex): distance
+            for vertex, value in raw_dist.items()
+            if (distance := _distance_value(value)) is not None
+        } if isinstance(raw_dist, dict) else {}
+
+        current: list[Any] = []
+        current_ids: set[str] = set()
+        for vertex in snapshot[visited_key]:
+            vertex_id = str(vertex)
+            distance = distances.get(vertex_id)
+            if distance is not None and math.isinf(distance):
+                repairs += 1
+                continue
+            if vertex_id not in current_ids:
+                current.append(vertex)
+                current_ids.add(vertex_id)
+
+        stabilized: list[Any] = []
+        stabilized_ids: set[str] = set()
+        for vertex in [*previous_visited, *current]:
+            vertex_id = str(vertex)
+            distance = distances.get(vertex_id)
+            if distance is not None and math.isinf(distance):
+                continue
+            if vertex_id not in stabilized_ids:
+                stabilized.append(vertex)
+                stabilized_ids.add(vertex_id)
+
+        if stabilized != snapshot[visited_key]:
+            snapshot[visited_key] = stabilized
+            repairs += 1
+        previous_visited = stabilized
+
+    if repairs:
+        logger.info("Algorithm guardrail stabilized Dijkstra trace | repairs=%d", repairs)
+    return result
+
+
 async def check_algorithm_invariants(
     frames: list[dict[str, Any]],
     *,
@@ -292,18 +389,17 @@ async def check_algorithm_invariants(
         # Do not compare its state against the primary execution trace; the
         # following frames may continue that illustration without repeating the
         # graph object.
-        if _frame_has_secondary_graph(frame):
+        has_secondary = _frame_has_secondary_graph(frame)
+        has_primary = _frame_has_primary_graph(frame, primary_graph_id)
+        if has_secondary and not has_primary:
             secondary_trace_active = True
-            previous_dist = None
-            previous_visited = None
-            previous_queue = None
             continue
-        if secondary_trace_active and not _frame_has_primary_graph(frame, primary_graph_id):
+        if secondary_trace_active and not has_primary:
             # A secondary example often omits the graph object in its next
             # frame.  Keep it out of the primary execution trace until a
             # primary graph is explicitly shown again.
             continue
-        if _frame_has_primary_graph(frame, primary_graph_id):
+        if has_primary:
             secondary_trace_active = False
 
         frame_signature = _frame_graph_signature(
@@ -352,6 +448,17 @@ async def check_algorithm_invariants(
             if vertices and not visited <= vertices:
                 unknown = sorted(visited - vertices)
                 issues.append({"frame_id": frame_id, "description": f"visited 包含未定义顶点: {unknown}"})
+            if current_dist:
+                unreachable = sorted(
+                    vertex
+                    for vertex in visited
+                    if vertex in current_dist and math.isinf(current_dist[vertex])
+                )
+                if unreachable:
+                    issues.append({
+                        "frame_id": frame_id,
+                        "description": f"visited 包含距离为无穷大的不可达顶点: {unreachable}",
+                    })
             if previous_visited is not None and not previous_visited <= visited:
                 issues.append({"frame_id": frame_id, "description": "visited 集合回退，移除了已处理顶点"})
             previous_visited = visited
@@ -374,7 +481,11 @@ async def check_algorithm_invariants(
                     else previous_visited
                 )
                 removed = set(previous_queue) - set(current_visited)
-                if removed:
+                discardable_unreachable = bool(previous_dist) and all(
+                    vertex in previous_dist and math.isinf(previous_dist[vertex])
+                    for vertex in removed
+                )
+                if removed and not discardable_unreachable:
                     issues.append({
                         "frame_id": frame_id,
                         "description": f"队列从 {previous_queue} 变为空，但未处理顶点 {sorted(removed)}",

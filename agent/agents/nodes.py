@@ -19,6 +19,7 @@ from typing import Any
 
 from config import get_settings
 from tools.normalize_dsl import normalize_dsl
+from tools.validate_dsl import stabilize_algorithm_trace
 
 from .llm_client import call_llm_structured
 from .prompts import (
@@ -1266,6 +1267,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     # Pydantic RenderScript schema.  This also handles aliases emitted by
     # older prompts without weakening deterministic validation.
     dsl = normalize_dsl(dsl)
+    dsl = stabilize_algorithm_trace(dsl)
 
     frame_count = len(dsl["frames"])
     logger.info("Coder: 完成 | frames=%d", frame_count)
@@ -1619,6 +1621,7 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
 
     # 重建 DSL
     new_dsl = normalize_dsl({**dsl, "frames": new_frames})
+    new_dsl = stabilize_algorithm_trace(new_dsl)
 
     # 更新修订历史
     history = state.get("revision_history", [])
