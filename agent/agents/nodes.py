@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -1582,9 +1583,39 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
         else:
             new_frames.append(frame)
 
-    # 插入新帧
+    # 插入新帧。Reflection 是模型边界，不能信任模型会始终遵守唯一 ID
+    # 约束；同一轮或后续轮次重复返回的 inserted frame 必须幂等处理。
+    existing_ids = {
+        str(frame.get("frame_id"))
+        for frame in new_frames
+        if isinstance(frame, dict) and frame.get("frame_id")
+    }
+    numeric_ids = [
+        int(match.group(1))
+        for frame_id in existing_ids
+        if (match := re.fullmatch(r"f_(\d+)", frame_id))
+    ]
+    next_frame_number = max(numeric_ids, default=0) + 1
+    accepted_insertions = 0
     for inserted in revision.get("inserted_frames", []):
+        if not isinstance(inserted, dict):
+            continue
+        inserted = deepcopy(inserted)
+        requested_id = str(inserted.get("frame_id") or "").strip()
+        if requested_id in existing_ids:
+            logger.warning(
+                "Reflection ignored duplicate inserted frame_id=%s", requested_id
+            )
+            continue
+        if not requested_id:
+            while f"f_{next_frame_number:03d}" in existing_ids:
+                next_frame_number += 1
+            requested_id = f"f_{next_frame_number:03d}"
+            next_frame_number += 1
+            inserted["frame_id"] = requested_id
+        existing_ids.add(requested_id)
         new_frames.append(inserted)
+        accepted_insertions += 1
 
     # 重建 DSL
     new_dsl = normalize_dsl({**dsl, "frames": new_frames})
@@ -1599,7 +1630,7 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
 
     logger.info("Reflection: 完成 | modified=%d | inserted=%d",
                 len(revision.get("modified_frame_ids", [])),
-                len(revision.get("inserted_frames", [])))
+                accepted_insertions)
 
     return {
         "dsl": new_dsl,

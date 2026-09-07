@@ -96,3 +96,29 @@ def test_normalize_dsl_preserves_chart_as_renderable_table_or_card():
     assert objects[1]["type"] == "card"
     assert objects[1]["content"] == "趋势说明"
     RenderScript.model_validate(normalized)
+
+
+def test_normalize_dsl_repairs_array_cells_and_preserves_quiz_content():
+    source = _legacy_dsl()
+    source["frames"][0]["visual_objects"] = [
+        {"id": "arr", "type": "array", "cells": [3, 1, 2]},
+        {
+            "id": "quiz_1",
+            "type": "quiz",
+            "question": "下一步选择哪个元素？",
+            "options": ["1", "2", "3"],
+        },
+    ]
+
+    normalized = normalize_dsl(source)
+    objects = normalized["frames"][0]["visual_objects"]
+
+    assert objects[0]["cells"] == [
+        {"index": 0, "value": 3},
+        {"index": 1, "value": 1},
+        {"index": 2, "value": 2},
+    ]
+    assert objects[1]["type"] == "card"
+    assert "下一步选择哪个元素" in objects[1]["content"]
+    assert "options" in objects[1]["content"]
+    RenderScript.model_validate(normalized)

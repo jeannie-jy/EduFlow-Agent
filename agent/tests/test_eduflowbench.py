@@ -141,6 +141,40 @@ async def test_forbidden_claim_allows_explicit_negation():
 
 
 @pytest.mark.asyncio
+async def test_forbidden_claim_allows_subject_between_negation_and_claim():
+    case = _case(
+        required_concepts=["快速排序"],
+        forbidden_claims=["稳定排序"],
+    ).model_copy(update={"topic": "快速排序"})
+    artifact = _artifact()
+    artifact["topic"] = "快速排序"
+    artifact["frames"][0]["narration"] = "但 partition 不是稳定排序，相等元素次序可能改变。"
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["forbidden_claim_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_forbidden_claim_ignores_planner_misconception_metadata():
+    artifact = _artifact()
+    artifact["knowledge_graph"] = {
+        "concepts": [{
+            "id": "insertion-sort-pitfall",
+            "name": "插入排序误区",
+            "common_pitfalls": ["误认为每次选择全局最小值"],
+        }]
+    }
+    case = _case(forbidden_claims=["每次选择全局最小值"])
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["forbidden_claim_pass"] is True
+
+
+@pytest.mark.asyncio
 async def test_forbidden_claim_still_blocks_positive_assertion():
     case = _case(
         required_concepts=["快速排序"],
@@ -183,6 +217,23 @@ async def test_forbidden_claim_allows_multiple_choice_distractor():
 async def test_sorted_array_oracle_accepts_explicit_result_key():
     artifact = _artifact()
     artifact["frames"][-1]["state_snapshot"] = {"sorted_array": [1, 2, 3]}
+
+    result = await grade_artifact(_case(), artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["oracle_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_sorted_array_oracle_ignores_later_practice_input():
+    artifact = _artifact()
+    artifact["frames"].append({
+        "frame_id": "f_002",
+        "title": "课后练习",
+        "narration": "请尝试新的输入",
+        "visual_objects": [],
+        "state_snapshot": {"array": [5, 2, 4, 1]},
+    })
 
     result = await grade_artifact(_case(), artifact)
 

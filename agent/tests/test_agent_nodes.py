@@ -851,6 +851,35 @@ class TestReflectionNode:
         assert new_frame_count == original_frame_count + 1
 
     @pytest.mark.asyncio
+    async def test_reflection_deduplicates_inserted_frame_ids(self):
+        """模型重复插入已有 frame_id 时不能破坏 DSL 唯一性。"""
+        from agents.nodes import reflection_node
+
+        state = AgentStateFactory.with_quality_report()
+        existing_id = state["dsl"]["frames"][0]["frame_id"]
+        revision_output = {
+            "revision_summary": "尝试重复插帧",
+            "modified_frame_ids": [],
+            "updated_frames": [],
+            "inserted_frames": [
+                {
+                    "frame_id": existing_id,
+                    "title": "重复帧",
+                    "narration": "不应插入",
+                    "visual_objects": [],
+                    "state_snapshot": {},
+                }
+            ],
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = revision_output
+            result = await reflection_node(state)
+
+        frame_ids = [frame["frame_id"] for frame in result["dsl"]["frames"]]
+        assert frame_ids.count(existing_id) == 1
+
+    @pytest.mark.asyncio
     async def test_llm_failure_fallback(self):
         """LLM 失败时保持 DSL 不变。"""
         from agents.nodes import reflection_node

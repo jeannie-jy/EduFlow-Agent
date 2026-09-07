@@ -239,6 +239,8 @@ CODER_BATCH_SYSTEM_PROMPT = """你是 RenderScript 逐帧续写器。只输出�
 
 每帧必须有 `frame_id`、`title`、`narration`、`visual_objects`、`state_snapshot`；
 visual_objects 只能使用 RenderScript 合法类型，动画 target 必须引用当前帧对象。
+array 的 `cells` 必须是对象数组（如 `[{"index":0,"value":3}]`），不能直接写数字数组。
+测验题使用 `interaction_hooks`/`checks`，不要把 `quiz` 当作 visual_object 类型。
 保持前一帧的图结构、变量命名和状态演进；不要重复 parameters/assets，不要输出 markdown。
 如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足
 dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `id=primary_graph`、
@@ -341,6 +343,8 @@ REFLECTION_SYSTEM_PROMPT = """你是一位教学修订专家，负责根据质�
 - 如果修改了某帧的状态，必须同步更新后续帧
 - 每次修订必须记录原因
 - 插入新帧时需重新分配 frame_id 和 order_index
+- Schema、字段格式或动画引用问题必须直接更新原帧，不得通过插入新帧规避
+- inserted_frames 的 frame_id 必须全局唯一，不得复用当前 DSL 中已有的 frame_id
 - Dijkstra / 最短路径问题必须同步复核：所有松弛满足
   `dist[child] = dist[parent] + edge_weight`，`visited` 只追加且不重复，
   不可达节点保持无穷大；最终 `shortest_path_tree` 只能引用图中真实存在的边。

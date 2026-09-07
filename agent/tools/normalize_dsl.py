@@ -4,9 +4,8 @@ The Coder prompt is constrained to the RenderScript contract, but older model
 responses can still contain aliases from previous DSL versions.  This module
 keeps that compatibility at the boundary: it never changes the Pydantic
 contract and it does not invent frame IDs or silently repair missing required
-fields.  Unknown visual objects and malformed entries are left out (with a
-warning) so the deterministic validator can still report genuinely incomplete
-artifacts.
+fields.  Unsupported but structurally valid visual objects degrade to cards so
+model vocabulary drift cannot silently remove teaching content.
 """
 
 from __future__ import annotations
@@ -159,6 +158,10 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
         "diagram": "graph" if item.get("nodes") or item.get("edges") else "card",
         "button": "card",
         "flowchart": "graph",
+        "quiz": "card",
+        "question": "card",
+        "multiple_choice": "card",
+        "choice": "card",
     }
     object_type = aliases.get(raw_type, raw_type)
     if raw_type == "chart":
@@ -181,19 +184,39 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
             # visible and the unsupported type is not silently discarded.
             object_type = "card"
     if object_type not in _OBJECT_TYPES:
-        logger.warning("Dropping unsupported visual object type=%s", raw_type)
-        return None
+        logger.warning(
+            "Converting unsupported visual object type=%s to card", raw_type
+        )
+        object_type = "card"
     item["type"] = object_type
     item["id"] = _text(item.get("id"), f"visual_{index + 1}")
 
     if object_type == "card":
         item["title"] = _text(item.get("title"), _text(item.get("label"), "说明"))
+        fallback_content = {
+            key: child
+            for key, child in item.items()
+            if key not in {"id", "type", "title", "label", "position", "style"}
+        }
         item["content"] = _json_text(
             item.get(
                 "content",
-                item.get("text", item.get("data", item.get("label", ""))),
+                item.get(
+                    "text",
+                    item.get("data", item.get("label", fallback_content)),
+                ),
             )
         )
+    elif object_type == "array":
+        cells = item.get("cells", item.get("values", []))
+        if isinstance(cells, dict):
+            cells = [cells]
+        if not isinstance(cells, list):
+            cells = []
+        item["cells"] = [
+            cell if isinstance(cell, dict) else {"index": position, "value": cell}
+            for position, cell in enumerate(cells)
+        ]
     elif object_type == "mindmap" and not isinstance(item.get("root"), dict):
         item["root"] = {"label": _text(item.get("root"), item.get("label", ""))}
     elif object_type == "code_block":

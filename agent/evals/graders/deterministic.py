@@ -25,6 +25,9 @@ def _normalise(value: Any) -> str:
 
 
 _NEGATED_CLAIM_PREFIXES = (
+    "误认为",
+    "误以为",
+    "错误地认为",
     "不是",
     "并非",
     "不能",
@@ -63,7 +66,9 @@ def _contains_asserted_forbidden_claim(text: str, claim: str) -> bool:
         index = normalized_text.find(normalized_claim, start)
         if index < 0:
             return False
-        prefix = normalized_text[max(0, index - 8) : index]
+        # The subject may sit between the negator and predicate, for example
+        # ``快速排序不是稳定排序``.  Use a bounded clause-sized look-behind.
+        prefix = normalized_text[max(0, index - 24) : index]
         if not any(prefix.endswith(negation) for negation in _NEGATED_CLAIM_PREFIXES):
             return True
         start = index + len(normalized_claim)
@@ -74,6 +79,12 @@ _NON_ASSERTION_FIELDS = {
     "choices",
     "answers",
     "distractors",
+    # Planner/knowledge metadata deliberately records misconceptions that the
+    # lesson should correct; these values are not asserted teaching claims.
+    "common_pitfalls",
+    "pitfalls",
+    "misconceptions",
+    "counterexamples",
 }
 _NON_ASSERTION_CONTEXT_MARKERS = (
     "误区",
@@ -169,15 +180,26 @@ def _grade_oracle(case: EvalCase, frames: list[dict[str, Any]]) -> tuple[bool | 
     if not frames:
         return False, ["oracle cannot run because artifact has no frames"]
 
-    final_state = frames[-1].get("state_snapshot", {})
     if case.oracle.kind == "sorted_array":
         values = case.oracle.input.get("values", [])
         expected = case.oracle.expected if case.oracle.expected is not None else sorted(values)
-        actual = _find_array(final_state)
-        if actual != expected:
-            return False, [f"sorted array mismatch: expected={expected!r}, actual={actual!r}"]
-        return True, []
+        # A lesson may present the completed sort and then continue with an
+        # unrelated misconception example or practice input.  Accept the
+        # requested input's correct result wherever it appears in the flow;
+        # do not mistake the final exercise's initial state for the result.
+        candidates = [
+            actual
+            for frame in reversed(frames)
+            if isinstance(frame, dict)
+            and isinstance((state := frame.get("state_snapshot", {})), dict)
+            and (actual := _find_array(state)) is not None
+        ]
+        if expected in candidates:
+            return True, []
+        actual = candidates[0] if candidates else None
+        return False, [f"sorted array mismatch: expected={expected!r}, actual={actual!r}"]
 
+    final_state = frames[-1].get("state_snapshot", {})
     issues = []
     expected_state = case.oracle.expected or case.expected.final_state
     for path, expected in expected_state.items():
