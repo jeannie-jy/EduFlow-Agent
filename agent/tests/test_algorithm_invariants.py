@@ -130,6 +130,47 @@ async def test_derived_path_tree_is_checked_against_primary_graph():
 
 
 @pytest.mark.asyncio
+async def test_repeated_path_tree_representations_are_not_multiple_predecessors():
+    first = _graph_frame(
+        "f_001",
+        {
+            "dist": {"A": 0, "B": 4, "C": 2, "D": 9},
+            "shortest_path_tree": {"A": None, "B": "A", "C": "A", "D": "B"},
+        },
+    )
+    first["visual_objects"][0]["nodes"].append({"id": "D"})
+    first["visual_objects"][0]["edges"] = [
+        {"source": "A", "target": "B", "weight": 4},
+        {"source": "A", "target": "C", "weight": 2},
+        {"source": "B", "target": "D", "weight": 5},
+    ]
+    first["visual_objects"].append(
+        {
+            "id": "path_tree",
+            "type": "graph",
+            "graph_role": "derived",
+            "edges": [
+                {"source": "A", "target": "B", "weight": 4},
+                {"source": "A", "target": "C", "weight": 2},
+                {"source": "B", "target": "D", "weight": 5},
+            ],
+        }
+    )
+    second = {
+        "frame_id": "f_002",
+        "visual_objects": first["visual_objects"],
+        "state_snapshot": first["state_snapshot"],
+    }
+
+    result = await check_algorithm_invariants(
+        [first, second], topic="Dijkstra 最短路径"
+    )
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
 async def test_non_shortest_path_topic_is_not_overconstrained():
     result = await check_algorithm_invariants(
         [_graph_frame("f_001", {"visited": ["A"]})],

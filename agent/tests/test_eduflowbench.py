@@ -125,6 +125,72 @@ async def test_deterministic_grader_cannot_hide_blocking_failures():
 
 
 @pytest.mark.asyncio
+async def test_forbidden_claim_allows_explicit_negation():
+    case = _case(
+        required_concepts=["快速排序"],
+        forbidden_claims=["稳定排序"],
+    ).model_copy(update={"topic": "快速排序"})
+    artifact = _artifact()
+    artifact["topic"] = "快速排序"
+    artifact["frames"][0]["narration"] = "快速排序不是稳定排序。"
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["forbidden_claim_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_forbidden_claim_still_blocks_positive_assertion():
+    case = _case(
+        required_concepts=["快速排序"],
+        forbidden_claims=["稳定排序"],
+    ).model_copy(update={"topic": "快速排序"})
+    artifact = _artifact()
+    artifact["topic"] = "快速排序"
+    artifact["frames"][0]["narration"] = "快速排序是稳定排序。"
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is False
+    assert result["metrics"]["forbidden_claim_pass"] is False
+
+
+@pytest.mark.asyncio
+async def test_forbidden_claim_allows_multiple_choice_distractor():
+    case = _case(
+        required_concepts=["快速排序"],
+        forbidden_claims=["稳定排序"],
+    ).model_copy(update={"topic": "快速排序"})
+    artifact = _artifact()
+    artifact["topic"] = "快速排序"
+    artifact["frames"][0]["narration"] = "快速排序的练习选项如下。"
+    artifact["frames"][0]["state_snapshot"] = {
+        "array": [1, 2, 3],
+        "practice": {
+            "question": "快速排序是否稳定？",
+            "options": ["快速排序是稳定排序", "快速排序不是稳定排序"],
+        }
+    }
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["forbidden_claim_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_sorted_array_oracle_accepts_explicit_result_key():
+    artifact = _artifact()
+    artifact["frames"][-1]["state_snapshot"] = {"sorted_array": [1, 2, 3]}
+
+    result = await grade_artifact(_case(), artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["oracle_pass"] is True
+
+
+@pytest.mark.asyncio
 async def test_duplicate_frame_ids_are_a_blocking_failure():
     artifact = _artifact()
     artifact["frames"].append(dict(artifact["frames"][0]))

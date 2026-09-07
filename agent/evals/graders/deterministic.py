@@ -24,6 +24,94 @@ def _normalise(value: Any) -> str:
     return re.sub(r"[\s\-_，。；：、,.!?！？:;]+", "", text)
 
 
+_NEGATED_CLAIM_PREFIXES = (
+    "不是",
+    "并非",
+    "不能",
+    "不可",
+    "不应",
+    "不该",
+    "不保证",
+    "不支持",
+    "不属于",
+    "没有",
+    "避免",
+    "非",
+    "不",
+    "未",
+    "无",
+)
+
+
+def _contains_asserted_forbidden_claim(text: str, claim: str) -> bool:
+    """Return whether a forbidden phrase is asserted rather than negated.
+
+    Dataset ``forbidden_claims`` describe incorrect assertions, so a teaching
+    artifact must be allowed to say ``不是稳定排序`` or ``不能原地交换``
+    while correcting the misconception.  A raw substring search would flag
+    those valid explanations.  We inspect every occurrence and ignore only a
+    short, explicit Chinese negation immediately before the phrase; a later
+    positive occurrence still remains blocking.
+    """
+    normalized_text = _normalise(text)
+    normalized_claim = _normalise(claim)
+    if not normalized_claim:
+        return False
+
+    start = 0
+    while True:
+        index = normalized_text.find(normalized_claim, start)
+        if index < 0:
+            return False
+        prefix = normalized_text[max(0, index - 8) : index]
+        if not any(prefix.endswith(negation) for negation in _NEGATED_CLAIM_PREFIXES):
+            return True
+        start = index + len(normalized_claim)
+
+
+_NON_ASSERTION_FIELDS = {
+    "options",
+    "choices",
+    "answers",
+    "distractors",
+}
+_NON_ASSERTION_CONTEXT_MARKERS = (
+    "误区",
+    "反例",
+    "misconception",
+    "counterexample",
+    "pitfall",
+)
+
+
+def _iter_assertion_strings(
+    value: Any,
+    field_name: str | None = None,
+    non_assertion_context: bool = False,
+):
+    """Yield textual assertions while excluding interactive answer options."""
+    if isinstance(value, dict):
+        context_text = " ".join(
+            str(value.get(key, ""))
+            for key in ("id", "label", "title", "learning_goal")
+        ).casefold()
+        current_context = non_assertion_context or any(
+            marker in context_text for marker in _NON_ASSERTION_CONTEXT_MARKERS
+        )
+        for key, child in value.items():
+            key_text = str(key).casefold()
+            if key_text in _NON_ASSERTION_FIELDS:
+                continue
+            if current_context and key_text in {"rows", "data"}:
+                continue
+            yield from _iter_assertion_strings(child, key_text, current_context)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_assertion_strings(child, field_name, non_assertion_context)
+    elif isinstance(value, str):
+        yield value
+
+
 def _get_path(value: dict[str, Any], path: str) -> Any:
     current: Any = value
     for part in path.split("."):
@@ -65,7 +153,10 @@ def _reference_integrity(frames: list[dict[str, Any]]) -> tuple[bool, list[str]]
 
 
 def _find_array(final_state: dict[str, Any]) -> list[Any] | None:
-    for key in ("array", "values", "items", "data"):
+    # ``sorted_array`` is the explicit result key emitted by the production
+    # workflow for sorting lessons. Keep the generic aliases for older
+    # artifacts and hand-authored evaluation fixtures.
+    for key in ("array", "sorted_array", "values", "items", "data"):
         candidate = final_state.get(key)
         if isinstance(candidate, list):
             return candidate
@@ -124,7 +215,10 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
     forbidden_hits = [
         claim
         for claim in case.expected.forbidden_claims
-        if _normalise(claim) in normalised
+        if any(
+            _contains_asserted_forbidden_claim(text, claim)
+            for text in _iter_assertion_strings(artifact)
+        )
     ]
     frame_count_ok = case.expected.min_frames <= len(frames) <= case.expected.max_frames
     oracle_ok, oracle_issues = _grade_oracle(case, frames)

@@ -78,3 +78,21 @@ def test_normalize_dsl_does_not_hide_missing_required_frame_id():
         assert "frame_id" in str(exc)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("missing frame_id must remain a blocking schema error")
+
+
+def test_normalize_dsl_preserves_chart_as_renderable_table_or_card():
+    source = _legacy_dsl()
+    source["frames"][0]["visual_objects"] = [
+        {"id": "chart_data", "type": "chart", "data": [1, 2, 3]},
+        {"id": "chart_without_data", "type": "chart", "label": "趋势说明"},
+    ]
+
+    normalized = normalize_dsl(source)
+    objects = normalized["frames"][0]["visual_objects"]
+
+    assert objects[0]["type"] == "table"
+    assert objects[0]["headers"] == ["value"]
+    assert objects[0]["rows"] == [[1], [2], [3]]
+    assert objects[1]["type"] == "card"
+    assert objects[1]["content"] == "趋势说明"
+    RenderScript.model_validate(normalized)

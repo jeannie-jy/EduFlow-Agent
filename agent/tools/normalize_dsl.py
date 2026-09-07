@@ -161,14 +161,24 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
         "flowchart": "graph",
     }
     object_type = aliases.get(raw_type, raw_type)
-    if raw_type == "chart" and isinstance(item.get("data"), list):
-        rows = [row for row in item["data"] if isinstance(row, dict)]
+    if raw_type == "chart":
+        data = item.get("data")
+        rows = [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
         if rows:
             headers = list(rows[0])
             item["headers"] = headers
             item["rows"] = [[row.get(header, "") for header in headers] for row in rows]
             object_type = "table"
+        elif isinstance(data, list):
+            # Preserve primitive chart samples as a renderable one-column table
+            # instead of silently dropping the model's visual object.
+            item["headers"] = ["value"]
+            item["rows"] = [[value] for value in data]
+            object_type = "table"
         else:
+            # A chart without tabular data cannot be rendered as a chart in the
+            # current DSL. Keep its explanation as a card so the frame remains
+            # visible and the unsupported type is not silently discarded.
             object_type = "card"
     if object_type not in _OBJECT_TYPES:
         logger.warning("Dropping unsupported visual object type=%s", raw_type)
@@ -179,7 +189,10 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
     if object_type == "card":
         item["title"] = _text(item.get("title"), _text(item.get("label"), "说明"))
         item["content"] = _json_text(
-            item.get("content", item.get("text", item.get("label", "")))
+            item.get(
+                "content",
+                item.get("text", item.get("data", item.get("label", ""))),
+            )
         )
     elif object_type == "mindmap" and not isinstance(item.get("root"), dict):
         item["root"] = {"label": _text(item.get("root"), item.get("label", ""))}

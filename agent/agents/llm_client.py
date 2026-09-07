@@ -283,7 +283,8 @@ async def call_llm_structured(
     result = None
     retry_hint_added = False
 
-    # JSON mode + non-thinking 下，一次有界重试足以覆盖偶发空响应/截断。
+    # JSON mode + non-thinking 下，一次有界重试足以覆盖偶发空响应、截断
+    # 和 JSON-looking syntax error；继续指数扩容会放大延迟和费用。
     # 继续进行 4 次指数扩容只会放大延迟和费用，且掩盖无界 schema 问题。
     max_attempts = 2
     hard_max_tokens = 32768
@@ -357,44 +358,52 @@ async def call_llm_structured(
         if result is not None:
             return result
 
-        # 检查是否因截断导致解析失败
+        # Providers occasionally return a JSON-looking object with a syntax
+        # error even when finish_reason is ``stop`` (for example a missing
+        # comma).  Retry that bounded class of structured-output failures too;
+        # otherwise the Planner fails immediately despite a recoverable model
+        # formatting error.  Plain natural-language refusals are not retried.
         is_truncated = (
             choice.finish_reason == "length"
             or _looks_truncated(raw_text)
         )
-        if not is_truncated:
-            break  # 不是截断问题，重试也没用
+        is_json_like = _looks_like_json_object(raw_text)
+        if not is_truncated and not is_json_like:
+            break
 
         if attempt + 1 >= max_attempts:
             break
 
         from services.telemetry import record_gateway_retry
 
-        record_gateway_retry(
-            operation="structured",
-            reason=str(choice.finish_reason or "incomplete_json"),
+        retry_reason = (
+            str(choice.finish_reason or "incomplete_json")
+            if is_truncated
+            else "parse_error"
         )
+        record_gateway_retry(operation="structured", reason=retry_reason)
         prev_max_tokens = current_max_tokens
-        current_max_tokens = min(current_max_tokens * 2, hard_max_tokens)
-        if current_max_tokens == prev_max_tokens:
+        if is_truncated:
+            current_max_tokens = min(current_max_tokens * 2, hard_max_tokens)
+        if is_truncated and current_max_tokens == prev_max_tokens:
             break  # token 已达上限，无法继续加倍
         if not retry_hint_added:
-            # A larger budget alone often causes the model to produce an even
-            # larger DSL. Add one compact retry instruction so the next call
-            # prefers concise narration/metadata and reserves tokens for the
-            # remaining JSON structure.
+            # Add one compact retry instruction so the next call prefers
+            # concise narration/metadata and reserves tokens for the remaining
+            # JSON structure.
             messages.append({
                 "role": "user",
                 "content": (
-                    "上一轮输出未形成完整 JSON。请重试并严格只输出合法 JSON；"
+                    "上一轮输出未形成可解析 JSON。请重试并严格只输出合法 JSON；"
                     "压缩 narration、解释和重复 metadata，优先保证所有括号闭合，"
                     "不要输出 markdown 或额外说明。"
                 ),
             })
             retry_hint_added = True
         logger.warning(
-            "LLM 结构化输出不完整 (finish_reason=%s, used_max_tokens=%d); "
-            "next_max_tokens=%d retry=%d/%d",
+            "LLM 结构化输出需要重试 (reason=%s, finish_reason=%s, "
+            "used_max_tokens=%d); next_max_tokens=%d retry=%d/%d",
+            retry_reason,
             response.choices[0].finish_reason,
             prev_max_tokens,
             current_max_tokens,
@@ -485,6 +494,22 @@ def _looks_truncated(text: str) -> bool:
     if text[-1] in ',:"' or text[-1].isalpha():
         return True
     return False
+
+
+def _looks_like_json_object(text: str) -> bool:
+    """Return whether failed output is plausibly a JSON object.
+
+    Structured calls expect an object. Requiring an opening brace at the
+    beginning (or both braces somewhere after a provider wrapper) avoids
+    retrying plain-text refusals while still recovering malformed JSON whose
+    finish reason is incorrectly reported as ``stop``.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    if cleaned.startswith("{"):
+        return True
+    return "{" in cleaned and "}" in cleaned
 
 
 def _fix_unescaped_newlines(text: str) -> str:

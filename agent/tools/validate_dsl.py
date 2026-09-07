@@ -263,7 +263,11 @@ async def check_algorithm_invariants(
     graph_signature: frozenset[tuple[str, str, str]] | None = None
     primary_graph_id = _primary_graph_id(frames)
     final_dist: dict[str, float] = {}
-    tree_edges: list[tuple[str, str, str]] = []
+    # A frame may expose the same path tree both as a derived graph and in its
+    # state snapshot. Later frames may repeat an unchanged tree. Keep evidence
+    # scoped to each frame so those representations are not mistaken for
+    # multiple predecessors.
+    tree_edges_by_frame: dict[str, set[tuple[str, str]]] = {}
     secondary_trace_active = False
 
     for frame in frames:
@@ -275,11 +279,11 @@ async def check_algorithm_invariants(
         # A derived path-tree visual is not a replacement for the primary
         # graph, but its edges still form an executable claim that must be
         # checked against the primary edge weights and final distances.
+        frame_tree_edges: set[tuple[str, str]] = set()
         for visual in _graph_visuals(frame):
             if _graph_role(visual) == "derived":
-                tree_edges.extend(
-                    (frame_id, parent, child)
-                    for parent, child in _extract_tree_edges(
+                frame_tree_edges.update(
+                    _extract_tree_edges(
                         visual.get("edges", visual.get("graph_edges", []))
                     )
                 )
@@ -383,32 +387,39 @@ async def check_algorithm_invariants(
 
         for key in ("shortest_path_tree", "path_tree", "predecessors", "parents", "parent"):
             if key in snapshot:
-                tree_edges.extend(
-                    (frame_id, parent, child)
-                    for parent, child in _extract_tree_edges(snapshot[key])
-                )
+                frame_tree_edges.update(_extract_tree_edges(snapshot[key]))
+
+        if frame_tree_edges:
+            tree_edges_by_frame.setdefault(frame_id, set()).update(frame_tree_edges)
 
         previous_dist = current_dist or previous_dist
 
-    if tree_edges and final_dist and edge_map:
-        seen_children: set[str] = set()
-        for tree_frame_id, parent, child in tree_edges:
-            if child in seen_children:
-                issues.append({"frame_id": tree_frame_id, "description": f"最短路径树为 {child} 指定了多个前驱"})
-            seen_children.add(child)
-            weights = edge_map.get((parent, child), [])
-            if not weights:
-                issues.append({"frame_id": tree_frame_id, "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
-                continue
-            parent_dist = final_dist.get(parent)
-            child_dist = final_dist.get(child)
-            if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
-                continue
-            if not any(math.isclose(child_dist, parent_dist + weight, rel_tol=1e-9, abs_tol=1e-9) for weight in weights):
-                issues.append({
-                    "frame_id": tree_frame_id,
-                    "description": f"最短路径树边 {parent}->{child} 与 dist 不一致: dist[{child}]={child_dist:g}",
-                })
+    if tree_edges_by_frame and final_dist and edge_map:
+        for tree_frame_id, frame_tree_edges in tree_edges_by_frame.items():
+            parents_by_child: dict[str, set[str]] = {}
+            for parent, child in frame_tree_edges:
+                parents_by_child.setdefault(child, set()).add(parent)
+            for child, parents in parents_by_child.items():
+                if len(parents) > 1:
+                    issues.append({
+                        "frame_id": tree_frame_id,
+                        "description": f"最短路径树为 {child} 指定了多个前驱",
+                    })
+
+            for parent, child in frame_tree_edges:
+                weights = edge_map.get((parent, child), [])
+                if not weights:
+                    issues.append({"frame_id": tree_frame_id, "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
+                    continue
+                parent_dist = final_dist.get(parent)
+                child_dist = final_dist.get(child)
+                if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
+                    continue
+                if not any(math.isclose(child_dist, parent_dist + weight, rel_tol=1e-9, abs_tol=1e-9) for weight in weights):
+                    issues.append({
+                        "frame_id": tree_frame_id,
+                        "description": f"最短路径树边 {parent}->{child} 与 dist 不一致: dist[{child}]={child_dist:g}",
+                    })
 
     return {"checked": True, "consistent": not issues, "issues": issues}
 

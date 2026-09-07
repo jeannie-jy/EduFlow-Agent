@@ -469,6 +469,47 @@ class TestCallLLMStructured:
         assert mock_llm_client.chat.completions.create.call_args_list[1].kwargs["max_tokens"] == 16
 
     @pytest.mark.asyncio
+    async def test_malformed_json_with_stop_reason_is_retried(self, mock_llm_client):
+        """可解析的 JSON 外壳即使 finish_reason=stop 也应进行一次修复重试。"""
+        first = MagicMock()
+        first_choice = MagicMock()
+        first_choice.message.content = '{"items": [1 2]}'
+        first_choice.message.tool_calls = None
+        first_choice.finish_reason = "stop"
+        first.choices = [first_choice]
+        first.usage = None
+
+        second = MagicMock()
+        second_choice = MagicMock()
+        second_choice.message.content = '{"items": [1, 2]}'
+        second_choice.message.tool_calls = None
+        second_choice.finish_reason = "stop"
+        second.choices = [second_choice]
+        second.usage = MagicMock()
+        second.usage.prompt_tokens = 1
+        second.usage.completion_tokens = 1
+        second.usage.total_tokens = 2
+
+        mock_llm_client.chat.completions.create = AsyncMock(side_effect=[first, second])
+
+        with (
+            patch("agents.llm_client._log_usage") as log_usage,
+            patch("services.telemetry.record_gateway_retry") as record_retry,
+        ):
+            result = await call_llm_structured(
+                system_prompt="助手",
+                user_message="测试",
+                output_schema={"type": "object", "properties": {"items": {"type": "array"}}},
+                max_tokens=8,
+            )
+
+        assert result == {"items": [1, 2]}
+        assert log_usage.call_count == 2
+        record_retry.assert_called_once_with(operation="structured", reason="parse_error")
+        assert mock_llm_client.chat.completions.create.call_args_list[0].kwargs["max_tokens"] == 8
+        assert mock_llm_client.chat.completions.create.call_args_list[1].kwargs["max_tokens"] == 8
+
+    @pytest.mark.asyncio
     async def test_json_parse_failure_raises(self, mock_llm_client):
         """tool_calls 中的 JSON 解析失败应抛出 RuntimeError。"""
         mock_response = MagicMock()
