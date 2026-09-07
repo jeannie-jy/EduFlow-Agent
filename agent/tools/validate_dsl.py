@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 
 _INFINITY_VALUES = {"∞", "inf", "+inf", "infinity", "无穷", "无穷大"}
 _SHORTEST_PATH_MARKERS = ("dijkstra", "shortest path", "最短路径")
+_SECONDARY_GRAPH_MARKERS = (
+    "negative",
+    "counterexample",
+    "practice",
+    "exercise",
+    "反例",
+    "练习",
+)
+_DERIVED_GRAPH_MARKERS = ("path_tree", "path-tree", "shortest_path_tree", "路径树")
 
 
 def _distance_value(value: Any) -> float | None:
@@ -87,23 +96,94 @@ def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str,
     return vertices, edges
 
 
-def _frame_graph_signature(frame: dict[str, Any]) -> frozenset[tuple[str, str, str]]:
-    """Return a comparable edge signature for one frame's explicit graph."""
-    raw_edges: list[dict[str, Any]] = []
-    for visual in frame.get("visual_objects", []):
-        if not isinstance(visual, dict):
+def _graph_visuals(frame: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        visual
+        for visual in frame.get("visual_objects", [])
+        if isinstance(visual, dict) and visual.get("type") == "graph"
+    ]
+
+
+def _graph_role(visual: dict[str, Any]) -> str:
+    """Return the declared or inferred role of a graph visual.
+
+    A teaching artifact can contain a primary execution graph and independent
+    views such as a shortest-path tree, a negative-edge counterexample, or a
+    practice graph.  Treating all of them as one mutable graph creates false
+    invariant failures.  ``graph_role``/``role`` is preferred; legacy output
+    is classified from the visual id and label.
+    """
+    declared = visual.get("graph_role", visual.get("role"))
+    if isinstance(declared, str):
+        normalized = declared.strip().casefold().replace("-", "_")
+        if normalized in {"primary", "state", "main"}:
+            return "primary"
+        if normalized in {"derived", "path_tree", "view"}:
+            return "derived"
+        if normalized in {"secondary", "counterexample", "practice", "exercise", "example"}:
+            return "secondary"
+
+    identity = " ".join(
+        str(visual.get(key, "")) for key in ("id", "label", "title")
+    ).casefold()
+    if any(marker in identity for marker in _DERIVED_GRAPH_MARKERS):
+        return "derived"
+    if any(marker in identity for marker in _SECONDARY_GRAPH_MARKERS):
+        return "secondary"
+    return "primary"
+
+
+def _primary_graph_id(frames: list[dict[str, Any]]) -> str | None:
+    """Find the stable primary graph id, if the artifact declares one."""
+    for frame in frames:
+        for visual in _graph_visuals(frame):
+            if _graph_role(visual) == "primary" and visual.get("id"):
+                return str(visual["id"])
+    return None
+
+
+def _frame_has_secondary_graph(frame: dict[str, Any]) -> bool:
+    return any(_graph_role(visual) == "secondary" for visual in _graph_visuals(frame))
+
+
+def _frame_has_primary_graph(frame: dict[str, Any], primary_graph_id: str | None) -> bool:
+    for visual in _graph_visuals(frame):
+        if _graph_role(visual) != "primary":
             continue
-        if visual.get("type") == "graph":
-            candidates = visual.get("edges", visual.get("graph_edges", []))
-            if isinstance(candidates, list):
-                raw_edges.extend(item for item in candidates if isinstance(item, dict))
-        elif visual.get("type") == "edge":
-            raw_edges.append(visual)
-    graph_state = frame.get("state_snapshot", {}).get("graph", {})
-    if isinstance(graph_state, dict):
-        candidates = graph_state.get("edges", graph_state.get("graph_edges", []))
+        if primary_graph_id is None or str(visual.get("id")) == primary_graph_id:
+            return True
+    return False
+
+
+def _frame_graph_signature(
+    frame: dict[str, Any],
+    *,
+    primary_graph_id: str | None = None,
+) -> frozenset[tuple[str, str, str]]:
+    """Return the primary graph edge signature for one frame.
+
+    Derived and secondary graphs are intentionally excluded.  The primary
+    graph is selected by its declared role or stable visual id; this keeps the
+    invariant focused on the execution trace rather than every illustration.
+    """
+    raw_edges: list[dict[str, Any]] = []
+    for visual in _graph_visuals(frame):
+        if _graph_role(visual) != "primary":
+            continue
+        if primary_graph_id and str(visual.get("id")) != primary_graph_id:
+            continue
+        candidates = visual.get("edges", visual.get("graph_edges", []))
         if isinstance(candidates, list):
             raw_edges.extend(item for item in candidates if isinstance(item, dict))
+    if not _frame_has_secondary_graph(frame):
+        for visual in frame.get("visual_objects", []):
+            if isinstance(visual, dict) and visual.get("type") == "edge":
+                raw_edges.append(visual)
+        graph_state = frame.get("state_snapshot", {}).get("graph", {})
+        if isinstance(graph_state, dict):
+            candidates = graph_state.get("edges", graph_state.get("graph_edges", []))
+            if isinstance(candidates, list):
+                raw_edges.extend(item for item in candidates if isinstance(item, dict))
     return frozenset(
         (
             str(edge.get("source")),
@@ -181,8 +261,10 @@ async def check_algorithm_invariants(
     previous_visited: set[str] | None = None
     previous_queue: list[str] | None = None
     graph_signature: frozenset[tuple[str, str, str]] | None = None
+    primary_graph_id = _primary_graph_id(frames)
     final_dist: dict[str, float] = {}
-    tree_edges: list[tuple[str, str]] = []
+    tree_edges: list[tuple[str, str, str]] = []
+    secondary_trace_active = False
 
     for frame in frames:
         frame_id = str(frame.get("frame_id", "?"))
@@ -190,7 +272,40 @@ async def check_algorithm_invariants(
         if not isinstance(snapshot, dict):
             continue
 
-        frame_signature = _frame_graph_signature(frame)
+        # A derived path-tree visual is not a replacement for the primary
+        # graph, but its edges still form an executable claim that must be
+        # checked against the primary edge weights and final distances.
+        for visual in _graph_visuals(frame):
+            if _graph_role(visual) == "derived":
+                tree_edges.extend(
+                    (frame_id, parent, child)
+                    for parent, child in _extract_tree_edges(
+                        visual.get("edges", visual.get("graph_edges", []))
+                    )
+                )
+
+        # A counterexample/practice graph starts a separate illustrative trace.
+        # Do not compare its state against the primary execution trace; the
+        # following frames may continue that illustration without repeating the
+        # graph object.
+        if _frame_has_secondary_graph(frame):
+            secondary_trace_active = True
+            previous_dist = None
+            previous_visited = None
+            previous_queue = None
+            continue
+        if secondary_trace_active and not _frame_has_primary_graph(frame, primary_graph_id):
+            # A secondary example often omits the graph object in its next
+            # frame.  Keep it out of the primary execution trace until a
+            # primary graph is explicitly shown again.
+            continue
+        if _frame_has_primary_graph(frame, primary_graph_id):
+            secondary_trace_active = False
+
+        frame_signature = _frame_graph_signature(
+            frame,
+            primary_graph_id=primary_graph_id,
+        )
         if frame_signature:
             if graph_signature is None:
                 graph_signature = frame_signature
@@ -268,19 +383,22 @@ async def check_algorithm_invariants(
 
         for key in ("shortest_path_tree", "path_tree", "predecessors", "parents", "parent"):
             if key in snapshot:
-                tree_edges.extend(_extract_tree_edges(snapshot[key]))
+                tree_edges.extend(
+                    (frame_id, parent, child)
+                    for parent, child in _extract_tree_edges(snapshot[key])
+                )
 
         previous_dist = current_dist or previous_dist
 
     if tree_edges and final_dist and edge_map:
         seen_children: set[str] = set()
-        for parent, child in tree_edges:
+        for tree_frame_id, parent, child in tree_edges:
             if child in seen_children:
-                issues.append({"frame_id": "?", "description": f"最短路径树为 {child} 指定了多个前驱"})
+                issues.append({"frame_id": tree_frame_id, "description": f"最短路径树为 {child} 指定了多个前驱"})
             seen_children.add(child)
             weights = edge_map.get((parent, child), [])
             if not weights:
-                issues.append({"frame_id": "?", "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
+                issues.append({"frame_id": tree_frame_id, "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
                 continue
             parent_dist = final_dist.get(parent)
             child_dist = final_dist.get(child)
@@ -288,7 +406,7 @@ async def check_algorithm_invariants(
                 continue
             if not any(math.isclose(child_dist, parent_dist + weight, rel_tol=1e-9, abs_tol=1e-9) for weight in weights):
                 issues.append({
-                    "frame_id": "?",
+                    "frame_id": tree_frame_id,
                     "description": f"最短路径树边 {parent}->{child} 与 dist 不一致: dist[{child}]={child_dist:g}",
                 })
 

@@ -211,6 +211,9 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
 6. 变化的位置必须有 highlight 或 update_value 动画
 7. code_block 的 highlight_lines 每帧更新
 
+8. 如果上下文提供了 `required_concepts`，每个术语必须至少在一个帧的 narration、visual
+   label 或 code_block 中原样出现；不能只放在 teaching_plan 或 knowledge_graph 元数据中。
+
 ## 图算法状态不变量（Dijkstra / 最短路径主题必须遵守）
 
 1. 第一帧必须给出完整的节点、边和边权；后续帧不得改变图结构或边权。
@@ -222,6 +225,9 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
    `dist[child] = dist[parent] + edge_weight`；不要凭视觉猜测路径树。
 5. 至少一个帧必须提供 `checks` 或 `interaction_hooks`，用于让学习者验证一次松弛、
    最小节点选择或不可达节点判断；不要让整份推演只有被动动画。
+
+6. 主执行图的 visual_object 使用稳定 `id=primary_graph`、`graph_role=primary`；路径树、
+   负权反例和练习图必须分别使用 `graph_role=derived` 或 `graph_role=secondary`，不能覆盖主图。
 
 生成完成前逐项复核上述不变量；如果材料没有足够信息，不要编造边权或状态，明确标记信息不足。
 """
@@ -235,7 +241,9 @@ CODER_BATCH_SYSTEM_PROMPT = """你是 RenderScript 逐帧续写器。只输出�
 visual_objects 只能使用 RenderScript 合法类型，动画 target 必须引用当前帧对象。
 保持前一帧的图结构、变量命名和状态演进；不要重复 parameters/assets，不要输出 markdown。
 如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足
-dist[u] + edge_weight，路径树边必须存在于图中。
+dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `id=primary_graph`、
+`graph_role=primary`；其他反例/练习图必须标记为 `secondary`，不要让它们重置主轨迹。
+上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 
 # ============================================================================
@@ -337,7 +345,9 @@ REFLECTION_SYSTEM_PROMPT = """你是一位教学修订专家，负责根据质�
   `dist[child] = dist[parent] + edge_weight`，`visited` 只追加且不重复，
   不可达节点保持无穷大；最终 `shortest_path_tree` 只能引用图中真实存在的边。
 - 如果报告指出交互性不足，优先在已有帧补充一个 `checks` 或 `interaction_hooks`，
-  不要为了增加交互而重写无关帧。
+   不要为了增加交互而重写无关帧。
+- `required_concept_missing` 必须通过在可见帧的 narration、visual label 或 code_block
+  中补写原术语修复；不要只把术语放回 metadata。
 
 ## 输出格式
 

@@ -73,6 +73,63 @@ async def test_dijkstra_graph_edges_cannot_change_between_frames():
 
 
 @pytest.mark.asyncio
+async def test_secondary_graphs_do_not_reset_primary_trace():
+    first = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A"]},
+    )
+    secondary = {
+        "frame_id": "f_002",
+        "visual_objects": [
+            {
+                "id": "negative_graph",
+                "type": "graph",
+                "label": "负权边反例",
+                "nodes": [{"id": "X"}, {"id": "Y"}],
+                "edges": [{"source": "X", "target": "Y", "weight": -1}],
+            }
+        ],
+        "state_snapshot": {"dist": {"X": 0, "Y": -1}, "visited": ["X", "Y"]},
+    }
+    result = await check_algorithm_invariants(
+        [first, secondary], topic="Dijkstra 最短路径"
+    )
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_derived_path_tree_is_checked_against_primary_graph():
+    first = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}},
+    )
+    derived = {
+        "frame_id": "f_002",
+        "visual_objects": [
+            {
+                "id": "path_tree",
+                "type": "graph",
+                "graph_role": "derived",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "C", "weight": 9},
+                    {"source": "B", "target": "C", "weight": 2},
+                ],
+            }
+        ],
+        "state_snapshot": {"dist": {"A": 0, "B": 1, "C": 3}},
+    }
+    result = await check_algorithm_invariants(
+        [first, derived], topic="Dijkstra 最短路径"
+    )
+
+    assert result["consistent"] is False
+    assert any(issue["frame_id"] == "f_002" for issue in result["issues"])
+
+
+@pytest.mark.asyncio
 async def test_non_shortest_path_topic_is_not_overconstrained():
     result = await check_algorithm_invariants(
         [_graph_frame("f_001", {"visited": ["A"]})],

@@ -256,6 +256,8 @@ class FramesGenerator(BaseGenerator):
                 user_message=user_message,
                 output_schema=self.get_output_schema(),
                 teaching_plan=teaching_plan,
+                knowledge_graph=knowledge_graph,
+                constraints=constraints,
                 user_input=user_input,
                 llm_call=call_llm_structured,
                 routing_key="module:frames",

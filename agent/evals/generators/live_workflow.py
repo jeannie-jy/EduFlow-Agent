@@ -25,6 +25,11 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
             **case.constraints,
             "difficulty": case.difficulty,
             "eval_case_id": case.case_id,
+            # Keep benchmark expectations visible to the production Coder so
+            # required concepts are explicitly taught, not merely inferred by
+            # the offline grader after generation.
+            "required_concepts": case.expected.required_concepts,
+            "forbidden_claims": case.expected.forbidden_claims,
         },
         materials=case.materials,
         thread_id=thread_id,
