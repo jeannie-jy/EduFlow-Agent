@@ -6,9 +6,293 @@ DSL 校验工具：确定性检查，不依赖 LLM。
 from __future__ import annotations
 
 import logging
+import math
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_INFINITY_VALUES = {"∞", "inf", "+inf", "infinity", "无穷", "无穷大"}
+_SHORTEST_PATH_MARKERS = ("dijkstra", "shortest path", "最短路径")
+
+
+def _distance_value(value: Any) -> float | None:
+    """Convert the common DSL distance encodings to a comparable number."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(float(value)) else math.inf
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in _INFINITY_VALUES:
+            return math.inf
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            return None
+        return parsed if math.isfinite(parsed) else math.inf
+    return None
+
+
+def _queue_values(value: Any) -> list[str]:
+    """Extract vertex ids from queue/heap snapshots without assuming one format."""
+    if isinstance(value, str):
+        return [match for match in re.findall(r"([A-Za-z0-9_\-]+)\s*(?:\([^)]*\))?", value)]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            candidate = item.get("id", item.get("vertex", item.get("node", item.get("key"))))
+        else:
+            candidate = item
+        if candidate is not None:
+            text = str(candidate).strip()
+            if text:
+                result.append(text.split("(", 1)[0].strip())
+    return result
+
+
+def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str, Any]]]:
+    """Collect the first explicit graph definition used by the frames."""
+    vertices: set[str] = set()
+    edges: list[dict[str, Any]] = []
+    for frame in frames:
+        for visual in frame.get("visual_objects", []):
+            if not isinstance(visual, dict):
+                continue
+            if visual.get("type") == "graph":
+                for node in visual.get("nodes", []):
+                    if isinstance(node, dict):
+                        node_id = node.get("id", node.get("label"))
+                        if node_id is not None:
+                            vertices.add(str(node_id))
+                candidates = visual.get("edges", visual.get("graph_edges", []))
+                if isinstance(candidates, list):
+                    edges.extend(item for item in candidates if isinstance(item, dict))
+            elif visual.get("type") == "edge":
+                edges.append(visual)
+        graph_state = frame.get("state_snapshot", {}).get("graph", {})
+        if isinstance(graph_state, dict):
+            for node in graph_state.get("vertices", graph_state.get("nodes", [])):
+                if isinstance(node, dict):
+                    node = node.get("id", node.get("label"))
+                if node is not None:
+                    vertices.add(str(node))
+            state_edges = graph_state.get("edges", graph_state.get("graph_edges", []))
+            if isinstance(state_edges, list):
+                edges.extend(item for item in state_edges if isinstance(item, dict))
+        if vertices and edges:
+            break
+    return vertices, edges
+
+
+def _frame_graph_signature(frame: dict[str, Any]) -> frozenset[tuple[str, str, str]]:
+    """Return a comparable edge signature for one frame's explicit graph."""
+    raw_edges: list[dict[str, Any]] = []
+    for visual in frame.get("visual_objects", []):
+        if not isinstance(visual, dict):
+            continue
+        if visual.get("type") == "graph":
+            candidates = visual.get("edges", visual.get("graph_edges", []))
+            if isinstance(candidates, list):
+                raw_edges.extend(item for item in candidates if isinstance(item, dict))
+        elif visual.get("type") == "edge":
+            raw_edges.append(visual)
+    graph_state = frame.get("state_snapshot", {}).get("graph", {})
+    if isinstance(graph_state, dict):
+        candidates = graph_state.get("edges", graph_state.get("graph_edges", []))
+        if isinstance(candidates, list):
+            raw_edges.extend(item for item in candidates if isinstance(item, dict))
+    return frozenset(
+        (
+            str(edge.get("source")),
+            str(edge.get("target")),
+            (
+                "" if edge.get("weight") is None
+                else f"{weight:g}" if (weight := _distance_value(edge.get("weight"))) is not None
+                else str(edge.get("weight"))
+            ),
+        )
+        for edge in raw_edges
+        if edge.get("source") is not None and edge.get("target") is not None
+    )
+
+
+def _extract_tree_edges(value: Any) -> list[tuple[str, str]]:
+    """Read shortest-path tree/predecessor encodings emitted by the model."""
+    if isinstance(value, dict):
+        result: list[tuple[str, str]] = []
+        for child, parent in value.items():
+            if isinstance(parent, str):
+                result.append((parent, str(child)))
+        return result
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if isinstance(item, str) and "-" in item:
+            parent, child = item.split("-", 1)
+            if parent.strip() and child.strip():
+                result.append((parent.strip(), child.strip()))
+        elif isinstance(item, dict):
+            parent = item.get("source", item.get("parent", item.get("from")))
+            child = item.get("target", item.get("child", item.get("to")))
+            if parent is not None and child is not None:
+                result.append((str(parent), str(child)))
+    return result
+
+
+async def check_algorithm_invariants(
+    frames: list[dict[str, Any]],
+    *,
+    topic: str = "",
+) -> dict[str, Any]:
+    """Check graph-algorithm invariants that generic state checks cannot prove.
+
+    The check is intentionally scoped to Dijkstra/shortest-path artifacts. It
+    validates only evidence explicitly present in the DSL, so unrelated graph
+    lessons are not rejected merely because they use different state shapes.
+    """
+    topic_text = str(topic).casefold()
+    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
+        return {"checked": False, "consistent": True, "issues": []}
+
+    issues: list[dict[str, Any]] = []
+    vertices, edges = _graph_edges(frames)
+    edge_map: dict[tuple[str, str], list[float]] = {}
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if source is None or target is None:
+            continue
+        source_text, target_text = str(source), str(target)
+        vertices.update((source_text, target_text))
+        weight = _distance_value(edge.get("weight"))
+        if weight is not None and math.isfinite(weight):
+            edge_map.setdefault((source_text, target_text), []).append(weight)
+            if "dijkstra" in topic_text and weight < 0:
+                issues.append({
+                    "frame_id": "?",
+                    "description": f"Dijkstra 图中存在负权边 {source_text}->{target_text}",
+                })
+
+    previous_dist: dict[str, float] | None = None
+    previous_visited: set[str] | None = None
+    previous_queue: list[str] | None = None
+    graph_signature: frozenset[tuple[str, str, str]] | None = None
+    final_dist: dict[str, float] = {}
+    tree_edges: list[tuple[str, str]] = []
+
+    for frame in frames:
+        frame_id = str(frame.get("frame_id", "?"))
+        snapshot = frame.get("state_snapshot", {})
+        if not isinstance(snapshot, dict):
+            continue
+
+        frame_signature = _frame_graph_signature(frame)
+        if frame_signature:
+            if graph_signature is None:
+                graph_signature = frame_signature
+            elif frame_signature != graph_signature:
+                issues.append({
+                    "frame_id": frame_id,
+                    "description": "后续帧改变了图的节点连接或边权，图结构应保持不变",
+                })
+
+        raw_dist = snapshot.get("dist", snapshot.get("distances", snapshot.get("distance")))
+        current_dist: dict[str, float] | None = None
+        if isinstance(raw_dist, dict):
+            current_dist = {
+                str(key): value
+                for key, raw_value in raw_dist.items()
+                if (value := _distance_value(raw_value)) is not None
+            }
+            if current_dist:
+                final_dist = current_dist
+
+        if current_dist is not None and previous_dist is not None:
+            for vertex in set(previous_dist) & set(current_dist):
+                before, after = previous_dist[vertex], current_dist[vertex]
+                if math.isfinite(before) and math.isfinite(after) and after > before + 1e-9:
+                    issues.append({
+                        "frame_id": frame_id,
+                        "description": f"dist[{vertex}] 从 {before:g} 增加到 {after:g}，最短路状态不应回退",
+                    })
+                if math.isfinite(before) and math.isinf(after):
+                    issues.append({
+                        "frame_id": frame_id,
+                        "description": f"dist[{vertex}] 从有限值 {before:g} 重置为无穷大",
+                    })
+
+        raw_visited = snapshot.get("visited", snapshot.get("processed"))
+        if isinstance(raw_visited, list):
+            visited = {str(item) for item in raw_visited}
+            if len(visited) != len(raw_visited):
+                issues.append({"frame_id": frame_id, "description": "visited 包含重复顶点"})
+            if vertices and not visited <= vertices:
+                unknown = sorted(visited - vertices)
+                issues.append({"frame_id": frame_id, "description": f"visited 包含未定义顶点: {unknown}"})
+            if previous_visited is not None and not previous_visited <= visited:
+                issues.append({"frame_id": frame_id, "description": "visited 集合回退，移除了已处理顶点"})
+            previous_visited = visited
+
+        queue_key_present = any(key in snapshot for key in ("queue", "priority_queue", "heap", "unvisited"))
+        queue_raw = next(
+            (snapshot[key] for key in ("queue", "priority_queue", "heap", "unvisited") if key in snapshot),
+            None,
+        )
+        if queue_key_present or previous_queue is not None:
+            # Once a workflow starts emitting queue state, an omitted queue in
+            # a later frame is treated as empty rather than as "unknown". This
+            # catches a common unreachable-node bug where the queue is drained
+            # without recording the final dequeue.
+            queue = _queue_values(queue_raw) if queue_key_present else []
+            if previous_queue and not queue and previous_visited is not None:
+                current_visited = (
+                    {str(item) for item in raw_visited}
+                    if isinstance(raw_visited, list)
+                    else previous_visited
+                )
+                removed = set(previous_queue) - set(current_visited)
+                if removed:
+                    issues.append({
+                        "frame_id": frame_id,
+                        "description": f"队列从 {previous_queue} 变为空，但未处理顶点 {sorted(removed)}",
+                    })
+            if isinstance(raw_visited, list):
+                overlap = sorted(set(queue) & {str(item) for item in raw_visited})
+                if overlap:
+                    issues.append({"frame_id": frame_id, "description": f"已处理顶点仍在队列中: {overlap}"})
+            previous_queue = queue
+
+        for key in ("shortest_path_tree", "path_tree", "predecessors", "parents", "parent"):
+            if key in snapshot:
+                tree_edges.extend(_extract_tree_edges(snapshot[key]))
+
+        previous_dist = current_dist or previous_dist
+
+    if tree_edges and final_dist and edge_map:
+        seen_children: set[str] = set()
+        for parent, child in tree_edges:
+            if child in seen_children:
+                issues.append({"frame_id": "?", "description": f"最短路径树为 {child} 指定了多个前驱"})
+            seen_children.add(child)
+            weights = edge_map.get((parent, child), [])
+            if not weights:
+                issues.append({"frame_id": "?", "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
+                continue
+            parent_dist = final_dist.get(parent)
+            child_dist = final_dist.get(child)
+            if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
+                continue
+            if not any(math.isclose(child_dist, parent_dist + weight, rel_tol=1e-9, abs_tol=1e-9) for weight in weights):
+                issues.append({
+                    "frame_id": "?",
+                    "description": f"最短路径树边 {parent}->{child} 与 dist 不一致: dist[{child}]={child_dist:g}",
+                })
+
+    return {"checked": True, "consistent": not issues, "issues": issues}
 
 
 async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
@@ -21,7 +305,7 @@ async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     try:
         RenderScript.model_validate(dsl)
         valid = True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - validator must return structured errors
         valid = False
         errors.append(str(exc))
 
@@ -71,15 +355,15 @@ async def check_state_consistency(frames: list[dict[str, Any]]) -> dict[str, Any
                         and isinstance(nv, (int, float))
                         and cv != float("inf")
                         and cv < 1_000_000
+                        and (nv == float("inf") or nv > 1_000_000)
                     ):
-                        if nv == float("inf") or nv > 1_000_000:
-                            issues.append({
-                                "frame_pair": [fid_current, fid_next],
-                                "key": f"{key}.{sub_key}",
-                                "current_value": cv,
-                                "next_value": nv,
-                                "description": f"有效值 {cv} 在下一帧变为 {nv}，可能是状态不一致",
-                            })
+                        issues.append({
+                            "frame_pair": [fid_current, fid_next],
+                            "key": f"{key}.{sub_key}",
+                            "current_value": cv,
+                            "next_value": nv,
+                            "description": f"有效值 {cv} 在下一帧变为 {nv}，可能是状态不一致",
+                        })
 
     return {
         "consistent": len(issues) == 0,

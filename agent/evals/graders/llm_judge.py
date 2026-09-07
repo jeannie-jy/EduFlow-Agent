@@ -6,8 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
-JUDGE_PROMPT_VERSION = "eduflow-judge-v1"
+JUDGE_PROMPT_VERSION = "eduflow-judge-v2"
 JUDGE_CRITERIA = (
     "factual_correctness",
     "clarity",
@@ -21,7 +20,7 @@ JUDGE_CRITERIA = (
 
 class CriterionScore(BaseModel):
     score: int = Field(ge=1, le=5)
-    reason: str = Field(min_length=1, max_length=1000)
+    reason: str = Field(min_length=1, max_length=400)
 
 
 class JudgeResult(BaseModel):
@@ -32,7 +31,7 @@ class JudgeResult(BaseModel):
     overall_score: float = Field(ge=1, le=5)
     deterministic_passed: bool
 
-    def validated_criteria(self) -> "JudgeResult":
+    def validated_criteria(self) -> JudgeResult:
         missing = set(JUDGE_CRITERIA) - set(self.criteria)
         unknown = set(self.criteria) - set(JUDGE_CRITERIA)
         if missing or unknown:
@@ -49,7 +48,9 @@ def build_judge_request(case: dict[str, Any], artifact: dict[str, Any]) -> dict[
         "prompt_version": JUDGE_PROMPT_VERSION,
         "instruction": (
             "Evaluate the teaching artifact using every rubric criterion from 1 to 5. "
-            "Return only data matching the supplied schema. Do not infer candidate identity."
+            "Return only data matching the supplied schema. Do not infer candidate identity. "
+            "Keep each reason to one concise sentence (at most 120 Chinese characters); "
+            "cite a frame_id or concrete state contradiction when applicable."
         ),
         "rubric": list(JUDGE_CRITERIA),
         "case": case,

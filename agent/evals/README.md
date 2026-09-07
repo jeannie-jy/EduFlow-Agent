@@ -87,7 +87,7 @@ python -m evals.runners.run_online \
   --concurrency 1 \
   --timeout-seconds 300 \
   --model "$LLM_MODEL" \
-  --prompt-version workflow-v1 \
+  --prompt-version workflow-v2 \
   --judge-generator evals.generators.live_judge:judge_workflow_case \
   --judge-model "$EDUFLOW_EVAL_JUDGE_MODEL" \
   --budget-usd 10

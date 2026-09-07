@@ -8,7 +8,11 @@ import re
 from typing import Any
 
 from evals.models import EvalCase
-from tools.validate_dsl import check_state_consistency, validate_dsl_schema
+from tools.validate_dsl import (
+    check_algorithm_invariants,
+    check_state_consistency,
+    validate_dsl_schema,
+)
 
 
 def _normalise(value: Any) -> str:
@@ -104,6 +108,7 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
     frame_ids = [frame.get("frame_id") for frame in frames if isinstance(frame, dict)]
     frame_ids_unique = len(frame_ids) == len(set(frame_ids))
     consistency = await check_state_consistency(frames)
+    algorithm = await check_algorithm_invariants(frames, topic=case.topic)
     references_ok, reference_issues = _reference_integrity(frames)
 
     normalised = _normalise(artifact)
@@ -128,6 +133,7 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
         "dsl_schema_pass": bool(schema["valid"]),
         "frame_id_uniqueness_pass": frame_ids_unique,
         "state_consistency_pass": bool(consistency["consistent"]),
+        "algorithm_invariant_pass": bool(algorithm["consistent"]),
         "reference_integrity_pass": references_ok,
         "required_concept_coverage": round(concept_coverage, 4),
         "forbidden_claim_pass": not forbidden_hits,
@@ -139,6 +145,7 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
         bool(metrics["dsl_schema_pass"]),
         frame_ids_unique,
         bool(metrics["state_consistency_pass"]),
+        bool(metrics["algorithm_invariant_pass"]),
         bool(metrics["reference_integrity_pass"]),
         bool(metrics["forbidden_claim_pass"]),
         bool(metrics["frame_count_pass"]),
@@ -151,6 +158,10 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
     if not frame_ids_unique:
         issues.append("duplicate frame_id values are blocking")
     issues.extend(issue.get("description", str(issue)) for issue in consistency.get("issues", []))
+    issues.extend(
+        f"algorithm invariant: {issue.get('description', issue)}"
+        for issue in algorithm.get("issues", [])
+    )
     issues.extend(reference_issues)
     issues.extend(f"missing required concept: {name}" for name, found in concept_results.items() if not found)
     issues.extend(f"forbidden claim present: {claim}" for claim in forbidden_hits)

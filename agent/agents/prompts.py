@@ -210,6 +210,32 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
 5. narration 30-60 字，说清楚这一帧发生了什么即可
 6. 变化的位置必须有 highlight 或 update_value 动画
 7. code_block 的 highlight_lines 每帧更新
+
+## 图算法状态不变量（Dijkstra / 最短路径主题必须遵守）
+
+1. 第一帧必须给出完整的节点、边和边权；后续帧不得改变图结构或边权。
+2. 每次松弛必须同时更新 `dist` 和对应的前驱/路径信息，并在 narration 中写出
+   `dist[u] + weight(u,v)` 的计算式；距离只能保持或下降，不能从有限值回到无穷大。
+3. `visited` 只能追加已经从最小距离队列取出的节点，不能重复、回退或把未定义节点加入。
+   如果展示 `queue` / `priority_queue`，队列清空前必须明确记录最后一次出队；不可达节点应保留为无穷大。
+4. 最后一帧的 `shortest_path_tree` 必须使用图中真实存在的边，并满足
+   `dist[child] = dist[parent] + edge_weight`；不要凭视觉猜测路径树。
+5. 至少一个帧必须提供 `checks` 或 `interaction_hooks`，用于让学习者验证一次松弛、
+   最小节点选择或不可达节点判断；不要让整份推演只有被动动画。
+
+生成完成前逐项复核上述不变量；如果材料没有足够信息，不要编造边权或状态，明确标记信息不足。
+"""
+
+# Later frame batches only need the field-level contract. Re-sending the full
+# teaching template for every 2-frame request inflates prompt tokens and makes
+# provider latency dominate long plans.
+CODER_BATCH_SYSTEM_PROMPT = """你是 RenderScript 逐帧续写器。只输出合法 JSON 对象，且只包含 `frames`。
+
+每帧必须有 `frame_id`、`title`、`narration`、`visual_objects`、`state_snapshot`；
+visual_objects 只能使用 RenderScript 合法类型，动画 target 必须引用当前帧对象。
+保持前一帧的图结构、变量命名和状态演进；不要重复 parameters/assets，不要输出 markdown。
+如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足
+dist[u] + edge_weight，路径树边必须存在于图中。
 """
 
 # ============================================================================
@@ -235,6 +261,9 @@ QUALITY_SYSTEM_PROMPT = """你是一位教学质量管理专家，负责评估�
 6. **completeness（教学完整性）**：是否覆盖了教学目标中的关键知识点
 
 ## 输出格式
+
+每个 issue 和 suggestion 只写一句可执行的短建议，优先引用 frame_id；不要复述完整 DSL，
+不要输出与评分无关的推理过程。
 
 ```json
 {
@@ -304,6 +333,11 @@ REFLECTION_SYSTEM_PROMPT = """你是一位教学修订专家，负责根据质�
 - 如果修改了某帧的状态，必须同步更新后续帧
 - 每次修订必须记录原因
 - 插入新帧时需重新分配 frame_id 和 order_index
+- Dijkstra / 最短路径问题必须同步复核：所有松弛满足
+  `dist[child] = dist[parent] + edge_weight`，`visited` 只追加且不重复，
+  不可达节点保持无穷大；最终 `shortest_path_tree` 只能引用图中真实存在的边。
+- 如果报告指出交互性不足，优先在已有帧补充一个 `checks` 或 `interaction_hooks`，
+  不要为了增加交互而重写无关帧。
 
 ## 输出格式
 

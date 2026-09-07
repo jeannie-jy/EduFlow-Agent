@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import importlib
 import json
+import math
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -112,6 +113,8 @@ async def run_online_cases(
                             )
                             result["judge_usage"] = judged.get("usage", {})
                             result["judge_cost_usd"] = judged.get("cost_usd")
+                            if isinstance(judged.get("latency_ms"), (int, float)):
+                                result["judge_latency_ms"] = judged["latency_ms"]
                             if isinstance(judged.get("cost_usd"), (int, float)):
                                 judge_cost = max(float(judged["cost_usd"]), 0.0)
                                 total_case_cost += judge_cost
@@ -156,7 +159,8 @@ async def run_online_cases(
         if isinstance(item.get("cost_usd"), (int, float))
     ]
     if latencies:
-        summary["p95_latency_ms"] = latencies[max(0, int(len(latencies) * 0.95) - 1)]
+        p95_index = max(0, math.ceil(len(latencies) * 0.95) - 1)
+        summary["p95_latency_ms"] = latencies[p95_index]
     if costs:
         summary["mean_cost_usd"] = round(sum(costs) / len(costs), 6)
         summary["total_cost_usd"] = round(sum(costs), 6)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -14,6 +15,7 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
     """Generate one teaching artifact without API persistence or HITL pauses."""
     from services.generate_service import run_generation_sync_with_usage
 
+    started = time.perf_counter()
     project_id = str(uuid.uuid5(EVAL_NAMESPACE, case.case_id))
     thread_id = f"eval:{case.case_id}:{uuid.uuid4().hex}"
     state, usage = await run_generation_sync_with_usage(
@@ -37,5 +39,8 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
             "output": int(usage.get("output", 0)),
         },
         "cost_usd": float(usage.get("cost_usd", 0.0)),
-        "metadata": {"quality_report": state.get("quality_report") or {}},
+        "metadata": {
+            "quality_report": state.get("quality_report") or {},
+            "candidate_latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
     }

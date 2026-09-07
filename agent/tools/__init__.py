@@ -2,6 +2,7 @@
 
 - validate_dsl_schema: Pydantic 校验 + frame_id 检查
 - check_state_consistency: 帧间状态一致性检查
+- check_algorithm_invariants: 图算法状态不变量检查
 - generate_asset: 多模态资源生成（card/mindmap/table/code_snippet）
 - design_parameters: 参数设计工具（5 种知识类型模板）
 - normalize_dsl: 生成边界的 RenderScript 兼容归一化
@@ -11,6 +12,7 @@ Agent-facing Function Calling definitions and execution live in
 """
 
 from .validate_dsl import (
+    check_algorithm_invariants,
     check_state_consistency,
     validate_dsl_schema,
 )
@@ -28,6 +30,7 @@ __all__ = [
     # validate_dsl
     "validate_dsl_schema",
     "check_state_consistency",
+    "check_algorithm_invariants",
     # generate_asset
     "generate_asset",
     # design_parameters
