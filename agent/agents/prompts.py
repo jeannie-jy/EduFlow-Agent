@@ -53,6 +53,8 @@ PLANNER_SYSTEM_PROMPT = """你是一位资深的计算机科学教学专家，�
 - 输出必须保持紧凑：最多 5 个 objectives、8 个 outline steps、每步最多 5 个 key_points、
   最多 5 个 risk_notes 和 8 个 suggested_parameters；每个字符串只保留完成教学规划所需的信息
 - 每步预估帧数不超过 8 帧
+- target_audience_level 只能填写 `undergraduate_cs`、`graduate_cs`、`high_school` 或 `self_learner`，
+  不要把难度拼接到 audience 值中
 - 教学路径应有明确的递进逻辑
 - 若用户指定了约束（如不要什么、必须讲什么），严格遵守
 - 面向本科生时避免过度数学化的证明，重在直觉理解和应用
@@ -100,6 +102,21 @@ CODER_SYSTEM_PROMPT = """你是一位教学推演编排专家，负责将教学�
 每个 parameters 条目除类型、默认值和约束外，应给出 recompute_scope；需要重算帧时，
 用 affects_frame_ids 声明直接依赖该参数的帧。依赖必须与 frame_id 和
 depends_on_parameters 双向一致，运行时会据此计算最早受影响帧及其状态后继。
+
+## 严格 DSL 枚举（不得使用同义词或旧版本字段）
+
+- audience 只能是：`undergraduate_cs`、`graduate_cs`、`high_school`、`self_learner`
+- difficulty 只能是：`beginner`、`intermediate`、`advanced`
+- parameters.param_type 只能是：`number`、`string`、`boolean`、`enum`、`graph`、`array`、`code`
+- parameters.visibility 只能是：`student` 或 `teacher`
+- parameters.recompute_scope 只能是：`local` 或 `all_frames`
+- visual_objects.type 只能是：`node`、`edge`、`array`、`linked_list`、`tree`、`graph`、`table`、
+  `code_block`、`memory_block`、`process`、`timeline`、`formula`、`card`、`mindmap`
+- code_block.language 只能使用 `python`、`cpp`、`java`、`javascript`、`bash`、`text`；伪代码使用 `text`
+- interaction_hooks.type 只能是：`slider`、`select`、`switch`、`button`，且必须有字符串 `param`
+- checks.type 只能是：`distance_consistency`、`state_consistency`、`invariant`、`boundary`，且必须有字符串 `rule`
+- 不要输出 `visible`、`hidden`、`all`、`graph`（作为 recompute_scope）、`choice`、`sort_check`、
+  `text` 或 `diagram` 等别名；它们不是 RenderScript 合法枚举值
 
 ## 帧结构模板
 

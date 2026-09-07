@@ -46,6 +46,21 @@ model credits accidentally. Judge requests are versioned and blinded; a semantic
 score cannot override a deterministic failure. Human calibration reports exact
 agreement, within-one agreement, MAE, and Cohen's kappa.
 
+For a low-cost smoke run, select a subset before launching any paid evaluation:
+
+```bash
+python -m evals.runners.run_online \
+  --dataset evals/datasets/eduflowbench_v1.jsonl \
+  --limit 3 \
+  --offset 0 \
+  ...
+```
+
+The manual GitHub Actions workflows expose the same `case_limit` input. Use
+`3-5` to verify credentials, schema validity, and end-to-end latency; use the
+full dataset value (`50` for quality or `8` for Tool Calling) only for a release
+run. A smoke report must never be mixed with a full-dataset report.
+
 When `--budget-usd` is supplied, the runner serializes case starts and stops
 launching new cases once reported spend reaches the run budget. This makes the
 flag an execution-time gate rather than a post-run label; the provider may still

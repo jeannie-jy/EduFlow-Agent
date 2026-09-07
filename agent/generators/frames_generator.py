@@ -12,6 +12,8 @@ import json
 import logging
 from typing import Any
 
+from tools.normalize_dsl import normalize_dsl
+
 from .base import BaseGenerator
 from .registry import register_generator
 
@@ -92,9 +94,54 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                         },
                     },
                     "state_snapshot": {"type": "object"},
-                    "animations": {"type": "array", "maxItems": 6},
-                    "interaction_hooks": {"type": "array", "maxItems": 3},
-                    "checks": {"type": "array", "maxItems": 3},
+                    "animations": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "appear", "disappear", "highlight", "transform", "move",
+                                        "update_value", "compare", "swap", "relax_edge", "enqueue",
+                                        "dequeue", "split", "merge", "schedule", "lock", "unlock",
+                                    ],
+                                },
+                                "target": {"type": "string"},
+                                "target_2": {"type": "string"},
+                            },
+                            "required": ["type", "target"],
+                        },
+                    },
+                    "interaction_hooks": {
+                        "type": "array",
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["slider", "select", "switch", "button"]},
+                                "param": {"type": "string"},
+                                "label": {"type": "string"},
+                                "range": {"type": "array", "maxItems": 2},
+                                "options": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
+                                "default": {},
+                            },
+                            "required": ["type", "param"],
+                        },
+                    },
+                    "checks": {
+                        "type": "array",
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["distance_consistency", "state_consistency", "invariant", "boundary"]},
+                                "rule": {"type": "string", "maxLength": 500},
+                            },
+                            "required": ["type", "rule"],
+                        },
+                    },
                     "depends_on_parameters": {
                         "type": "array",
                         "maxItems": 8,
@@ -116,8 +163,8 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                     "default_value": {},
                     "current_value": {},
                     "constraints": {"type": "object"},
-                    "visibility": {"type": "string"},
-                    "recompute_scope": {"type": "string"},
+                    "visibility": {"type": "string", "enum": ["student", "teacher"]},
+                    "recompute_scope": {"type": "string", "enum": ["local", "all_frames"]},
                     "affects_frame_ids": {
                         "type": "array",
                         "maxItems": 12,
@@ -288,6 +335,8 @@ class FramesGenerator(BaseGenerator):
             "assets": validated_assets,
             "export_targets": ["web", "manim_video"],
         }
+
+        dsl = normalize_dsl(dsl)
 
         version_payload = json.dumps(
             dsl["frames"], ensure_ascii=False, sort_keys=True, default=str

@@ -17,6 +17,7 @@ from copy import deepcopy
 from typing import Any
 
 from config import get_settings
+from tools.normalize_dsl import normalize_dsl
 
 from .llm_client import call_llm_structured
 from .prompts import (
@@ -285,7 +286,10 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
     output_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "target_audience_level": {"type": "string", "maxLength": 80},
+            "target_audience_level": {
+                "type": "string",
+                "enum": ["undergraduate_cs", "graduate_cs", "high_school", "self_learner"],
+            },
             "prerequisites": {
                 "type": "array",
                 "maxItems": 8,
@@ -706,7 +710,11 @@ async def _generate_coder_batches(
         1,
         12,
     )
-    batch_size = 3
+    # Three frames are normally compact enough, but larger teaching plans tend
+    # to contain code/table payloads that exceed the provider's structured JSON
+    # budget.  Use two-frame batches for the long path; this adds one bounded
+    # request instead of paying for a truncated response plus a retry.
+    batch_size = 2 if expected_frames > 8 else 3
     merged_frames: list[dict[str, Any]] = []
     merged_parameters: list[dict[str, Any]] = []
     merged_assets: list[dict[str, Any]] = []
@@ -717,6 +725,13 @@ async def _generate_coder_batches(
         frames_schema = batch_schema["properties"]["frames"]
         frames_schema["minItems"] = count
         frames_schema["maxItems"] = count
+        if start:
+            # Parameters and assets are taken from the first batch.  Removing
+            # them from later schemas prevents the model from repeating large
+            # metadata blocks for every frame batch.
+            batch_schema["properties"].pop("parameters", None)
+            batch_schema["properties"].pop("assets", None)
+            batch_schema["required"] = ["frames"]
         batch_start = start + 1
         batch_end = start + count
         batch_prompt = (
@@ -724,6 +739,7 @@ async def _generate_coder_batches(
             f"这是第 {start // batch_size + 1} 批，只生成 f_{batch_start:03d} 到 "
             f"f_{batch_end:03d}，共 {count} 帧；不要生成其他帧。\n"
             "每帧保持 2-3 个 visual_objects，narration 简洁，优先保证 JSON 完整。\n"
+            "除第一批外，只返回 frames，不要重复输出 parameters 或 assets。\n"
             "</frame_batch>"
         )
         if merged_frames:
@@ -907,9 +923,54 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                             },
                         },
                         "state_snapshot": {"type": "object"},
-                        "animations": {"type": "array", "maxItems": 6},
-                        "interaction_hooks": {"type": "array", "maxItems": 3},
-                        "checks": {"type": "array", "maxItems": 3},
+                        "animations": {
+                            "type": "array",
+                            "maxItems": 6,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "appear", "disappear", "highlight", "transform", "move",
+                                            "update_value", "compare", "swap", "relax_edge", "enqueue",
+                                            "dequeue", "split", "merge", "schedule", "lock", "unlock",
+                                        ],
+                                    },
+                                    "target": {"type": "string"},
+                                    "target_2": {"type": "string"},
+                                },
+                                "required": ["type", "target"],
+                            },
+                        },
+                        "interaction_hooks": {
+                            "type": "array",
+                            "maxItems": 3,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string", "enum": ["slider", "select", "switch", "button"]},
+                                    "param": {"type": "string"},
+                                    "label": {"type": "string"},
+                                    "range": {"type": "array", "maxItems": 2},
+                                    "options": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
+                                    "default": {},
+                                },
+                                "required": ["type", "param"],
+                            },
+                        },
+                        "checks": {
+                            "type": "array",
+                            "maxItems": 3,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string", "enum": ["distance_consistency", "state_consistency", "invariant", "boundary"]},
+                                    "rule": {"type": "string", "maxLength": 500},
+                                },
+                                "required": ["type", "rule"],
+                            },
+                        },
                         "depends_on_parameters": {
                             "type": "array",
                             "maxItems": 8,
@@ -931,8 +992,8 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                         "default_value": {},
                         "current_value": {},
                         "constraints": {"type": "object"},
-                        "visibility": {"type": "string"},
-                        "recompute_scope": {"type": "string"},
+                        "visibility": {"type": "string", "enum": ["student", "teacher"]},
+                        "recompute_scope": {"type": "string", "enum": ["local", "all_frames"]},
                         "affects_frame_ids": {
                             "type": "array",
                             "maxItems": 12,
@@ -1039,6 +1100,11 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             regeneration_scope,
             state.get("locked_frame_ids", []),
         )
+
+    # Keep the persisted artifact on the same canonical contract as the
+    # Pydantic RenderScript schema.  This also handles aliases emitted by
+    # older prompts without weakening deterministic validation.
+    dsl = normalize_dsl(dsl)
 
     frame_count = len(dsl["frames"])
     logger.info("Coder: 完成 | frames=%d", frame_count)
@@ -1314,7 +1380,7 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
         new_frames.append(inserted)
 
     # 重建 DSL
-    new_dsl = {**dsl, "frames": new_frames}
+    new_dsl = normalize_dsl({**dsl, "frames": new_frames})
 
     # 更新修订历史
     history = state.get("revision_history", [])

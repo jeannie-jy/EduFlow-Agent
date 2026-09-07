@@ -18,6 +18,11 @@ on:
         required: true
         default: "2.00"
         type: string
+      case_limit:
+        description: Number of cases to run (use 3 for a smoke run, 8 for release)
+        required: true
+        default: "8"
+        type: string
 
 concurrency:
   group: online-tool-bench-${{ github.ref }}
@@ -69,6 +74,7 @@ jobs:
               --concurrency 1 \
               --model "$LLM_MODEL" \
               --prompt-version tool-router-v1 \
+              --limit "${{ inputs.case_limit }}" \
               --budget-usd "${{ inputs.budget_usd }}"
 
       - name: Collect benchmark report and diagnostics

@@ -27,6 +27,11 @@ on:
         required: true
         default: "10.00"
         type: string
+      case_limit:
+        description: Number of cases to run (use 3-5 for a smoke run, 50 for release)
+        required: true
+        default: "50"
+        type: string
 
 concurrency:
   group: online-quality-bench-${{ github.ref }}
@@ -92,6 +97,7 @@ jobs:
               --prompt-version workflow-v1 \
               --judge-generator evals.generators.live_judge:judge_workflow_case \
               --judge-model "$EDUFLOW_EVAL_JUDGE_MODEL" \
+              --limit "${{ inputs.case_limit }}" \
               --budget-usd "${{ inputs.budget_usd }}"
 
       - name: Collect benchmark report and diagnostics

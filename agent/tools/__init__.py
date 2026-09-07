@@ -4,6 +4,7 @@
 - check_state_consistency: 帧间状态一致性检查
 - generate_asset: 多模态资源生成（card/mindmap/table/code_snippet）
 - design_parameters: 参数设计工具（5 种知识类型模板）
+- normalize_dsl: 生成边界的 RenderScript 兼容归一化
 
 Agent-facing Function Calling definitions and execution live in
 ``services.tool_runtime``; this package retains deterministic internal tools.
@@ -21,6 +22,7 @@ from .generate_asset import (
 from .design_parameters import (
     design_parameters,
 )
+from .normalize_dsl import normalize_dsl
 
 __all__ = [
     # validate_dsl
@@ -30,4 +32,6 @@ __all__ = [
     "generate_asset",
     # design_parameters
     "design_parameters",
+    # normalize_dsl
+    "normalize_dsl",
 ]

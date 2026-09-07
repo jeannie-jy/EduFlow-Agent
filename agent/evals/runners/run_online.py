@@ -201,6 +201,17 @@ def main() -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--prompt-version", required=True)
     parser.add_argument("--budget-usd", type=float)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="evaluate only the first N dataset cases (useful for low-cost smoke runs)",
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="skip this many dataset cases before applying --limit",
+    )
     parser.add_argument("--judge-generator", help="Async judge as module:function")
     parser.add_argument("--judge-model")
     args = parser.parse_args()
@@ -212,8 +223,19 @@ def main() -> int:
     if args.judge_model and args.judge_model == args.model:
         parser.error("judge model must differ from candidate model")
 
+    all_cases = load_cases(args.dataset)
+    if args.offset < 0:
+        parser.error("--offset must be non-negative")
+    if args.limit is not None and args.limit <= 0:
+        parser.error("--limit must be greater than zero")
+    cases = all_cases[args.offset:]
+    if args.limit is not None:
+        cases = cases[:args.limit]
+    if not cases:
+        parser.error("case selection is empty")
+
     report = asyncio.run(run_online_cases(
-        load_cases(args.dataset),
+        cases,
         _load_generator(args.generator),
         concurrency=args.concurrency,
         timeout_seconds=args.timeout_seconds,
@@ -223,6 +245,9 @@ def main() -> int:
             "prompt_version": args.prompt_version,
             "budget_usd": args.budget_usd,
             "dataset": str(args.dataset),
+            "dataset_total_cases": len(all_cases),
+            "case_offset": args.offset,
+            "case_limit": args.limit,
             "generator": args.generator,
             "judge_generator": args.judge_generator,
             "judge_model": args.judge_model,
