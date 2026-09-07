@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any
 
-from evals.models import EvalCase
+from evals.models import EvalCase, ForbiddenClaimScope
 from tools.validate_dsl import (
     check_algorithm_invariants,
     check_state_consistency,
@@ -72,6 +72,47 @@ def _contains_asserted_forbidden_claim(text: str, claim: str) -> bool:
         if not any(prefix.endswith(negation) for negation in _NEGATED_CLAIM_PREFIXES):
             return True
         start = index + len(normalized_claim)
+
+
+_CLAUSE_BOUNDARY_RE = re.compile(r"[，,。！？!?；;\n]+|(?:而|但是|但|相反|相比之下)")
+
+
+def _contains_scoped_forbidden_claim(
+    text: str,
+    claim: str,
+    scope: ForbiddenClaimScope | None,
+) -> bool:
+    """Detect a forbidden assertion without penalizing valid comparisons.
+
+    Some predicates are only wrong for the lesson's focal subject.  For a BFS
+    case, for example, ``后进先出`` is wrong when attributed to BFS/queue but
+    correct when a comparison attributes it to DFS/stack.  Dataset-provided
+    scopes make that distinction explicit instead of embedding CS-specific
+    exceptions in grader code.
+    """
+    if scope is None:
+        return _contains_asserted_forbidden_claim(text, claim)
+
+    normalized_claim = _normalise(claim)
+    for clause in _CLAUSE_BOUNDARY_RE.split(text):
+        if normalized_claim not in _normalise(clause):
+            continue
+        if not _contains_asserted_forbidden_claim(clause, claim):
+            continue
+        normalized_clause = _normalise(clause)
+        has_subject = any(
+            _normalise(subject) in normalized_clause for subject in scope.subjects
+        )
+        has_allowed_subject = any(
+            _normalise(subject) in normalized_clause
+            for subject in scope.allowed_subjects
+        )
+        if has_allowed_subject and not has_subject:
+            continue
+        # If no explicit allowed attribution exists, retain the conservative
+        # legacy behavior so an isolated forbidden assertion remains blocking.
+        return True
+    return False
 
 
 _NON_ASSERTION_FIELDS = {
@@ -238,7 +279,11 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
         claim
         for claim in case.expected.forbidden_claims
         if any(
-            _contains_asserted_forbidden_claim(text, claim)
+            _contains_scoped_forbidden_claim(
+                text,
+                claim,
+                case.expected.forbidden_claim_scopes.get(claim),
+            )
             for text in _iter_assertion_strings(artifact)
         )
     ]

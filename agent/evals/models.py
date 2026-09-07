@@ -35,11 +35,21 @@ class ToolExpectation(BaseModel):
     max_calls: int = Field(default=8, ge=0, le=32)
 
 
+class ForbiddenClaimScope(BaseModel):
+    """Subjects that make an otherwise ambiguous forbidden phrase actionable."""
+
+    subjects: list[str] = Field(min_length=1)
+    allowed_subjects: list[str] = Field(default_factory=list)
+
+
 class EvalExpectation(BaseModel):
     """Assertions shared by offline deterministic and online semantic graders."""
 
     required_concepts: list[str] = Field(default_factory=list)
     forbidden_claims: list[str] = Field(default_factory=list)
+    forbidden_claim_scopes: dict[str, ForbiddenClaimScope] = Field(
+        default_factory=dict
+    )
     min_frames: int = Field(default=1, ge=0)
     max_frames: int = Field(default=30, ge=1)
     final_state: dict[str, Any] = Field(default_factory=dict)
@@ -48,6 +58,12 @@ class EvalExpectation(BaseModel):
     def validate_frame_range(self) -> "EvalExpectation":
         if self.min_frames > self.max_frames:
             raise ValueError("min_frames must not exceed max_frames")
+        unknown_claims = set(self.forbidden_claim_scopes) - set(self.forbidden_claims)
+        if unknown_claims:
+            raise ValueError(
+                "forbidden_claim_scopes keys must also appear in forbidden_claims: "
+                + ", ".join(sorted(unknown_claims))
+            )
         return self
 
 

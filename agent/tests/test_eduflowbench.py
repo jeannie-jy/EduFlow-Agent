@@ -175,6 +175,54 @@ async def test_forbidden_claim_ignores_planner_misconception_metadata():
 
 
 @pytest.mark.asyncio
+async def test_scoped_forbidden_claim_allows_correct_contrast_attribution():
+    case = _case(
+        required_concepts=["队列", "逐层", "已访问"],
+        forbidden_claims=["后进先出"],
+        forbidden_claim_scopes={
+            "后进先出": {
+                "subjects": ["BFS", "广度优先搜索", "队列"],
+                "allowed_subjects": ["DFS", "深度优先搜索", "栈"],
+            }
+        },
+    ).model_copy(update={"topic": "逐层演示广度优先搜索 BFS"})
+    artifact = _artifact()
+    artifact["topic"] = case.topic
+    artifact["frames"][0]["narration"] = (
+        "BFS 使用队列逐层访问并记录已访问节点，而栈的后进先出会形成深度优先。"
+    )
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["forbidden_claim_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_scoped_forbidden_claim_still_blocks_focal_subject():
+    case = _case(
+        required_concepts=["队列", "逐层", "已访问"],
+        forbidden_claims=["后进先出"],
+        forbidden_claim_scopes={
+            "后进先出": {
+                "subjects": ["BFS", "广度优先搜索", "队列"],
+                "allowed_subjects": ["DFS", "深度优先搜索", "栈"],
+            }
+        },
+    ).model_copy(update={"topic": "逐层演示广度优先搜索 BFS"})
+    artifact = _artifact()
+    artifact["topic"] = case.topic
+    artifact["frames"][0]["narration"] = (
+        "BFS 使用栈的后进先出策略逐层访问，并记录已访问节点。"
+    )
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is False
+    assert result["metrics"]["forbidden_claim_pass"] is False
+
+
+@pytest.mark.asyncio
 async def test_forbidden_claim_still_blocks_positive_assertion():
     case = _case(
         required_concepts=["快速排序"],
