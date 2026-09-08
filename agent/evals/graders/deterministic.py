@@ -21,7 +21,14 @@ def _normalise(value: Any) -> str:
         if isinstance(value, str)
         else json.dumps(value, ensure_ascii=False, sort_keys=True)
     ).casefold()
-    return re.sub(r"[\s\-_，。；：、,.!?！？:;]+", "", text)
+    # Quotes and brackets are presentation punctuation, not semantic distance
+    # between a negator and the misconception it scopes.  For example,
+    # ``避免'所有节点必然可达'的错误假设`` must remain an explicit negation.
+    return re.sub(
+        r"[\s\-_，。；：、,.!?！？:;'\"“”‘’「」『』《》〈〉()（）\[\]【】{}]+",
+        "",
+        text,
+    )
 
 
 _NEGATED_CLAIM_PREFIXES = (

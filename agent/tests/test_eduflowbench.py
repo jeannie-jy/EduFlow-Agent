@@ -157,6 +157,41 @@ async def test_forbidden_claim_allows_subject_between_negation_and_claim():
 
 
 @pytest.mark.asyncio
+async def test_forbidden_claim_allows_quoted_negated_misconception():
+    case = _case(
+        required_concepts=["不可达"],
+        forbidden_claims=["所有节点必然可达"],
+    ).model_copy(update={"topic": "Dijkstra 不可达节点"})
+    artifact = _artifact()
+    artifact["topic"] = case.topic
+    artifact["teaching_strategy"] = {
+        "objectives": ["能够识别并避免'所有节点必然可达'的错误假设"]
+    }
+    artifact["frames"][0]["narration"] = "不可达节点的距离保持无穷大。"
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is True
+    assert result["metrics"]["forbidden_claim_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_forbidden_claim_still_blocks_quoted_positive_assertion():
+    case = _case(
+        required_concepts=[],
+        forbidden_claims=["所有节点必然可达"],
+    ).model_copy(update={"topic": "Dijkstra 不可达节点"})
+    artifact = _artifact()
+    artifact["topic"] = case.topic
+    artifact["frames"][0]["narration"] = "结论：“所有节点必然可达”。"
+
+    result = await grade_artifact(case, artifact)
+
+    assert result["passed"] is False
+    assert result["metrics"]["forbidden_claim_pass"] is False
+
+
+@pytest.mark.asyncio
 async def test_forbidden_claim_ignores_planner_misconception_metadata():
     artifact = _artifact()
     artifact["knowledge_graph"] = {
