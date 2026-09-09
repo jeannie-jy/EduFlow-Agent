@@ -40,7 +40,7 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 npm run typecheck    # TypeScript 类型检查（tsc -b，真实门禁）
-npm run test         # Vitest（278 个测试，39 个文件）
+npm run test         # Vitest（297 个测试，41 个文件）
 npm run lint         # oxlint
 npm run build        # 生产构建
 ```
@@ -68,14 +68,14 @@ src/
 │     └─ 模块视图：思维导图 / 知识卡片 / 小练习 / 对比分析 / 常见误区 / 学习路径 / 代码沙箱
 ├─ features/
 │  ├─ artifacts/           教学成果组件（FrameWorkbench / ParameterExperiment / VideoStudioCard / InteractiveExperience + artifact-model 数据归一化）
-│  ├─ auth/                认证（登录/注册，当前为临时占位）
+│  ├─ auth/                登录、注册与后端 HttpOnly 会话 API
 │  ├─ demo/                Dijkstra 交互演示（状态机 + 播放器 + 时间线）
 │  ├─ explore/             公开探索页（/explore/dijkstra）
 │  ├─ landing/             首页（叙事结构 / 产品原理 / 交互案例 / 使用场景 / 模板库）
 │  └─ modules/             模块化产出（选择器 / 进度 / 结果面板）
-├─ pages/                  4 个路由页面（Dashboard / ProjectWorkspace / TemplateBrowser / NotFound）
+├─ pages/                  工作台路由页面（含 Dashboard / ProjectWorkspace / AdminUsers / TemplateBrowser）
 ├─ templates/              交互推演沙箱模板（冒泡排序等，供测试与 LLM 生成参考）
-├─ services/               API 客户端 + SSE + 8 个服务模块
+├─ services/               API 客户端 + SSE + 项目、生成、导出、版本、管理等服务模块
 ├─ lib/                    工具函数库（auth 模块 + user-facing-error 场景化错误提示 + utils）
 ├─ styles/                 全局样式（纸张主题 tokens + 推演舞台动画 + reduced-motion）
 ├─ test/                   公共测试配置和 MSW Mock 处理器
@@ -104,7 +104,7 @@ src/
 |------|------|
 | `/` | 落地页（叙事 / 产品原理 / 交互案例 / 使用场景 / 模板库） |
 | `/explore/dijkstra` | 公开 Dijkstra 交互探索页 |
-| `/login` / `/register` | 认证页面（当前为临时占位） |
+| `/login` / `/register` | 后端会话登录与注册页面 |
 | `/app` | 工作台（项目列表 + 状态筛选 + 分页 + 删除） |
 | `/app/new` | 重定向到 `/app/project/_new`（新建模式） |
 | `/app/project/:projectId` | 统一项目工作台（三步流程：select → plan → results） |
@@ -137,8 +137,8 @@ src/
 ## 安全
 
 - **Content-Security-Policy**：`index.html` 配置了 CSP meta 标签，限制脚本/样式/字体/图片/连接源。
-- **认证**：`lib/auth.ts` 仅用于 UI 状态缓存（localStorage），**刻意占位**、不作为安全边界；
-  后端认证就绪后替换为 HttpOnly cookie + `/api/auth/me`。
+- **认证**：登录凭据由后端 scrypt 散列和 HttpOnly opaque session 保护，请求统一携带 cookie；
+  `lib/auth.ts` 的 localStorage 只缓存昵称、角色等展示信息，最终认证与授权由后端 `/api/auth/me`、RBAC 和 owner 校验决定。
 
 ## Mock 边界
 

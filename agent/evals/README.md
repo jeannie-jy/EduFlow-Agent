@@ -164,6 +164,6 @@ cost is not included in that LLM estimate.
 ## Evaluation policy
 
 - Deterministic failures are blocking and cannot be overwritten by an LLM judge.
-- Online model generation and LLM judging use an explicit opt-in runner or a separate scheduled workflow.
+- Online model generation and LLM judging use an explicit opt-in runner or a separately and manually dispatched workflow.
 - Every report records model, prompt, workflow, and source versions.
 - Generated reports are build artifacts and are not committed unless selected as a release baseline.

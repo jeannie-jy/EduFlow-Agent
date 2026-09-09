@@ -2,8 +2,8 @@
 
 > 文档状态：Draft v1.0  
 > 制定日期：2026-09-03  
-> 适用版本：EduFlow-Agent v0.8.x  
-> 核心目标：以“可作为 Agent 开发岗位代表项目”为标准，在不继续扩张功能面的前提下，补齐评测、可靠性、安全、可观测性和交付能力。
+> 适用版本：EduFlow-Agent v0.9.x
+> 核心目标：在不继续扩张功能面的前提下，补齐评测、可靠性、安全、可观测性和可复现交付能力。
 
 ---
 
@@ -12,8 +12,8 @@
 ### 实施进度（2026-09-06）
 
 - Phase 0 已完成：前后端 CI、Python 3.12 锁文件、生命周期关闭、文档事实对齐；
-  前端 41 files / 295 tests 通过，后端 1051 passed（Python 3.12 虚拟环境，含真实 Manim
-  渲染用例），无跳过测试。
+  当前复验结果为前端 41 files / 297 tests，后端常规测试 1107 passed、6 deselected；
+  真实 Manim 渲染由独立 CI job 执行，在线评测仍需显式授权。
 - Phase 1 基础设施已完成：50 个核心案例、8 个注入案例、10 个检索案例，确定性
   grader、检索指标、在线 opt-in runner、Judge 契约、人工校准与回归比较器已落地。
   核心 50 例已通过一方 `live_workflow` 适配器接入生产 LangGraph，并提供凭据门控的手动 CI；
@@ -111,7 +111,7 @@ liveness/readiness/恢复；真实 Tool Calling 也新增 8 例在线数据集�
 凭证门控手动 CI。两者因本机 Docker daemon、模型凭据和成本授权不可用，当前只计“入口完成”，
 不计“真实报告通过”。
 
-作品集已补齐 RenderScript、统一 LangGraph、执行隔离、受控 Tool Runtime、持久化执行/SSE
+工程文档已补齐 RenderScript、统一 LangGraph、执行隔离、受控 Tool Runtime、持久化执行/SSE
 五份 ADR 及总体架构图；其中 Tool ADR 明确记录 MCP/Skill 未实现，避免把进程内 Registry
 包装成 MCP。
 
@@ -169,9 +169,9 @@ daemon、模型/Judge 凭据与成本授权、Manim 环境和人工评审后，�
 
 ### 2.2 经验证的工程基线
 
-- 后端最近一次完整离线基线为 **1051 passed**；Python 3.12 虚拟环境中的真实 Manim
-  渲染用例已通过，在线评测仍按标记单独运行。
-- 前端最新结果为 **41 files / 295 tests 全绿**，TypeScript 与生产构建通过；
+- 后端最近一次常规离线基线为 **1107 passed、6 deselected**；真实 Manim
+  渲染用例和在线评测按独立标记及工作流运行。
+- 前端最新结果为 **41 files / 297 tests 全绿**，TypeScript 与生产构建通过；
   Hook dependency 警告已清零，Lint 仍报告组件与共享导出同文件的既有 Fast Refresh 警告，
   未作为零警告宣称。
 - 页面级拆包后主入口 JS 由约 1.34 MB 降至 547.38 kB；约 2.30 MB Babel Chunk
@@ -228,9 +228,9 @@ daemon、模型/Judge 凭据与成本授权、Manim 环境和人工评审后，�
 | Phase 3 | 持久化任务与安全执行 | 7–12 天 | Worker 队列、沙箱、任务恢复 | 公开部署阻断 |
 | Phase 4 | 可观测性、数据一致性与模型治理 | 6–10 天 | Trace、成本、单一真源、Prompt 版本 | 否 |
 | Phase 5 | 鉴权、存储与生产部署 | 7–12 天 | RBAC、MinIO、全容器、健康检查 | 公开部署阻断 |
-| Phase 6 | 性能、局部重算与作品集收尾 | 4–7 天 | 并发优化、Bundle 优化、简历数据 | 否 |
+| Phase 6 | 性能、局部重算与发布收尾 | 4–7 天 | 并发优化、Bundle 优化、发布证据 | 否 |
 
-单人建议总工期约 7–10 周。若只为近期投递，优先完成 Phase 0、1、2，并至少完成 Phase 3 的安全隔离最小版本。
+单人建议总工期约 7–10 周。若需先交付最小可用版本，优先完成 Phase 0、1、2，并至少完成 Phase 3 的安全隔离最小版本。
 
 ---
 
@@ -945,7 +945,7 @@ Compose 至少包含：
 
 ---
 
-## 10. Phase 6：性能优化与作品集收尾
+## 10. Phase 6：性能优化与发布收尾
 
 ### 10.1 后端性能
 
@@ -986,7 +986,7 @@ Compose 至少包含：
 - [x] 导出明确绑定不可变 ProjectVersion，Worker 不再读取执行时的可变项目状态；
 - 管理页展示任务、成本和 Eval 趋势。
 
-### 10.4 作品集产出
+### 10.4 发布证据
 
 仓库应新增：
 
@@ -1127,14 +1127,14 @@ Compose 至少包含：
 - G5 Full Compose
 - G6 Health/Lifecycle
 
-### Epic H：性能和作品集
+### Epic H：性能和发布
 
 - H1 Backend concurrency tuning
 - H2 Local recompute
 - H3 Frontend code splitting
 - H4 Architecture/ADR
 - H5 Benchmark report/demo
-- H6 Resume metrics
+- H6 Release metrics
 
 ### Epic I：Tool Calling Runtime
 
@@ -1157,13 +1157,13 @@ Compose 至少包含：
 | M3 可恢复且安全 | 队列持久化；重启恢复；生成代码隔离；安全测试通过 |
 | M4 可运营 | Trace、成本、指标、告警、Prompt/模型版本化 |
 | M5 可公开部署 | Auth/RBAC、MinIO、完整 Compose、Readiness |
-| M6 简历就绪 | 指标稳定、文档完整、演示视频、可复现部署 |
+| M6 发布就绪 | 指标稳定、文档完整、演示视频、可复现部署 |
 
 ---
 
-## 16. 最小投递版本与完整版本
+## 16. 最小交付版本与完整版本
 
-### 16.1 最小投递版本
+### 16.1 最小交付版本
 
 时间有限时必须完成：
 
@@ -1176,7 +1176,7 @@ Compose 至少包含：
 7. Manim 至少迁移到无网络、无凭证的独立 Worker；
 8. 一份包含 Tool Calling 指标的真实 Benchmark 报告。
 
-此时可以投递 Agent 应用开发、LLM 应用工程、RAG/Workflow 方向岗位。
+此时可作为具备基础评测、检索、工作流和安全隔离能力的最小工程版本交付。
 
 ### 16.2 完整工程版本
 
@@ -1190,38 +1190,11 @@ Compose 至少包含：
 - 局部重算与性能优化。
 - 写工具审批/幂等/补偿（首版只读 Tool Calling 不包含写工具）。
 
-此时可以更有底气投递强调生产系统、平台工程和 Agent Infra 的岗位。
+此时可作为覆盖生产治理、平台能力和 Agent 基础设施的完整工程版本交付。
 
 ---
 
-## 17. 简历数据收集模板
-
-每个 Release 自动产出以下表格，禁止在简历中填写未经测试的数字：
-
-| 指标 | Baseline | Current | 变化 |
-|---|---:|---:|---:|
-| DSL Schema 通过率 | 待测 | 待测 | 待测 |
-| 算法正确率 | 待测 | 待测 | 待测 |
-| 状态一致性通过率 | 待测 | 待测 | 待测 |
-| Reflection 后正确率 | 待测 | 待测 | 待测 |
-| Manim 首次渲染成功率 | 待测 | 待测 | 待测 |
-| 端到端 p95 | 待测 | 待测 | 待测 |
-| 平均 Token | 待测 | 待测 | 待测 |
-| 平均成本 | 待测 | 待测 | 待测 |
-| 模块全部成功率 | 待测 | 待测 | 待测 |
-| Prompt Injection 防御率 | 待测 | 待测 | 待测 |
-| 任务重启恢复率 | 待测 | 待测 | 待测 |
-| Tool selection accuracy | 待测 | 待测 | 待测 |
-| Tool task completion rate | 待测 | 待测 | 待测 |
-| Tool permission/injection 安全通过率 | 待测 | 待测 | 待测 |
-
-推荐最终简历表达：
-
-> 构建覆盖 N 个计算机科学主题的 EduFlowBench，结合参考算法执行、DSL 状态不变量、渲染 Smoke Test 与经人工校准的 LLM Judge，对 Agent 的正确性、可渲染性、延迟和成本进行持续回归；通过 RAG、工作流统一和 Reflection 优化，将 X 指标从 A 提升至 B。
-
----
-
-## 18. 明确暂不优先的事项
+## 17. 明确暂不优先的事项
 
 以下事项在核心缺陷完成前不应占用主要时间：
 
@@ -1237,7 +1210,7 @@ Compose 至少包含：
 
 ---
 
-## 19. 执行纪律
+## 18. 执行纪律
 
 每个改造 PR 必须回答：
 

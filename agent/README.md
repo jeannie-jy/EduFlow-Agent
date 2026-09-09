@@ -1,6 +1,6 @@
 # EduFlow-Agent 后端
 
-> FastAPI + LangGraph Multi-Agent 教学推演引擎
+> FastAPI + LangGraph 有状态 Agent 教学推演引擎
 
 ## 快速启动
 
@@ -41,14 +41,17 @@ agent/
 ├── Dockerfile                # Docker 镜像
 │
 ├── agents/                   # LangGraph Agent 编排层
-│   ├── state.py              # AgentState TypedDict（14 个共享字段）
+│   ├── state.py              # AgentState TypedDict（32 个工作流共享字段）
 │   ├── graph.py              # StateGraph 构建 + Checkpointer + 条件路由
 │   ├── nodes.py              # 5 个 Agent 节点实现（planner / knowledge / coder / quality / reflection）
 │   ├── prompts.py            # 5 个 Agent 的系统提示词
 │   └── llm_client.py         # OpenAI 兼容客户端（DeepSeek）+ embedding 生成
 │
 ├── api/                      # REST API 路由层
-│   ├── router.py             # 路由聚合注册
+│   ├── router.py             # 路由聚合注册与业务 API 认证门禁
+│   ├── auth.py / admin.py    # HttpOnly 会话、RBAC 与管理员用户治理
+│   ├── audit.py / traces.py  # 审计查询与 Workflow/Tool Trace
+│   ├── jobs.py               # 持久化后台任务查询与取消
 │   ├── projects.py           # 项目 CRUD（POST/GET 列表/GET 详情）
 │   ├── generate.py           # 生成流程（POST start / SSE stream / POST regenerate）
 │   ├── frames.py             # 帧操作（GET 列表 / PUT 编辑 / POST lock；历史快照帧编辑兜底）
@@ -69,14 +72,17 @@ agent/
 │
 ├── db/                       # 数据库层
 │   ├── database.py           # AsyncSession 工厂
-│   └── models.py             # SQLAlchemy ORM 模型（8 张表）
+│   └── models.py             # SQLAlchemy ORM 模型（20 张表；知识库表单独迁移）
 │
 ├── services/                 # 业务服务层
 │   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度 + 统一持久化）
-│   ├── module_dispatcher.py  # 模块生成调度器（串行调度 + 失败落库 + frames 表同步）
+│   ├── module_dispatcher.py  # 模块生成调度器（DAG 有界并发 + 失败落库 + frames 表同步）
 │   ├── project_persistence.py# DSL snapshot 合并 + frames 表持久化 + module_errors 收敛
 │   ├── tool_runtime.py       # 真实 Tool Calling Registry、多轮执行、权限/预算与 ToolResult
 │   ├── workflow_trace.py     # Workflow/Node/Tool 持久化脱敏 Trace
+│   ├── task_worker.py        # 基于数据库 lease 的反馈与材料后台任务 Worker
+│   ├── export_worker.py      # 视频任务准备器、重试、心跳与沙箱交接
+│   ├── sse_ledger.py         # 持久化 SSE 事件、重放与 producer lease
 │   └── knowledge_service.py  # pgvector 语义检索 + embedding 播种
 │
 ├── tools/                    # 确定性工具（节点直接异步调用）
@@ -86,8 +92,8 @@ agent/
 │
 ├── adapters/                 # DSL → Manim 转换器
 │   ├── manim_adapter.py      # 确定性转换（14 种 Mobject + 16 种 Animation 映射）
-│   ├── manim_llm_adapter.py  # LLM 驱动的 Manim 代码生成（教学语义 → 可视化脚本，当前默认）
-│   ├── manim_validator.py    # Manim 脚本质量检测（6 项规则：语法/CJK/lexer/API/转义/print）
+│   ├── manim_llm_adapter.py  # 可选的 LLM 驱动 Manim 代码生成（默认使用确定性转换）
+│   ├── manim_validator.py    # Manim 脚本多层静态检测（语法、作用域、API、数据形状等）
 │   └── test_adapter.py       # 自测脚本（代码生成 + 语法校验 + 渲染验证）
 │
 ├── plugins/                  # 领域插件系统
@@ -101,7 +107,8 @@ agent/
 │                             #   frames 为所有主题自动生成的基础成果（携带 artifact_version）
 │
 ├── scripts/                  # 运维脚本
-│   └── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector，幂等）
+│   ├── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector，幂等）
+│   └── 运维脚本              # 管理员 bootstrap、旧数据迁移、审计归档与故障/容量 smoke
 │
 ├── data/                     # 静态数据
 │   └── seed_knowledge.json   # 22 个知识点种子数据
@@ -117,7 +124,7 @@ agent/
 │   ├── test_phase2_reliability.py # 生成器可靠性（畸形输出/失败落库/字段白名单）
 │   └── ...
 │
-└── alembic/                  # 数据库迁移（基线 0001_baseline.py：8 张 ORM 表 + knowledge_base）
+└── alembic/                  # 20 个数据库迁移（当前 20 张 ORM 表 + knowledge_base）
 ```
 
 ## Agent 协作流程
@@ -148,6 +155,11 @@ agent/
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
+| `POST` | `/api/auth/register`、`/api/auth/login`、`/api/auth/logout` | 注册、登录与退出 HttpOnly 会话 |
+| `GET` | `/api/auth/me` | 获取当前登录用户 |
+| `GET` | `/api/admin/users` | 管理员分页查询用户 |
+| `PATCH` | `/api/admin/users/{user_id}` | 管理员调整用户角色或状态 |
+| `GET` | `/api/audit/events` | 管理员分页查询脱敏审计事件 |
 | `POST` | `/api/projects` | 创建项目 |
 | `GET` | `/api/projects` | 项目列表（分页 + 状态筛选） |
 | `GET` | `/api/projects/{id}` | 项目详情（含完整 DSL） |
@@ -174,6 +186,7 @@ agent/
 | `GET` | `/api/knowledge/templates` | 知识点模板列表 |
 | `POST` | `/api/materials/upload` | 上传课件文件 |
 | `POST` | `/api/materials/{id}/parse` | 解析文件内容 |
+| `GET/DELETE` | `/api/background-jobs/{job_id}` | 查询或取消持久化后台任务 |
 | `GET` | `/api/projects/{id}/workflow-runs` | 查询项目工作流运行记录 |
 | `GET` | `/api/projects/{id}/workflow-runs/{run_id}` | 查询节点级 Trace、模型和成本 |
 | `POST` | `/api/projects/{id}/feedback` | 提交反馈 |
@@ -223,7 +236,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-最近一次完整本地后端回归为 **1051 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例），无跳过测试。前端最近一次为 **41 files / 295 tests**，TypeScript、生产构建和 Bundle Budget 通过。真实在线模型评测仍需显式授权，不计入这些离线数据。离线回归覆盖 Agent 节点、真实 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 验证。
+最近一次常规本地后端回归为 **1107 passed，6 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。前端最近一次为 **41 files / 297 tests**，TypeScript、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
 
 ## 数据流
 

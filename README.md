@@ -28,10 +28,10 @@
 **本次更新 (v0.9.0)：**
 - 🧩 **生成方式可选化**：10 种模块生成器（思维导图/知识卡片/交互推演/小练习/对比分析/常见误区/学习路径/代码沙箱/教学视频 + 自动生成的推演脚本），按需勾选生成
 - 🎨 **UI 流程重塑**：步骤指示器（select → plan → results）替代 Tab 栏，新建流程统一收拢到 ProjectWorkspace
-- 🛡️ **数据库初始化落地**：Alembic 基线迁移（8 张业务表 + knowledge_base），agent-api 启动时自动 `alembic upgrade head`，不再依赖 init.sql 建表
+- 🛡️ **数据库初始化落地**：Alembic 从 8 张业务表的基线迁移扩展到 20 张 ORM 表，并单独维护 `knowledge_base`；agent-api 启动时自动 `alembic upgrade head`，不再依赖 init.sql 建表
 - 🔧 **前端类型门禁**：`npm run typecheck` 改为 `tsc -b`（此前对 solution tsconfig 是空操作），34 个存量 TS 错误清零；修复 SSE 模块事件回调解构缺失（模块进度此前被静默丢弃）
 - 🎬 **视频导出任务化**：API 只持久化排队，独立受限 Worker 通过 PostgreSQL lease 领取、重试和恢复任务；默认关闭，需显式启用 video profile
-- 🧪 **测试覆盖扩展**：当前后端测试规模超过 790 项，前端包含 39 个测试文件；准确数量以测试框架报告为准，CI 分离运行快速测试与真实 Manim 渲染冒烟测试
+- 🧪 **测试覆盖扩展**：当前非在线、非渲染后端回归为 1107 项，前端为 41 个测试文件 / 297 项；CI 分离运行常规测试、在线评测与真实 Manim 渲染冒烟测试
 - 🎁 **成果体验统一**：交互推演升级为统一学习外壳（按主题语义匹配 7 种体验类型）；教学视频支持从推演帧直接定位分镜；失败模块以场景化友好提示呈现（额度不足/接入失效/限流/网络/渲染失败），可在成果页直接重生成
 - 🖥️ **交互推演沙箱升级**：Tailwind 在宿主侧按产物实际使用的 class 本地编译（彻底移除 CDN 依赖），内置 `eduflow-demo` 统一演示样式，遗留模板控件自动打磨为设计系统风格
 - 🧬 **成果版本追踪**：推演脚本产出携带 `artifact_version`（SHA-256），视频产出记录 `source_frames_version`；帧编辑同步快照与模块产出两处副本，分镜过期时提示「分镜已更新」
@@ -46,9 +46,9 @@
 - **v0.6.0 — LLM 驱动 Manim**：教学语义 → LLM 自主设计可视化布局/配色/动画、Manim 脚本 6 项静态质量检测 + 自动修复 + 失败重试、双模式渲染雏形
 
 **下一阶段规划：**
-- 🎨 **成果工作台深化**：继续推进可编辑、可校验、可发布的教学成果闭环（帧编辑器、成果校验视图、发布流程）
-- ⚡ **时效优化**：生成链路响应速度（LLM 调用并行化、SSE 进度细化、模块调度并发）、前端加载性能（代码分割、沙箱运行时懒加载）
-- 🚀 **并发视频导出**：当前单轨导出并发上限 2（见「已知局限」），计划引入 Celery/RQ 任务队列或重建独立渲染 Worker
+- 🎨 **成果工作台深化**：在现有逐帧编辑和版本管理基础上，继续推进帧批量编辑、成果校验视图与发布流程
+- ⚡ **时效优化**：推进 LLM 调用并行化、SSE 进度细化、模块并发调优，以及更细粒度的前端代码分割和沙箱运行时懒加载
+- 🚀 **视频任务横向扩展**：在现有 PostgreSQL lease Worker 基础上完善多 Worker 容量验证、队列优先级与每任务临时渲染容器
 - 🎓 **模板库扩充**：更多公开教学案例与按知识点预置的生成模板
 - 🎬 **导出视频优化**：修复视频排版问题，确保视频元素不重叠、不截断
 
@@ -56,14 +56,14 @@
 
 ## 项目简介
 
-EduFlow-Agent 是一个 Multi-Agent 教学推演系统。用户通过自然语言输入 CS 概念（如"Dijkstra 最短路径算法"），系统通过 5 个协作 Agent 自主规划教学步骤、构建知识图谱、生成逐帧 DSL（中间表示），经 Human-in-the-Loop 审批后在 Web 端呈现可交互的推演动画，并可按需导出为 Manim 教学视频。
+EduFlow-Agent 是一个有状态 Agent 教学推演系统。用户通过自然语言输入 CS 概念（如“Dijkstra 最短路径算法”），系统通过统一 LangGraph 中的 5 个功能节点规划教学步骤、构建知识图谱、生成逐帧 DSL（中间表示），经 Human-in-the-Loop 审批后在 Web 端呈现可交互的推演动画，并可按需导出为 Manim 教学视频。
 
 ## 核心特点
 
-- **Multi-Agent 自主规划**：Planner → Knowledge → Coder → Quality → Reflection 五个 Agent 协作，自动生成教学计划与逐帧推演
+- **统一 Agent 工作流**：Planner → Knowledge → Coder → Quality → Reflection 五个功能节点共享状态并形成生成、校验与修订闭环
 - **Human-in-the-Loop 审批**：Planner 输出后中断等待教师确认/拒绝教学计划，支持从中断点恢复生成
 - **DSL 驱动的双路径渲染**：同一份中间表示（DSL）驱动 Web 交互推演 + Manim 视频导出
-- **逐帧交互式推演**：React Flow 图渲染，支持暂停、回退、调速、参数实时调节
+- **逐帧交互式推演**：支持暂停、回退、调速，以及参数影响预览与受控重算
 - **教师工作台**：逐帧编辑、锁定、局部重生成、版本管理、反馈收集
 - **质量保障闭环**：自动 Schema 校验 + 状态一致性检查 + LLM 六维度评分 + Reflection 反思修订循环
 - **多模态素材解析**：支持 PDF / PPT / Markdown / 代码文件上传，自动提取内容辅助教学
@@ -313,7 +313,7 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端完整本地回归：**1078 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例）；无跳过测试。
+- 后端常规本地回归：**1107 passed，6 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。
 - 前端门禁：**41 files / 297 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
@@ -337,7 +337,7 @@ python -m scripts.seed_embeddings
 | 文档 | 说明 |
 |------|------|
 | [需求文档](docs/requirements/自主Agent教学推演系统_需求文档包_v1.md) | 用户故事、用例、功能边界 |
-| [设计文档](docs/design/智能教学推演系统设计文档.md) | 完整技术方案（Multi-Agent + DSL + 双路径渲染） |
+| [设计文档](docs/design/智能教学推演系统设计文档.md) | 完整技术方案（统一 LangGraph + DSL + 双路径渲染） |
 | [核心功能模块全面改造方案](docs/design/核心功能模块全面改造方案.md) | 十大成果模块与统一成果工作台的改造蓝图 |
 | [统一视觉改造方案](docs/design/统一视觉改造方案.md) | 全站视觉统一规范（宣传页 / 应用框架 / 成果组件） |
 | [设计系统与前端规范](DESIGN.md) | 视觉/交互/实现指南（学术纸本 × 互动技术手稿） |
@@ -345,7 +345,6 @@ python -m scripts.seed_embeddings
 | [术语表](docs/GLOSSARY.md) | 中英术语对照 |
 | [贡献指南](CONTRIBUTING.md) | 分支策略与协作规范 |
 | [工程化改造与 EduFlowBench 计划](docs/工程化改造与EduFlowBench实施计划.md) | 缺陷、优先级、验收标准与实施进度 |
-| [简历证据清单](docs/resume-evidence.md) | 可引用工程数据、禁用指标与 Agent 实习最终推荐版 |
 | [当前与目标架构](docs/architecture.md) | 运行架构、目标演进图与 Agent 时序 |
 | [故障案例矩阵](docs/failure-cases.md) | 已验证故障、防护和仍待运行的压力测试 |
 | [故障注入基线](agent/evals/reports/fault-injection-v0.8.md) | 可复现故障场景、验证入口与外部环境待测项 |
