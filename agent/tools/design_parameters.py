@@ -11,34 +11,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TOOL_DEF_DESIGN_PARAMETERS = {
-    "name": "design_parameters",
-    "description": "根据知识点类型和教学上下文，生成可调参数定义列表。每个参数包含名称、类型、默认值、取值范围和重算影响范围。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "knowledge_type": {
-                "type": "string",
-                "description": "知识点类型: algorithm / data_structure / operating_system / computer_network / database",
-            },
-            "context": {
-                "type": "object",
-                "description": "教学上下文：包含主题、帧数量、已有参数等",
-            },
-        },
-        "required": ["knowledge_type", "context"],
-    },
-    "returns": {
-        "type": "object",
-        "properties": {
-            "parameters": {"type": "array"},
-        },
-    },
-    "errors": [],
-    "retryable": True,
-    "timeout_ms": 30_000,
-}
-
 # ── 按知识点类型的参数模板 ──────────────────────────────────
 
 _PARAMETER_TEMPLATES: dict[str, list[dict[str, Any]]] = {

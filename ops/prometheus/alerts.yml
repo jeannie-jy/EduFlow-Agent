@@ -1,0 +1,24 @@
+groups:
+  - name: eduflow
+    rules:
+      - alert: EduFlowQueueBacklog
+        expr: eduflow_queue_oldest_wait_seconds > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: EduFlow oldest queued task has waited over five minutes
+      - alert: EduFlowWorkflowSuccessRatioLow
+        expr: eduflow_workflow_success_ratio < 0.8 and eduflow_workflows_terminal > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: EduFlow 24-hour workflow success ratio is below 80 percent
+      - alert: EduFlowMetricsMissing
+        expr: absent(up{job="eduflow-agent"} == 1)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: EduFlow metrics target is unavailable

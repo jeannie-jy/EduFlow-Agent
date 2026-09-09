@@ -18,6 +18,18 @@ import pytest
 import pytest_asyncio
 
 
+# The LLM gateway keeps circuit-breaker state at process scope.  Isolate tests
+# so an expected provider failure in one test cannot open the circuit for an
+# unrelated test that happens to use the same configured endpoint.
+@pytest.fixture(autouse=True)
+def reset_llm_gateway_state():
+    from services.llm_gateway import reset_gateway_state
+
+    reset_gateway_state()
+    yield
+    reset_gateway_state()
+
+
 # ============================================================================
 # Mock LLM 客户端
 # ============================================================================

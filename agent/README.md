@@ -17,13 +17,13 @@ source .venv/Scripts/activate   # Windows Git Bash / PowerShell
 # source .venv/bin/activate     # Linux / macOS
 
 # 安装 Python 依赖
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 
 # 配置环境变量（确保仓库根目录有 .env）
 cp ../.env.example ../.env
 
 # 启动开发服务器
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 --reload-dir agents --reload-dir api --reload-dir adapters --reload-dir db --reload-dir generators --reload-dir plugins --reload-dir schema --reload-dir services --reload-dir tools --reload-dir alembic --reload-dir scripts --reload-dir main.py
 ```
 
 API 文档: http://localhost:8000/docs
@@ -34,7 +34,10 @@ API 文档: http://localhost:8000/docs
 agent/
 ├── main.py                   # FastAPI 应用入口（lifespan / CORS / 路由注册）
 ├── config.py                 # 配置模块（pydantic-settings，环境变量统一加载）
-├── requirements.txt          # Python 依赖
+├── requirements.txt          # 顶层 Python 依赖声明
+├── requirements.lock.txt     # Python 3.12 跨平台生产依赖锁
+├── requirements-ci.txt       # 不含 Manim 的 CI 顶层依赖声明
+├── requirements-ci.lock.txt  # Python 3.12 跨平台 CI 依赖锁
 ├── Dockerfile                # Docker 镜像
 │
 ├── agents/                   # LangGraph Agent 编排层
@@ -48,7 +51,7 @@ agent/
 │   ├── router.py             # 路由聚合注册
 │   ├── projects.py           # 项目 CRUD（POST/GET 列表/GET 详情）
 │   ├── generate.py           # 生成流程（POST start / SSE stream / POST regenerate）
-│   ├── frames.py             # 帧操作（GET 列表 / PUT 编辑 / POST lock）
+│   ├── frames.py             # 帧操作（GET 列表 / PUT 编辑 / POST lock；历史快照帧编辑兜底）
 │   ├── parameters.py         # 参数（GET 列表 / POST recompute）
 │   ├── export.py             # 导出（POST manim 任务 / GET 状态 / GET 下载）
 │   ├── knowledge.py          # 知识库（POST search / GET templates）
@@ -61,19 +64,24 @@ agent/
 │
 ├── schema/                   # Pydantic 数据模型
 │   ├── dsl.py                # DSL Schema（renderScript / Frame / VisualObject×14 / Animation×16）
-│   └── project.py            # API Request/Response 模型
+│   ├── project.py            # API Request/Response 模型
+│   └── modules.py            # 各模块产出格式（Frames/Video 含版本追踪字段）
 │
 ├── db/                       # 数据库层
-│   ├── database.py           # AsyncSession 工厂 + 读写分离
+│   ├── database.py           # AsyncSession 工厂
 │   └── models.py             # SQLAlchemy ORM 模型（8 张表）
 │
 ├── services/                 # 业务服务层
-│   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度）
+│   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度 + 统一持久化）
+│   ├── module_dispatcher.py  # 模块生成调度器（串行调度 + 失败落库 + frames 表同步）
+│   ├── project_persistence.py# DSL snapshot 合并 + frames 表持久化 + module_errors 收敛
+│   ├── tool_runtime.py       # 真实 Tool Calling Registry、多轮执行、权限/预算与 ToolResult
+│   ├── workflow_trace.py     # Workflow/Node/Tool 持久化脱敏 Trace
 │   └── knowledge_service.py  # pgvector 语义检索 + embedding 播种
 │
-├── tools/                    # Agent 可调用的 Tool
+├── tools/                    # 确定性工具（节点直接异步调用）
 │   ├── validate_dsl.py       # DSL Schema 校验 + 帧间状态一致性检查
-│   ├── design_parameters.py  # 参数设计工具（8 种知识类型模板）
+│   ├── design_parameters.py  # 参数设计工具（按知识类型的参数模板）
 │   └── generate_asset.py     # 多模态资源生成（card/mindmap/table/code）
 │
 ├── adapters/                 # DSL → Manim 转换器
@@ -86,17 +94,19 @@ agent/
 │   ├── domain_plugin.py      # DomainPlugin Protocol + 注册表
 │   └── cs_plugin.py          # CS 内置插件（6 学科 + 5 教学策略 + 6 质量规则）
 │
-├── workers/                  # 后台 Worker
-│   ├── render_worker.py      # Redis 队列消费者（DSL→Manim→MP4）
-│   └── Dockerfile            # Manim Worker Docker 镜像
+├── generators/               # 模块化生成器（10 个，registry 注册，main.py 启动时导入）
+│   ├── registry.py           # 注册表 + get_generator
+│   ├── base.py               # BaseGenerator（LLM 调用 + 校验骨架 + 主题权威防漂移）
+│   └── *_generator.py        # mindmap/card/frames/quiz/comparison/misconception/pathway/sandbox/video/interactive_demo
+│                             #   frames 为所有主题自动生成的基础成果（携带 artifact_version）
 │
 ├── scripts/                  # 运维脚本
-│   └── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector）
+│   └── seed_embeddings.py    # 知识库 embedding 播种（seed → pgvector，幂等）
 │
 ├── data/                     # 静态数据
 │   └── seed_knowledge.json   # 22 个知识点种子数据
 │
-├── tests/                    # 测试（373 个）
+├── tests/                    # 单元、集成、安全与真实渲染测试
 │   ├── test_agent_nodes.py   # 5 个 Agent 节点 + Graph 拓扑
 │   ├── test_api_integration.py  # API 集成测试
 │   ├── test_db_integration.py   # 数据库 CRUD
@@ -104,9 +114,10 @@ agent/
 │   ├── test_llm_client.py       # LLM 客户端
 │   ├── test_schema.py           # DSL Schema 校验
 │   ├── test_schema_edge_cases.py # Schema 边界案例
+│   ├── test_phase2_reliability.py # 生成器可靠性（畸形输出/失败落库/字段白名单）
 │   └── ...
 │
-└── alembic/                  # 数据库迁移（预留）
+└── alembic/                  # 数据库迁移（基线 0001_baseline.py：8 张 ORM 表 + knowledge_base）
 ```
 
 ## Agent 协作流程
@@ -140,25 +151,40 @@ agent/
 | `POST` | `/api/projects` | 创建项目 |
 | `GET` | `/api/projects` | 项目列表（分页 + 状态筛选） |
 | `GET` | `/api/projects/{id}` | 项目详情（含完整 DSL） |
-| `POST` | `/api/projects/{id}/generate` | 启动生成流程 |
+| `POST` | `/api/projects/{id}/generate` | 启动生成流程（action: full/plan_only/modules） |
 | `GET` | `/api/projects/{id}/generate/stream` | SSE 流式进度 |
+| `GET` | `/api/projects/{id}/generate/active-stream` | 查询当前项目最新可续传活动流 |
+| `POST` | `/api/projects/{id}/generate/approve` | HITL：批准教学计划，恢复生成 |
+| `POST` | `/api/projects/{id}/generate/reject` | HITL：拒绝并带反馈重规划 |
+| `GET` | `/api/projects/{id}/generate/resume/stream` | HITL 审批后恢复的 SSE 流 |
+| `GET` | `/api/projects/{id}/generate/modules` | 可用模块列表 |
+| `GET` | `/api/projects/{id}/generate/module/{module_id}/stream` | 单模块重生成（SSE） |
 | `POST` | `/api/projects/{id}/regenerate` | 局部重生成 |
+| `GET` | `/api/projects/{id}/generate/regenerate/stream` | 重生成进度（SSE） |
+| `DELETE` | `/api/projects/{id}` | 删除项目 |
 | `GET` | `/api/projects/{id}/frames` | 帧列表 |
 | `PUT` | `/api/projects/{id}/frames/{fid}` | 编辑帧（locked 时 409） |
 | `POST` | `/api/projects/{id}/frames/{fid}/lock` | 锁定/解锁帧 |
 | `GET` | `/api/projects/{id}/parameters` | 参数列表 |
 | `POST` | `/api/projects/{id}/recompute` | 参数变更触发重算 |
+| `POST` | `/api/projects/{id}/recompute/preview` | 校验参数并预览影响帧（无写入） |
 | `POST` | `/api/projects/{id}/export/manim` | 创建视频导出任务 |
 | `GET` | `/api/export/{job_id}` | 查询导出状态 |
 | `POST` | `/api/knowledge/search` | 语义检索（pgvector） |
 | `GET` | `/api/knowledge/templates` | 知识点模板列表 |
 | `POST` | `/api/materials/upload` | 上传课件文件 |
 | `POST` | `/api/materials/{id}/parse` | 解析文件内容 |
+| `GET` | `/api/projects/{id}/workflow-runs` | 查询项目工作流运行记录 |
+| `GET` | `/api/projects/{id}/workflow-runs/{run_id}` | 查询节点级 Trace、模型和成本 |
 | `POST` | `/api/projects/{id}/feedback` | 提交反馈 |
+| `GET` | `/api/projects/{id}/feedback` | 反馈列表 |
 | `POST` | `/api/projects/{id}/versions` | 保存版本 |
 | `GET` | `/api/projects/{id}/versions` | 版本列表 |
 | `GET` | `/api/projects/{id}/versions/{vid}` | 版本详情 |
+| `GET` | `/api/projects/{id}/versions/{vid}/diff` | 与当前或指定版本做结构化差异对比 |
 | `POST` | `/api/projects/{id}/versions/{vid}/restore` | 恢复版本 |
+| `GET` | `/api/metrics` | 进程与数据库运营指标（JSON） |
+| `GET` | `/api/metrics/prometheus` | Prometheus exposition 指标 |
 
 完整契约见[开发任务与接口规范](../docs/开发任务与接口规范.md)。
 
@@ -170,7 +196,7 @@ agent/
 |------|--------|------|
 | `LLM_API_KEY` | — | DeepSeek API Key（**必填**） |
 | `LLM_ENDPOINT` | `https://api.deepseek.com/v1` | LLM API 地址 |
-| `LLM_MODEL` | `deepseek-chat` | 模型名称 |
+| `LLM_MODEL` | `deepseek-v4-flash` | 模型名称；结构化生成默认关闭 thinking 并使用 JSON mode |
 | `EMBEDDING_API_KEY` | — | OpenAI API Key |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | 嵌入模型 |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | 数据库连接 |
@@ -197,7 +223,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-测试统计: 373 个测试（15 个文件），覆盖 Agent 节点、API 集成、数据库 CRUD、DSL Schema、LLM 客户端、生成流程。
+最近一次完整本地后端回归为 **1051 passed**（Python 3.12 虚拟环境，含真实 Manim 渲染用例），无跳过测试。前端最近一次为 **41 files / 295 tests**，TypeScript、生产构建和 Bundle Budget 通过。真实在线模型评测仍需显式授权，不计入这些离线数据。离线回归覆盖 Agent 节点、真实 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 验证。
 
 ## 数据流
 
@@ -210,8 +236,10 @@ python -m pytest tests/ --cov=. --cov-report=html
    ├── coder     → dsl (frames + parameters + assets)
    ├── quality   → quality_report
    └── reflection → 修订（循环上限 3 次）
-4. GET  /{id}                   → 获取最终 DSL
-5. POST /{id}/export/manim      → 导出视频（异步队列）
+4. 模块调度（module_dispatcher）→ module_outputs + module_errors 落库
+   └── frames 为所有主题自动生成的基础成果（携带 artifact_version 版本哈希）
+5. GET  /{id}                   → 获取最终 DSL（含 module_outputs / selected_modules）
+6. POST /{id}/export/manim      → 导出视频（异步队列）
 ```
 
 ## 错误响应格式

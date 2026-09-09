@@ -9,6 +9,21 @@ import { memo } from "react";
 import { MindmapView, type MindmapNode } from "../MindmapView";
 import type { DSLVisualObject } from "../simulation-model";
 
+function toMindmapNode(value: unknown, fallbackId: string): MindmapNode {
+  const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const children = Array.isArray(source.children) ? source.children : [];
+  const relatedFrameIds = Array.isArray(source.relatedFrameIds ?? source.related_frame_ids)
+    ? (source.relatedFrameIds ?? source.related_frame_ids) as unknown[]
+    : [];
+  return {
+    id: String(source.id ?? fallbackId),
+    name: String(source.name ?? source.label ?? "未命名概念"),
+    type: source.type ? String(source.type) : undefined,
+    relatedFrameIds: relatedFrameIds.map(String),
+    children: children.map((child, index) => toMindmapNode(child, `${fallbackId}-${index + 1}`)),
+  };
+}
+
 export type MindmapObjectProps = {
   object: DSLVisualObject;
   className?: string;
@@ -18,19 +33,15 @@ export const MindmapObject = memo(function MindmapObject({
   object,
   className,
 }: MindmapObjectProps) {
-  const root = (object.root as Record<string, unknown>) ?? {};
-  const children = (object.children as Record<string, unknown>[]) ?? [];
-
-  const rootNode: MindmapNode = {
-    id: root.id as string ?? "root",
-    name: root.name as string ?? object.label ?? "思维导图",
-    type: root.type as string ?? "definition",
-    children: children.map((c) => ({
-      id: c.id as string ?? "",
-      name: c.name as string ?? "",
-      type: c.type as string ?? "",
-    })),
-  };
+  const rootSource = object.root && typeof object.root === "object"
+    ? object.root
+    : {
+        id: object.id || "root",
+        name: object.label ?? "思维导图",
+        type: "definition",
+        children: object.children,
+      };
+  const rootNode = toMindmapNode(rootSource, "root");
 
   return (
     <MindmapView

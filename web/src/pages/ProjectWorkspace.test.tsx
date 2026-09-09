@@ -1,0 +1,72 @@
+/**
+ * ProjectWorkspace 冒烟测试 — 三步流程（select → plan → results）。
+ *
+ * 覆盖：新建模式（_new）下渲染模块选择步骤；历史项目打开时按状态进入对应步骤。
+ */
+
+import { describe, expect, it, afterEach } from "vitest";
+import { screen, waitFor, cleanup } from "@testing-library/react";
+import { render } from "@testing-library/react";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/mocks/handlers";
+import { AppProviders } from "@/app/AppProviders";
+import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
+
+const PROJECT_ID = "00000000-0000-0000-0000-000000000001";
+
+/** 渲染工作区：需要路由参数上下文（useParams） */
+function renderWorkspace(route: string) {
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <AppProviders>
+        <Routes>
+          <Route path="/app/project/:projectId" element={<ProjectWorkspace />} />
+        </Routes>
+      </AppProviders>
+    </MemoryRouter>,
+  );
+}
+
+describe("ProjectWorkspace", () => {
+  afterEach(() => {
+    cleanup();
+    server.resetHandlers();
+  });
+
+  it("renders module selection step in new-project mode", async () => {
+    renderWorkspace("/app/project/_new");
+
+    await waitFor(() => {
+      expect(screen.getByText("输入教学主题")).toBeInTheDocument();
+    });
+  });
+
+  it("renders results step for a completed project", async () => {
+    renderWorkspace(`/app/project/${PROJECT_ID}`);
+
+    // done 但没有任何产物的历史项目应恢复到模块选择，而不是进入空成果页。
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "选择模块" })).toBeInTheDocument();
+    });
+  });
+
+  it("restores a persisted waiting-for-approval state after refresh", async () => {
+    server.use(http.get("http://localhost:8000/api/projects/:id", ({ params }) => HttpResponse.json({
+      id: params.id,
+      title: "Dijkstra 最短路径",
+      status: "planning",
+      teaching_plan: { objectives: ["理解最短路径"], outline: [] },
+      module_outputs: {},
+      selected_modules: [],
+      dsl: { frames: [] },
+      updated_at: "2026-09-05T00:00:00Z",
+    })));
+
+    renderWorkspace(`/app/project/${PROJECT_ID}`);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "确认教学计划" })).toBeInTheDocument();
+    });
+  });
+});

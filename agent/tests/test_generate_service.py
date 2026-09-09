@@ -10,14 +10,14 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from services.generate_service import (
+    _finalize_done,
+    _phase_pct,
+    _sse_event,
     run_generation_stream,
     run_generation_sync,
-    _sse_event,
-    _phase_pct,
+    run_modules_stream,
 )
-
 
 # ============================================================================
 # Helpers
@@ -27,6 +27,63 @@ from services.generate_service import (
 def _parse(event_dict: dict) -> dict:
     """解析 SSE event dict 中的 data 字段（JSON 字符串 → dict）。"""
     return json.loads(event_dict["data"])
+
+
+@pytest.mark.asyncio
+async def test_module_finalization_uses_single_specialized_writer():
+    final_state = MagicMock()
+    final_state.values = {
+        "dsl": {"frames": [{"frame_id": "f1"}]},
+        "teaching_plan": {"objectives": ["test"]},
+        "knowledge_graph": {"concepts": []},
+        "selected_modules": ["frames"],
+        "module_dependencies": {"frames": []},
+        "module_outputs": {"frames": {"frames": [{"frame_id": "f1"}]}},
+        "module_errors": {},
+    }
+
+    with (
+        patch(
+            "services.generate_service._persist_module_result",
+            new_callable=AsyncMock,
+        ) as persist_modules,
+        patch(
+            "services.generate_service._persist_dsl_result",
+            new_callable=AsyncMock,
+        ) as persist_dsl,
+    ):
+        events = [event async for event in _finalize_done(final_state, "p1")]
+
+    persist_modules.assert_awaited_once()
+    persist_dsl.assert_not_awaited()
+    assert events[-1]["event"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_run_modules_stream_enters_canonical_graph_with_unique_thread():
+    graph = MagicMock()
+
+    async def drive(graph_arg, state, config, project_id, **kwargs):
+        assert graph_arg is graph
+        assert state["workflow_entry"] == "modules"
+        assert state["selected_modules"] == ["frames"]
+        assert config["configurable"]["thread_id"].startswith("p1:modules:")
+        assert project_id == "p1"
+        assert kwargs["change_summary"] == "模块产物生成"
+        yield _sse_event("done", {"phase": "done"})
+
+    with (
+        patch("services.generate_service._get_graph", new=AsyncMock(return_value=graph)),
+        patch("services.generate_service._drive_graph", side_effect=drive),
+    ):
+        events = [
+            event
+            async for event in run_modules_stream(
+                "p1", {"project_id": "p1"}, ["frames"]
+            )
+        ]
+
+    assert events[-1]["event"] == "done"
 
 
 # ============================================================================
@@ -161,6 +218,43 @@ class TestRunGenerationSync:
         config = call_args[0][1]
         assert config["configurable"]["thread_id"] == "my_project"
 
+    @pytest.mark.asyncio
+    async def test_sync_reports_workflow_usage_and_accepts_unique_thread_id(self):
+        from services.generate_service import run_generation_sync_with_usage
+        from services.telemetry import record_llm_call
+
+        async def invoke(*args, **kwargs):
+            del args, kwargs
+            record_llm_call(
+                input_tokens=120,
+                output_tokens=80,
+                duration_ms=10,
+                estimated_cost_usd=0.0012,
+            )
+            return {"status": "done", "dsl": {"frames": []}}
+
+        with patch("agents.graph.get_graph") as mock_get_graph:
+            mock_graph = MagicMock()
+            mock_graph.ainvoke = AsyncMock(side_effect=invoke)
+            mock_get_graph.return_value = mock_graph
+
+            state, usage = await run_generation_sync_with_usage(
+                "project-id",
+                "test",
+                thread_id="eval:unique-run",
+            )
+
+        assert state["status"] == "done"
+        assert usage == {
+            "input": 120,
+            "output": 80,
+            "total": 200,
+            "cost_usd": 0.0012,
+        }
+        assert mock_graph.ainvoke.await_args.args[1]["configurable"][
+            "thread_id"
+        ] == "eval:unique-run"
+
 
 # ============================================================================
 # run_generation_stream
@@ -235,6 +329,21 @@ class TestRunGenerationStream:
         assert any("planner" in e["data"] for e in events)
         # 验证最后一个事件是 done
         assert events[-1]["event"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_sse_metadata_is_monotonic_and_resumes_after_cursor(self):
+        from services.generate_service import with_sse_metadata
+
+        async def source():
+            yield {"event": "progress", "data": '{"phase":"planner","pct":10}'}
+            yield {"event": "progress", "data": '{"phase":"coder","pct":50}'}
+            yield {"event": "done", "data": '{"phase":"done","pct":100}'}
+            yield {"event": "done", "data": '{"phase":"done","pct":100}'}
+
+        events = [event async for event in with_sse_metadata(source(), last_event_id=1)]
+        assert [event["id"] for event in events] == ["2", "3"]
+        assert json.loads(events[0]["data"])["schema_version"] == "1.0"
+        assert json.loads(events[0]["data"])["event_id"] == 2
 
     @pytest.mark.asyncio
     async def test_stream_phases_in_order(self):
@@ -362,6 +471,46 @@ class TestRunGenerationStream:
         for pe in progress_events:
             data = _parse(pe)
             assert "pct" in data, f"Progress event missing pct: {data}"
+
+    @pytest.mark.asyncio
+    async def test_graph_custom_module_event_is_forwarded_to_sse(self):
+        from services.generate_service import _drive_graph
+
+        async def mock_astream_events(graph_input, config, version):
+            del graph_input, config, version
+            yield {
+                "event": "on_custom_event",
+                "name": "eduflow_module_event",
+                "data": {
+                    "event": "module_start",
+                    "payload": {
+                        "module_id": "frames",
+                        "display_name": "逐帧推演",
+                        "pct": 10,
+                    },
+                },
+            }
+
+        graph = MagicMock()
+        graph.astream_events = mock_astream_events
+        final_state = MagicMock(values={})
+        final_state.tasks = []
+        graph.aget_state = AsyncMock(return_value=final_state)
+
+        events = [
+            event
+            async for event in _drive_graph(
+                graph,
+                {"project_id": "p1"},
+                {"configurable": {"thread_id": "p1"}},
+                "p1",
+            )
+        ]
+
+        module_event = next(
+            event for event in events if event["event"] == "module_start"
+        )
+        assert _parse(module_event)["module_id"] == "frames"
 
     @pytest.mark.asyncio
     async def test_planner_progress_includes_teaching_plan(self):
@@ -500,6 +649,7 @@ class TestHITLInterruptResume:
     async def test_resume_approve_reaches_done(self):
         """approve resume 显式驱动 knowledge→coder→quality 到 done。"""
         import uuid
+
         from services.generate_service import resume_generation_stream
 
         pid = str(uuid.uuid4())
@@ -521,7 +671,8 @@ class TestHITLInterruptResume:
             "input_content": "test",
         }
 
-        mock_db_session = AsyncMock()
+        # AsyncSession.add() is synchronous; mock only the async methods below.
+        mock_db_session = MagicMock()
         mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
         mock_db_session.__aexit__ = AsyncMock(return_value=None)
         mock_db_session.get = AsyncMock(return_value=mock_project)
@@ -543,9 +694,10 @@ class TestHITLInterruptResume:
         assert not any(e["event"] == "waiting_approval" for e in events)
 
     @pytest.mark.asyncio
-    async def test_resume_reject_returns_immediately(self):
-        """reject resume 应立即返回 done（不带 DSL）。"""
+    async def test_resume_reject_triggers_replan(self):
+        """reject+feedback 应触发重规划流程（Phase F）。"""
         import uuid
+
         from services.generate_service import resume_generation_stream
 
         events = []
@@ -554,5 +706,7 @@ class TestHITLInterruptResume:
         ):
             events.append(event)
 
-        assert len(events) == 1
-        assert events[0]["event"] == "done"
+        # 新行为：先发 progress（planning），然后尝试读 DB 失败 → error
+        assert len(events) >= 1
+        event_types = [e["event"] for e in events]
+        assert "progress" in event_types or "error" in event_types  # 不会直接 done

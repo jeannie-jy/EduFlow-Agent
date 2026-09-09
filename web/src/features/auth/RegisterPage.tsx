@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "./AuthShell";
-import { validateRegistration, simulateAuth, type RegistrationErrors } from "./auth";
+import { register, validateRegistration, type RegistrationErrors } from "./auth";
 import { setAuthState } from "@/lib/auth";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -32,10 +32,15 @@ export function RegisterPage() {
     if (Object.keys(validation).length > 0) return;
 
     setSubmitting(true);
-    await simulateAuth();
-    setAuthState({ isAuthenticated: true, nickname, email });
-    setSubmitting(false);
-    navigate("/app");
+    try {
+      const user = await register({ nickname, email, password });
+      setAuthState({ id: user.id, isAuthenticated: true, nickname: user.nickname, email: user.email, role: user.role });
+      navigate("/app");
+    } catch {
+      setErrors({ email: "注册失败，该邮箱可能已被使用" });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (

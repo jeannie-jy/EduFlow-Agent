@@ -7,14 +7,21 @@ POST   /api/projects/{id}/frames/{fid}/lock 锁定/解锁帧
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
+from copy import deepcopy
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session, get_readonly_session
-from schema.project import FrameUpdateRequest, FrameLockRequest
+from db.database import get_readonly_session, get_session
+from db.models import User
+from schema.project import FrameLockRequest, FrameUpdateRequest
+
+from .auth import require_editor
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -33,9 +40,9 @@ async def list_frames(
     帧表为编辑真源：优先返回 ``frames`` 表中的行；仅当表为空时回退到
     ``dsl_snapshot['frames']``（兼容尚未落表的历史项目）。
     """
-    from db.models import Frame as FrameModel
-
     from sqlalchemy import select
+
+    from db.models import Frame as FrameModel
 
     # DB frames 表优先（编辑真源，反映最新编辑/锁定状态）
     query = (
@@ -74,7 +81,7 @@ async def list_frames(
     from db.models import Project as ProjectModel
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project and project.dsl_snapshot:
-        snap_frames = project.dsl_snapshot.get("frames", [])
+        snap_frames = deepcopy(project.dsl_snapshot.get("frames", []))
         if snap_frames:
             for f in snap_frames:
                 if "id" not in f:
@@ -90,11 +97,12 @@ async def update_frame(
     fid: str,
     body: FrameUpdateRequest,
     session: AsyncSession = Depends(get_session),
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """编辑单帧内容。"""
-    from db.models import Frame as FrameModel
-
     from sqlalchemy import select
+
+    from db.models import Frame as FrameModel
 
     # 查找帧
     query = select(FrameModel).where(
@@ -105,7 +113,19 @@ async def update_frame(
     frame = result.scalar_one_or_none()
 
     if frame is None:
-        raise HTTPException(status_code=404, detail="Frame not found")
+        # 历史项目可能只有 JSON 快照而没有 frames 表记录，仍允许直接编辑快照。
+        from db.models import Project as ProjectModel
+        project = await session.get(ProjectModel, parse_project_id(project_id))
+        snapshot_frames = (project.dsl_snapshot or {}).get("frames", []) if project else []
+        snapshot_frame = next((f for f in snapshot_frames if f.get("frame_id") == fid), None)
+        if snapshot_frame is None:
+            raise HTTPException(status_code=404, detail="Frame not found")
+        if snapshot_frame.get("is_locked"):
+            raise HTTPException(status_code=409, detail="Frame is locked")
+        updates = body.model_dump(exclude_none=True)
+        await _sync_frame_into_snapshot(session, project_id, fid, updates)
+        logger.info("历史帧编辑: project=%s | frame=%s", project_id, fid)
+        return {"id": str(snapshot_frame.get("id", fid)), "updated_at": None}
 
     if frame.is_locked:
         raise HTTPException(status_code=409, detail="Frame is locked")
@@ -134,11 +154,12 @@ async def lock_frame(
     fid: str,
     body: FrameLockRequest,
     session: AsyncSession = Depends(get_session),
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """锁定或解锁帧。"""
-    from db.models import Frame as FrameModel
-
     from sqlalchemy import select
+
+    from db.models import Frame as FrameModel
 
     query = select(FrameModel).where(
         FrameModel.project_id == parse_project_id(project_id),
@@ -148,7 +169,16 @@ async def lock_frame(
     frame = result.scalar_one_or_none()
 
     if frame is None:
-        raise HTTPException(status_code=404, detail="Frame not found")
+        from db.models import Project as ProjectModel
+        project = await session.get(ProjectModel, parse_project_id(project_id))
+        snapshot_frames = (project.dsl_snapshot or {}).get("frames", []) if project else []
+        snapshot_frame = next((f for f in snapshot_frames if f.get("frame_id") == fid), None)
+        if snapshot_frame is None:
+            raise HTTPException(status_code=404, detail="Frame not found")
+        await _sync_frame_into_snapshot(
+            session, project_id, fid, {"is_locked": body.is_locked}
+        )
+        return {"id": str(snapshot_frame.get("id", fid)), "is_locked": body.is_locked}
 
     frame.is_locked = body.is_locked
     await session.flush()
@@ -173,15 +203,41 @@ async def _sync_frame_into_snapshot(
         return
 
     snap = dict(project.dsl_snapshot)
-    frames = [dict(f) for f in snap.get("frames", [])]
-    changed = False
-    for f in frames:
-        if f.get("frame_id") == frame_id:
-            f.update(fields)
-            changed = True
-            break
+    def update_frames(frame_values: list) -> tuple[list, bool]:
+        copied = [dict(f) for f in frame_values]
+        for frame in copied:
+            if frame.get("frame_id") == frame_id:
+                frame.update(fields)
+                return copied, True
+        return copied, False
 
+    frames, changed = update_frames(snap.get("frames", []))
     if changed:
         snap["frames"] = frames
+
+    # 成果工作台读取 module_outputs.frames；同步该副本，避免刷新后编辑回退。
+    module_outputs = dict(snap.get("module_outputs", {}))
+    frames_output = dict(module_outputs.get("frames", {}))
+    module_frames, module_changed = update_frames(frames_output.get("frames", []))
+    if module_changed:
+        frames_output["frames"] = module_frames
+        if set(fields) - {"is_locked"}:
+            version_payload = json.dumps(
+                module_frames, ensure_ascii=False, sort_keys=True, default=str
+            ).encode("utf-8")
+            frames_output["artifact_version"] = hashlib.sha256(version_payload).hexdigest()[:12]
+        module_outputs["frames"] = frames_output
+        snap["module_outputs"] = module_outputs
+
+    if changed and set(fields) - {"is_locked"}:
+        version_payload = json.dumps(
+            frames, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8")
+        snap["artifact_version"] = hashlib.sha256(version_payload).hexdigest()[:12]
+
+    if changed or module_changed:
         project.dsl_snapshot = snap
+        # Frame edits create a mutable working copy. No saved version may be
+        # advertised as current until an explicit/final workflow snapshot exists.
+        project.current_version_id = None
         await session.flush()

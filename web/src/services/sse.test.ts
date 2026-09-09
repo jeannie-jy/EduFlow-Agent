@@ -32,6 +32,10 @@ function sseEvent(event: string, data: Record<string, unknown>): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+function identifiedSseEvent(id: number, event: string, data: Record<string, unknown>): string {
+  return `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 // ============================================================================
 // connectSSE
 // ============================================================================
@@ -250,5 +254,45 @@ describe("connectSSE", () => {
     expect(onDone).toHaveBeenCalled();
 
     conn.close();
+  });
+
+  it("reconnects with Last-Event-ID and does not dispatch a duplicate", async () => {
+    const first = createSSEStream(
+      identifiedSseEvent(1, "progress", { phase: "planner", pct: 10 }),
+    );
+    const second = createSSEStream(
+      identifiedSseEvent(1, "progress", { phase: "planner", pct: 10 }),
+      identifiedSseEvent(2, "done", { phase: "done", pct: 100 }),
+    );
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(first)
+      .mockImplementationOnce(second);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { connectSSE } = await import("@/services/sse");
+    const onProgress = vi.fn();
+    const onDone = vi.fn();
+    const conn = connectSSE("http://localhost/stream", {
+      onProgress,
+      onDone,
+      reconnectMs: 1,
+      maxReconnects: 2,
+    });
+
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledOnce(), { timeout: 2000 });
+    expect(onProgress).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[1][1].headers["Last-Event-ID"]).toBe("1");
+    expect(conn.lastEventId).toBe("2");
+  });
+
+  it("parses CRLF and multiline data according to the SSE frame format", async () => {
+    const payload = '{"phase":"done",\n"pct":100}';
+    const raw = `id: 7\r\nevent: done\r\ndata: ${payload.split("\n").join("\r\ndata: ")}\r\n\r\n`;
+    vi.stubGlobal("fetch", createSSEStream(raw));
+    const { connectSSE } = await import("@/services/sse");
+    const onDone = vi.fn();
+    const conn = connectSSE("http://localhost/stream", { onDone, reconnectMs: 0 });
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledOnce(), { timeout: 2000 });
+    expect(conn.lastEventId).toBe("7");
   });
 });

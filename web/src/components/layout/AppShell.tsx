@@ -21,6 +21,7 @@ const routeLabels: Record<string, string> = {
   "/app": "我的推演",
   "/app/new": "新建推演",
   "/app/templates": "知识点模板库",
+  "/app/admin/users": "用户与权限",
 };
 
 export function AppShell({ children }: PropsWithChildren) {

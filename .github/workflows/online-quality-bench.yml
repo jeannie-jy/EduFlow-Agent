@@ -1,0 +1,130 @@
+name: Online EduFlowBench Quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      llm_endpoint:
+        description: OpenAI-compatible LLM endpoint
+        required: true
+        default: https://api.deepseek.com/v1
+        type: string
+      llm_model:
+        description: Candidate model identifier
+        required: true
+        default: deepseek-chat
+        type: string
+      judge_endpoint:
+        description: Independent judge OpenAI-compatible endpoint
+        required: true
+        default: https://api.openai.com/v1
+        type: string
+      judge_model:
+        description: Independent judge model identifier (must differ from candidate)
+        required: true
+        type: string
+      budget_usd:
+        description: Maximum reported total run cost in USD
+        required: true
+        default: "10.00"
+        type: string
+      case_limit:
+        description: Number of cases to run (use 3-5 for a smoke run, 50 for release)
+        required: true
+        default: "50"
+        type: string
+
+concurrency:
+  group: online-quality-bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  core-production-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DB_PASSWORD: ci-online-quality-password
+      MINIO_USER: ci-online-quality-minio
+      MINIO_PASSWORD: ci-online-quality-minio-password
+      LLM_ENDPOINT: ${{ inputs.llm_endpoint }}
+      LLM_MODEL: ${{ inputs.llm_model }}
+      LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
+      EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
+      EDUFLOW_EVAL_JUDGE_ENDPOINT: ${{ inputs.judge_endpoint }}
+      EDUFLOW_EVAL_JUDGE_MODEL: ${{ inputs.judge_model }}
+      EDUFLOW_EVAL_JUDGE_API_KEY: ${{ secrets.EDUFLOW_EVAL_JUDGE_API_KEY }}
+      EDUFLOW_EVAL_JUDGE_INPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_JUDGE_INPUT_COST_PER_MILLION || '0' }}
+      EDUFLOW_EVAL_JUDGE_OUTPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_JUDGE_OUTPUT_COST_PER_MILLION || '0' }}
+      LLM_REQUEST_MAX_COST_USD: ${{ inputs.budget_usd }}
+      LLM_INPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_INPUT_COST_PER_MILLION || '0' }}
+      LLM_OUTPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_OUTPUT_COST_PER_MILLION || '0' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require explicit evaluation credentials
+        run: |
+          test -n "$LLM_API_KEY"
+          test -n "$EMBEDDING_API_KEY"
+          test -n "$EDUFLOW_EVAL_JUDGE_API_KEY"
+          test "$LLM_MODEL" != "$EDUFLOW_EVAL_JUDGE_MODEL"
+
+      - name: Start isolated workflow dependencies
+        run: >-
+          docker compose up -d --build --wait --wait-timeout 180
+          postgres redis minio agent-api
+
+      - name: Run production LangGraph quality benchmark
+        id: benchmark
+        continue-on-error: true
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e GITHUB_SHA \
+            -e EDUFLOW_EVAL_JUDGE_ENDPOINT \
+            -e EDUFLOW_EVAL_JUDGE_MODEL \
+            -e EDUFLOW_EVAL_JUDGE_API_KEY \
+            -e EDUFLOW_EVAL_JUDGE_INPUT_COST_PER_MILLION \
+            -e EDUFLOW_EVAL_JUDGE_OUTPUT_COST_PER_MILLION \
+            agent-api \
+            python -m evals.runners.run_online \
+              --dataset evals/datasets/eduflowbench_v1.jsonl \
+              --generator evals.generators.live_workflow:generate_workflow_case \
+              --output /tmp/quality-online-report.json \
+              --artifacts-dir /tmp/quality-online-artifacts \
+              --concurrency 1 \
+              --timeout-seconds 300 \
+              --model "$LLM_MODEL" \
+              --prompt-version workflow-v2 \
+              --judge-generator evals.generators.live_judge:judge_workflow_case \
+              --judge-model "$EDUFLOW_EVAL_JUDGE_MODEL" \
+              --limit "${{ inputs.case_limit }}" \
+              --budget-usd "${{ inputs.budget_usd }}"
+
+      - name: Collect benchmark report and diagnostics
+        if: always()
+        run: |
+          docker compose cp agent-api:/tmp/quality-online-report.json quality-online-report.json || true
+          docker compose cp agent-api:/tmp/quality-online-artifacts quality-online-artifacts || true
+          docker compose ps --all > compose-ps.txt
+          docker compose logs --no-color agent-api > agent-api.log
+
+      - name: Upload auditable benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: online-quality-bench-${{ github.run_id }}
+          path: |
+            quality-online-report.json
+            quality-online-artifacts/
+            compose-ps.txt
+            agent-api.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Tear down isolated evaluation stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+      - name: Enforce benchmark result
+        if: steps.benchmark.outcome != 'success'
+        run: exit 1

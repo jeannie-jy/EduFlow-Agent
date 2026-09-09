@@ -7,7 +7,7 @@
  * - 超时控制
  */
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // ============================================================================
 // 类型
@@ -76,6 +76,7 @@ async function request<T>(
     const res = await fetch(url, {
       method,
       headers,
+      credentials: "include",
       body: body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
@@ -108,7 +109,7 @@ async function request<T>(
 }
 
 function buildUrl(path: string, params?: Record<string, string>): string {
-  const url = new URL(BASE_URL + path);
+  const url = new URL(BASE_URL + path, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null) url.searchParams.set(k, v);
@@ -132,6 +133,10 @@ export const api = {
 
   put<T>(path: string, body?: unknown, timeoutMs?: number) {
     return request<T>("PUT", path, body, { timeoutMs });
+  },
+
+  patch<T>(path: string, body?: unknown, timeoutMs?: number) {
+    return request<T>("PATCH", path, body, { timeoutMs });
   },
 
   delete<T>(path: string, timeoutMs?: number) {
@@ -159,6 +164,7 @@ export const api = {
     const res = await fetch(url, {
       method: "POST",
       headers,
+      credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal,
     });

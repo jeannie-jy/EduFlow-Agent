@@ -197,6 +197,16 @@ class TestPlannerNode:
         assert "estimated_total_frames" in source
         assert '"required"' in source
 
+    def test_planner_limits_are_explicit_in_source(self):
+        """Planner schema must bound arrays so one request cannot grow unbounded."""
+        import inspect
+        from agents.nodes import planner_node
+
+        source = inspect.getsource(planner_node)
+        assert '"maxItems": 8' in source
+        assert '"maxItems": 5' in source
+        assert '"maxLength": 180' in source
+
 
 # ============================================================================
 # Knowledge Node
@@ -295,6 +305,16 @@ class TestKnowledgeNode:
 
         call_args = mock_llm.call_args
         assert call_args[1]["temperature"] == 0.2
+
+    def test_knowledge_limits_are_explicit_in_source(self):
+        """Knowledge graph arrays must have bounded cardinality."""
+        import inspect
+        from agents.nodes import knowledge_node
+
+        source = inspect.getsource(knowledge_node)
+        assert '"maxItems": 12' in source
+        assert '"maxItems": 24' in source
+        assert '"maxItems": 15' in source
 
 
 # ============================================================================
@@ -432,6 +452,47 @@ class TestCoderNode:
         assert call_args[1]["max_tokens"] == 32768  # Coder 输出完整 DSL，需较大 token 限制
 
     @pytest.mark.asyncio
+    async def test_coder_batch_mode_limits_each_call_and_merges_frames(self):
+        """生产流开启 batch mode 后，每次只生成 3 帧并合并为完整 DSL。"""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["coder_batch_mode"] = True
+        state["teaching_plan"]["estimated_total_frames"] = 5
+        state["teaching_plan"]["outline"] = state["teaching_plan"]["outline"][:2]
+
+        def batch_output(start):
+            return {
+                "frames": [
+                    {
+                        "frame_id": f"f_{index:03d}",
+                        "title": f"步骤 {index}",
+                        "learning_goal": "理解当前步骤",
+                        "narration": "简短讲解",
+                        "visual_objects": [],
+                        "state_snapshot": {},
+                        "animations": [],
+                        "interaction_hooks": [],
+                        "checks": [],
+                    }
+                    for index in range(start, start + (3 if start == 1 else 2))
+                ],
+                "parameters": [],
+                "assets": [],
+            }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [batch_output(1), batch_output(4)]
+            result = await coder_node(state)
+
+        assert mock_llm.await_count == 2
+        assert all(call.kwargs["max_tokens"] == 8192 for call in mock_llm.await_args_list)
+        assert all("<frame_batch>" in call.kwargs["user_message"] for call in mock_llm.await_args_list)
+        assert [frame["frame_id"] for frame in result["dsl"]["frames"]] == [
+            "f_001", "f_002", "f_003", "f_004", "f_005"
+        ]
+
+    @pytest.mark.asyncio
     async def test_coder_dsl_structure_complete(self):
         """生成的 DSL 应包含所有顶层字段。"""
         from agents.nodes import coder_node
@@ -466,6 +527,46 @@ class TestCoderNode:
         ]
         for field in required_top_level:
             assert field in dsl, f"DSL missing top-level field: {field}"
+
+    @pytest.mark.asyncio
+    async def test_scoped_regeneration_only_replaces_requested_unlocked_frame(self):
+        """Coder prompt and deterministic merge must honor the regeneration boundary."""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_dsl()
+        original_frames = state["dsl"]["frames"]
+        state["regenerate_scope"] = {
+            "type": "single_frame",
+            "frame_ids": ["f_002"],
+        }
+        state["locked_frame_ids"] = ["f_001"]
+        generated = {
+            "frames": [
+                {
+                    "frame_id": "f_002",
+                    "title": "重新生成的第二帧",
+                    "narration": "replacement",
+                    "visual_objects": [],
+                    "state_snapshot": {},
+                }
+            ],
+            "parameters": [{"key": "must_not_replace"}],
+            "assets": [{"id": "must_not_replace"}],
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = generated
+            result = await coder_node(state)
+
+        prompt = mock_llm.call_args.kwargs["user_message"]
+        assert '"frame_id": "f_002"' in prompt
+        assert '"frame_id": "f_001"' not in prompt
+        assert "<active_parameters" in prompt
+        assert result["dsl"]["frames"][0] == original_frames[0]
+        assert result["dsl"]["frames"][1]["frame_id"] == "f_002"
+        assert result["dsl"]["frames"][1]["title"] == "重新生成的第二帧"
+        assert result["dsl"]["parameters"] == state["dsl"]["parameters"]
+        assert result["dsl"]["assets"] == state["dsl"]["assets"]
 
 
 # ============================================================================
@@ -750,6 +851,35 @@ class TestReflectionNode:
         assert new_frame_count == original_frame_count + 1
 
     @pytest.mark.asyncio
+    async def test_reflection_deduplicates_inserted_frame_ids(self):
+        """模型重复插入已有 frame_id 时不能破坏 DSL 唯一性。"""
+        from agents.nodes import reflection_node
+
+        state = AgentStateFactory.with_quality_report()
+        existing_id = state["dsl"]["frames"][0]["frame_id"]
+        revision_output = {
+            "revision_summary": "尝试重复插帧",
+            "modified_frame_ids": [],
+            "updated_frames": [],
+            "inserted_frames": [
+                {
+                    "frame_id": existing_id,
+                    "title": "重复帧",
+                    "narration": "不应插入",
+                    "visual_objects": [],
+                    "state_snapshot": {},
+                }
+            ],
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = revision_output
+            result = await reflection_node(state)
+
+        frame_ids = [frame["frame_id"] for frame in result["dsl"]["frames"]]
+        assert frame_ids.count(existing_id) == 1
+
+    @pytest.mark.asyncio
     async def test_llm_failure_fallback(self):
         """LLM 失败时保持 DSL 不变。"""
         from agents.nodes import reflection_node
@@ -797,6 +927,30 @@ class TestReflectionNode:
         history = result["revision_history"]
         assert len(history) == 2
         assert history[1]["reflection_round"] == state["reflection_count"] + 1
+
+    @pytest.mark.asyncio
+    async def test_reflection_prompt_carries_feedback_as_untrusted_data(self):
+        from agents.nodes import reflection_node
+
+        state = AgentStateFactory.with_quality_report()
+        state["user_feedback"] = {
+            "type": "correction",
+            "frame_id": "f_002",
+            "content": "第二步方向相反",
+        }
+        state["locked_frame_ids"] = ["f_001"]
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "revision_summary": "no-op",
+                "updated_frames": [],
+                "inserted_frames": [],
+            }
+            await reflection_node(state)
+
+        prompt = mock_llm.call_args.kwargs["user_message"]
+        assert "第二步方向相反" in prompt
+        assert "untrusted task data" in prompt
+        assert "f_001" in prompt
 
 
 # ============================================================================

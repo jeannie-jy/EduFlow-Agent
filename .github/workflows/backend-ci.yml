@@ -5,13 +5,36 @@ on:
     branches: [main, dev]
     paths:
       - "agent/**"
+      - "docker-compose.yml"
+      - "db/**"
   pull_request:
     branches: [main, dev]
     paths:
       - "agent/**"
+      - "docker-compose.yml"
+      - "db/**"
   workflow_dispatch:
 
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  compose-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose model
+        env:
+          DB_PASSWORD: ci-only-password
+          MINIO_USER: ci-minio-user
+          MINIO_PASSWORD: ci-minio-password
+          LLM_API_KEY: ci-placeholder
+          EMBEDDING_API_KEY: ci-placeholder
+        run: |
+          docker compose config --quiet
+          docker compose --profile video config --quiet
+
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -25,10 +48,101 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: agent/requirements-ci.txt
+          cache-dependency-path: agent/requirements-ci.lock.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-ci.txt
+        run: pip install -r requirements-ci.lock.txt
+
+      - name: Lint critical Python errors
+        run: python -m ruff check . --select E9,F63,F7,F82
+
+      - name: Validate OpenAPI schema
+        run: python -c "from main import app; schema = app.openapi(); assert schema['openapi']; assert schema['paths']"
 
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -m "not render and not online_eval" -v --tb=short
+
+  migration-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16
+        env:
+          POSTGRES_DB: eduflow_ci
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d eduflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://agent:ci-only-password@localhost:5432/eduflow_ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements-ci.lock.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-ci.lock.txt
+
+      - name: Apply baseline migration
+        run: alembic upgrade head
+
+      - name: Verify database reached every migration head
+        run: alembic current --check-heads
+
+  image-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: ./agent
+          push: false
+          tags: eduflow-agent:ci
+
+  render-smoke:
+    # 真实渲染验证：安装完整 requirements.lock.txt（含 manim）+ 系统库，
+    # 把 golden 脚本真实渲染成 MP4，验证视频导出整条工具链。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements.lock.txt
+
+      - name: Install system libs (cairo/pango for manim)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config
+
+      - name: Install dependencies
+        run: pip install -r requirements.lock.txt
+
+      - name: Render smoke tests
+        run: python -m pytest tests/test_manim_render_smoke.py -m render -v --tb=short

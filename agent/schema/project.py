@@ -19,7 +19,6 @@ from .dsl import (
     RenderScript,
 )
 
-
 # ============================================================================
 # 项目
 # ============================================================================
@@ -132,6 +131,7 @@ class ParameterResponse(BaseModel):
     current_value: Any = None
     constraints: dict[str, Any] = Field(default_factory=dict)
     recompute_scope: str = "all_frames"
+    affects_frame_ids: list[str] = Field(default_factory=list)
 
 
 class ParameterListResponse(BaseModel):
@@ -142,6 +142,10 @@ class ParameterListResponse(BaseModel):
 class RecomputeRequest(BaseModel):
     """参数变更重算请求。"""
     changed_params: dict[str, Any] = Field(..., description="key → new_value 映射")
+    expected_impact_token: str | None = Field(
+        default=None,
+        description="预览返回的并发保护令牌；状态变化后执行会被拒绝",
+    )
 
 
 # ============================================================================
@@ -151,12 +155,49 @@ class RecomputeRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     """启动生成请求。"""
-    action: str = "full"     # full / plan_only / frames_only
+    action: str = "full"     # full / plan_only / modules
+    modules: list[str] | None = None  # 用户选中的模块列表（前选流程）
 
 
 class GenerateResponse(BaseModel):
     """启动生成响应。"""
     stream_url: str
+
+
+class ModuleSelectRequest(BaseModel):
+    """模块选择请求。"""
+    modules: list[str] = Field(
+        ...,
+        min_length=1,
+        description="要生成的模块 ID 列表，如 ['mindmap', 'cards', 'frames']",
+    )
+
+
+class ModuleInfo(BaseModel):
+    """模块元信息（供前端模块选择器渲染）。"""
+    module_id: str
+    display_name: str
+    description: str = ""
+    icon: str = "box"
+    category: str = "visual"
+    priority: int = 5
+    estimated_seconds: int = 30
+
+
+class ModuleListResponse(BaseModel):
+    """可用模块列表响应。"""
+    modules: list[ModuleInfo] = Field(default_factory=list)
+
+
+class ModuleCostEstimateResponse(BaseModel):
+    """Historical module-run estimate; a workflow budget is never an estimate."""
+    available: bool
+    requested_module_count: int
+    estimated_cost_usd: float | None = None
+    sample_count: int = 0
+    method: Literal["historical_median_per_module", "unavailable"]
+    hard_limit_cost_usd: float
+    hard_limit_tokens: int
 
 
 class RegenerateRequest(BaseModel):
@@ -167,6 +208,11 @@ class RegenerateRequest(BaseModel):
 class RejectPlanRequest(BaseModel):
     """拒绝教学计划请求（含修改意见）。"""
     feedback: str = Field(default="", description="用户修改意见")
+
+
+class ApprovePlanRequest(BaseModel):
+    """批准教学计划请求（含最终模块选择 — 支持反悔机制）。"""
+    modules: list[str] | None = None
 
 
 class ApprovePlanResponse(BaseModel):
@@ -293,6 +339,7 @@ class FeedbackRequest(BaseModel):
 class FeedbackResponse(BaseModel):
     """提交反馈响应。"""
     id: str
+    reflection_job_id: str | None = None
 
 
 # ============================================================================

@@ -1,0 +1,107 @@
+name: Online Tool Calling Bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      llm_endpoint:
+        description: OpenAI-compatible LLM endpoint
+        required: true
+        default: https://api.deepseek.com/v1
+        type: string
+      llm_model:
+        description: Tool-capable model identifier
+        required: true
+        default: deepseek-chat
+        type: string
+      budget_usd:
+        description: Maximum reported run cost in USD
+        required: true
+        default: "2.00"
+        type: string
+      case_limit:
+        description: Number of cases to run (use 3 for a smoke run, 8 for release)
+        required: true
+        default: "8"
+        type: string
+
+concurrency:
+  group: online-tool-bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  real-tool-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DB_PASSWORD: ci-online-tool-password
+      MINIO_USER: ci-online-tool-minio
+      MINIO_PASSWORD: ci-online-tool-minio-password
+      LLM_ENDPOINT: ${{ inputs.llm_endpoint }}
+      LLM_MODEL: ${{ inputs.llm_model }}
+      LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
+      EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
+      LLM_REQUEST_MAX_COST_USD: ${{ inputs.budget_usd }}
+      LLM_INPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_INPUT_COST_PER_MILLION || '0' }}
+      LLM_OUTPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_OUTPUT_COST_PER_MILLION || '0' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require explicit evaluation credentials
+        run: |
+          test -n "$LLM_API_KEY"
+          test -n "$EMBEDDING_API_KEY"
+
+      - name: Start isolated Tool Runtime dependencies
+        run: >-
+          docker compose up -d --build --wait --wait-timeout 180
+          postgres redis minio agent-api
+
+      - name: Run real-model Tool Calling benchmark
+        id: benchmark
+        continue-on-error: true
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_BOOTSTRAP=1 \
+            -e GITHUB_SHA \
+            agent-api \
+            python -m evals.runners.run_online \
+              --dataset evals/datasets/tool_online_cases.jsonl \
+              --generator evals.generators.live_tools:generate_tool_case \
+              --output /tmp/tool-online-report.json \
+              --artifacts-dir /tmp/tool-online-artifacts \
+              --concurrency 1 \
+              --model "$LLM_MODEL" \
+              --prompt-version tool-router-v1 \
+              --limit "${{ inputs.case_limit }}" \
+              --budget-usd "${{ inputs.budget_usd }}"
+
+      - name: Collect benchmark report and diagnostics
+        if: always()
+        run: |
+          docker compose cp agent-api:/tmp/tool-online-report.json tool-online-report.json || true
+          docker compose cp agent-api:/tmp/tool-online-artifacts tool-online-artifacts || true
+          docker compose ps --all > compose-ps.txt
+          docker compose logs --no-color agent-api > agent-api.log
+
+      - name: Upload auditable benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: online-tool-bench-${{ github.run_id }}
+          path: |
+            tool-online-report.json
+            tool-online-artifacts/
+            compose-ps.txt
+            agent-api.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Tear down isolated evaluation stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+      - name: Enforce benchmark result
+        if: steps.benchmark.outcome != 'success'
+        run: exit 1

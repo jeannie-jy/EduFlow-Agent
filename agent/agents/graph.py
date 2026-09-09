@@ -1,7 +1,7 @@
 """LangGraph Agent 编排图。
 
 5 Agent 协作:
-    Planner → Knowledge → Coder → Quality → [Reflection → Coder] → END
+    Planner → Knowledge → (Coder → Quality ↔ Reflection | Module DAG) → END
 
 支持:
 - Postgres checkpointer 持久化（生产环境）
@@ -13,13 +13,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
-from .state import AgentState
 from config import get_settings
+
+from .state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,16 @@ _checkpointer_initialized = False
 # ── 延迟导入（避免在没有 langgraph 时崩溃）──────────────────
 
 _END = None
+_START = None
 _StateGraph = None
+# Explicit node overrides used by integration tests and runtime adapters. These
+# are not caches: ``None`` always resolves the current function from nodes.py.
 _planner_node = None
 _knowledge_node = None
 _coder_node = None
 _quality_node = None
 _reflection_node = None
+_modules_node = None
 
 
 def _get_end():
@@ -44,6 +49,14 @@ def _get_end():
         from langgraph.graph import END
         _END = END
     return _END
+
+
+def _get_start():
+    global _START
+    if _START is None:
+        from langgraph.graph import START
+        _START = START
+    return _START
 
 
 def _get_state_graph():
@@ -55,83 +68,89 @@ def _get_state_graph():
 
 
 def _get_planner_node():
-    global _planner_node
-    if _planner_node is None:
-        from .nodes import planner_node
-        _planner_node = planner_node
-    return _planner_node
+    # Python already caches the imported module. Resolve the function on every
+    # graph build so dependency overrides (tests and future runtime adapters)
+    # cannot be defeated by a stale process-global function reference.
+    if _planner_node is not None:
+        return _planner_node
+    from .nodes import planner_node
+    return planner_node
 
 
 def _get_coder_node():
-    global _coder_node
-    if _coder_node is None:
-        from .nodes import coder_node
-        _coder_node = coder_node
-    return _coder_node
+    if _coder_node is not None:
+        return _coder_node
+    from .nodes import coder_node
+    return coder_node
 
 
 def _get_knowledge_node():
-    global _knowledge_node
-    if _knowledge_node is None:
-        from .nodes import knowledge_node
-        _knowledge_node = knowledge_node
-    return _knowledge_node
+    if _knowledge_node is not None:
+        return _knowledge_node
+    from .nodes import knowledge_node
+    return knowledge_node
 
 
 def _get_quality_node():
-    global _quality_node
-    if _quality_node is None:
-        from .nodes import quality_node
-        _quality_node = quality_node
-    return _quality_node
+    if _quality_node is not None:
+        return _quality_node
+    from .nodes import quality_node
+    return quality_node
 
 
 def _get_reflection_node():
-    global _reflection_node
-    if _reflection_node is None:
-        from .nodes import reflection_node
-        _reflection_node = reflection_node
-    return _reflection_node
+    if _reflection_node is not None:
+        return _reflection_node
+    from .nodes import reflection_node
+    return reflection_node
+
+
+def _get_modules_node():
+    if _modules_node is not None:
+        return _modules_node
+    from .nodes import modules_node
+    return modules_node
 
 
 # ── 条件路由 ────────────────────────────────────────────────
 
 
-def _should_continue_after_planner(state: AgentState) -> Literal["knowledge", "__end__"]:
+def _should_continue_after_planner(
+    state: AgentState,
+) -> Literal["planner", "knowledge", "__end__"]:
     """Planner 完成后：被拒绝则结束（等前端重启），否则进入 Knowledge。
 
     HITL 审批本身由 planner_node 内的运行期 ``interrupt()`` 处理（见 nodes.py），
     这里只在「拒绝」时短路到 END。
     """
     if state.get("plan_rejected"):
+        if state.get("replan_count", 0) <= get_settings().max_replan_cycles:
+            return "planner"
         return "__end__"
     return "knowledge"
 
 
+def _route_entry(
+    state: AgentState,
+) -> Literal["planner", "knowledge", "coder", "reflection", "modules"]:
+    """Route all supported commands through the canonical workflow graph."""
+    entry = state.get("workflow_entry", "planner")
+    if entry in {"planner", "knowledge", "coder", "reflection", "modules"}:
+        return entry
+    return "planner"
+
+
+def _route_after_knowledge(state: AgentState) -> Literal["modules", "coder"]:
+    return "modules" if state.get("selected_modules") else "coder"
+
+
 def _should_reflect(state: AgentState) -> Literal["reflection", "__end__"]:
     """Quality 完成后：是否触发 Reflection。"""
-    settings = get_settings()
-    report = state.get("quality_report", {})
-    overall = report.get("overall_score", 1.0)
-    is_blocking = report.get("is_blocking", False)
-    count = state.get("reflection_count", 0)
-    max_cycles = settings.max_reflection_cycles
+    from .workflow_policy import needs_reflection
 
-    if (overall < settings.quality_score_threshold or is_blocking) and count < max_cycles:
-        logger.info("Quality %.2f < %.2f, 触发 Reflection (第 %d/%d 次)",
-                    overall, settings.quality_score_threshold, count + 1, max_cycles)
+    if needs_reflection(state):
         return "reflection"
     return "__end__"
-
-
-def _after_reflection(state: AgentState) -> Literal["coder", "__end__"]:
-    """Reflection 完成后：回到 Coder 重生成。"""
-    settings = get_settings()
-    count = state.get("reflection_count", 0)
-    if count >= settings.max_reflection_cycles:
-        logger.warning("Reflection 已达上限 %d 次，终止循环", count)
-        return "__end__"
-    return "coder"
 
 
 # ── Graph 构建 ──────────────────────────────────────────────
@@ -141,7 +160,8 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
     """构建 LangGraph StateGraph。
 
     流程:
-        START → Planner → Knowledge → Coder → Quality → [Reflection → Coder] → END
+        START → Planner/Knowledge/Coder → Quality ↔ Reflection → END
+                                      └→ Module DAG → END
 
     Human-in-the-Loop:
         Planner 输出后可通过 pending_approval 中断。
@@ -151,6 +171,7 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
     """
     StateGraph = _get_state_graph()
     END = _get_end()
+    START = _get_start()
 
     workflow = StateGraph(AgentState)
 
@@ -160,19 +181,35 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
     workflow.add_node("coder", _get_coder_node())
     workflow.add_node("quality", _get_quality_node())
     workflow.add_node("reflection", _get_reflection_node())
+    workflow.add_node("modules", _get_modules_node())
 
-    # 入口
-    workflow.set_entry_point("planner")
+    # 正常生成、审批恢复、局部重生成共享一张图，仅入口不同。
+    workflow.add_conditional_edges(
+        START,
+        _route_entry,
+        {
+            "planner": "planner",
+            "knowledge": "knowledge",
+            "coder": "coder",
+            "reflection": "reflection",
+            "modules": "modules",
+        },
+    )
 
     # Planner → Knowledge（拒绝则 END；HITL 审批由 planner_node 内 interrupt() 处理）
     workflow.add_conditional_edges(
         "planner",
         _should_continue_after_planner,
-        {"knowledge": "knowledge", "__end__": END},
+        {"planner": "planner", "knowledge": "knowledge", "__end__": END},
     )
 
-    # Knowledge → Coder
-    workflow.add_edge("knowledge", "coder")
+    # Knowledge → Module DAG 或传统 Coder
+    workflow.add_conditional_edges(
+        "knowledge",
+        _route_after_knowledge,
+        {"modules": "modules", "coder": "coder"},
+    )
+    workflow.add_edge("modules", END)
 
     # Coder → Quality
     workflow.add_edge("coder", "quality")
@@ -184,12 +221,8 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
         {"reflection": "reflection", "__end__": END},
     )
 
-    # Reflection → Coder (重生成) 或 END
-    workflow.add_conditional_edges(
-        "reflection",
-        _after_reflection,
-        {"coder": "coder", "__end__": END},
-    )
+    # Reflection 已直接应用局部修订，回到 Quality 复核；不得再次全量 Coder 覆盖修订。
+    workflow.add_edge("reflection", "quality")
 
     compile_kwargs: dict[str, Any] = {}
     if checkpointer is not None:
@@ -242,6 +275,7 @@ async def get_graph_async() -> "CompiledStateGraph":
         try:
             import asyncio as _asyncio
             from contextlib import AsyncExitStack
+
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
             stack = AsyncExitStack()

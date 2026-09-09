@@ -10,6 +10,9 @@ export type {
   SSEWaitingApprovalEvent,
   SSEDoneEvent,
   SSEErrorEvent,
+  SSEModuleStartEvent,
+  SSEModuleDoneEvent,
+  SSEModuleErrorEvent,
 } from "./sse";
 
 export * from "./projects";
@@ -19,3 +22,4 @@ export * from "./parameters";
 export * from "./export";
 export * from "./knowledge";
 export * from "./versions";
+export * from "./admin";

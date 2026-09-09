@@ -42,6 +42,11 @@ async_session_factory = async_sessionmaker(
 )
 
 
+async def close_database() -> None:
+    """Dispose the shared engine during application shutdown."""
+    await engine.dispose()
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI 依赖注入：获取异步数据库会话（读写操作使用）。"""
     async with async_session_factory() as session:

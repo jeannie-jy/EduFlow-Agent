@@ -178,9 +178,92 @@ class TestManimScriptGenerator:
         }
         gen = ManimScriptGenerator(dsl)
         script = gen.generate()
-        # 双引号应被替换为单引号
+        # Python repr quoting should preserve the content without breaking syntax.
         assert '他说' in script
         assert "'''" not in script  # 不应有三引号语法错误
+
+    def test_narration_newline_cannot_inject_source(self):
+        dsl = {
+            "project_id": "p1",
+            "topic": "test",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "t",
+                "narration": "第一行\nraise RuntimeError('injected')",
+                "visual_objects": [],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "# Narration: \"第一行 raise" in script
+        compile(script, "<generated-manim>", "exec")
+
+    def test_cjk_text_uses_font_installed_in_render_image(self):
+        dsl = {
+            "project_id": "p1",
+            "topic": "红黑树",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "根节点",
+                "narration": "根节点必须是黑色",
+                "visual_objects": [{"id": "root", "type": "node", "label": "根节点"}],
+                "animations": [{"type": "appear", "target": "root"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert 'EDUFLOW_CJK_FONT = "Noto Sans CJK SC"' in script
+        assert "font=EDUFLOW_CJK_FONT" in script
+        compile(script, "<generated-manim>", "exec")
+
+    def test_formula_never_requires_latex(self):
+        dsl = {
+            "project_id": "p1",
+            "topic": "test",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "formula",
+                "narration": "",
+                "visual_objects": [{
+                    "id": "formula-1",
+                    "type": "formula",
+                    "latex": r"\frac{n(n-1)}{2}",
+                }],
+                "animations": [{"type": "appear", "target": "formula-1"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "MathTex(" not in script
+        assert "Tex(" not in script
+        assert "Text(" in script
+        compile(script, "<generated-manim>", "exec")
+
+    def test_invalid_object_id_is_sanitized_and_unknown_animation_is_skipped(self):
+        dsl = {
+            "project_id": "p1",
+            "topic": "test",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "safe identifiers",
+                "narration": "",
+                "visual_objects": [{"id": "1-node.bad", "type": "node"}],
+                "animations": [
+                    {"type": "appear", "target": "1-node.bad"},
+                    {"type": "appear", "target": "missing-object"},
+                ],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "object_1_node_bad_0" in script
+        assert "Skip animation with unknown target" in script
+        compile(script, "<generated-manim>", "exec")
 
     def test_empty_narration_no_subtitle_block(self, minimal_dsl):
         """无 narration 的帧不应生成字幕代码。"""

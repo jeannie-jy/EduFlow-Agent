@@ -42,11 +42,40 @@ export interface SSEErrorEvent {
   details?: unknown;
 }
 
+/** 模块生成开始事件 */
+export interface SSEModuleStartEvent {
+  phase: "module_start";
+  module_id: string;
+  display_name: string;
+  message: string;
+  pct: number;
+}
+
+/** 模块生成完成事件 */
+export interface SSEModuleDoneEvent {
+  phase: "module_done";
+  module_id: string;
+  display_name: string;
+  output: unknown;
+  issues?: unknown[] | null;
+  pct: number;
+}
+
+/** 模块生成错误事件（非阻塞） */
+export interface SSEModuleErrorEvent {
+  phase: "module_error";
+  module_id: string;
+  display_name?: string;
+  error: string;
+  pct: number;
+}
+
 export type SSEConnectionState = "connecting" | "open" | "closed" | "error";
 
 export interface SSEConnection {
   close(): void;
   readonly state: SSEConnectionState;
+  readonly lastEventId: string | null;
 }
 
 export interface SSEOptions {
@@ -54,11 +83,16 @@ export interface SSEOptions {
   onWaitingApproval?: (event: SSEWaitingApprovalEvent) => void;
   onDone?: (event: SSEDoneEvent) => void;
   onError?: (event: SSEErrorEvent) => void;
+  onModuleStart?: (event: SSEModuleStartEvent) => void;
+  onModuleDone?: (event: SSEModuleDoneEvent) => void;
+  onModuleError?: (event: SSEModuleErrorEvent) => void;
   signal?: AbortSignal;
   /** 自动重连间隔（毫秒），默认 3000，设为 0 禁用 */
   reconnectMs?: number;
   /** 最大重连次数，默认 3 */
   maxReconnects?: number;
+  /** 可选初始恢复游标；自动重连会继续使用最后收到的事件 ID。 */
+  lastEventId?: string;
 }
 
 // ============================================================================
@@ -71,15 +105,21 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
     onWaitingApproval,
     onDone,
     onError,
+    onModuleStart,
+    onModuleDone,
+    onModuleError,
     signal,
     reconnectMs = 3000,
     maxReconnects = 3,
+    lastEventId: initialLastEventId,
   } = options;
 
   let state: SSEConnectionState = "connecting";
   let reconnectCount = 0;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let abortController: AbortController | null = null;
+  let lastEventId: string | null = initialLastEventId ?? null;
+  let terminalReceived = false;
 
   async function connect() {
     abortController = new AbortController();
@@ -90,8 +130,11 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
     }
 
     try {
+      const headers: Record<string, string> = { Accept: "text/event-stream" };
+      if (lastEventId) headers["Last-Event-ID"] = lastEventId;
       const res = await fetch(url, {
-        headers: { Accept: "text/event-stream" },
+        credentials: "include",
+        headers,
         signal: abortController.signal,
       });
 
@@ -104,7 +147,6 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
       }
 
       state = "open";
-      reconnectCount = 0;
       reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -113,20 +155,17 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
         const { done, value } = await reader.read();
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              dispatch(data);
-            } catch {
-              // 忽略解析失败的行
-            }
-          }
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) {
+          processBlock(block);
         }
+      }
+      buffer += decoder.decode().replace(/\r\n/g, "\n");
+      if (buffer.trim()) processBlock(buffer);
+      if (!terminalReceived && (state as SSEConnectionState) !== "closed") {
+        throw new Error("SSE 流在终态事件前中断");
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
@@ -143,7 +182,7 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
         await delay(reconnectMs);
         if ((state as SSEConnectionState) !== "closed") {
           state = "connecting";
-          connect();
+          void connect();
           return;
         }
       }
@@ -155,14 +194,59 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
     }
   }
 
-  function dispatch(data: Record<string, unknown>) {
-    const phase = data.phase as string;
-    if (phase === "done") {
+  function processBlock(block: string) {
+    let eventName = "message";
+    let eventId: string | null = null;
+    const dataLines: string[] = [];
+    for (const line of block.split("\n")) {
+      if (!line || line.startsWith(":")) continue;
+      const separator = line.indexOf(":");
+      const field = separator < 0 ? line : line.slice(0, separator);
+      let value = separator < 0 ? "" : line.slice(separator + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "event") eventName = value;
+      else if (field === "id") eventId = value;
+      else if (field === "data") dataLines.push(value);
+    }
+    if (!dataLines.length) return;
+    if (eventId && lastEventId) {
+      const incoming = Number(eventId);
+      const previous = Number(lastEventId);
+      if (
+        eventId === lastEventId ||
+        (Number.isSafeInteger(incoming) && Number.isSafeInteger(previous) && incoming <= previous)
+      ) return;
+    }
+    try {
+      const data = JSON.parse(dataLines.join("\n"));
+      if (eventId) lastEventId = eventId;
+      dispatch(eventName, data);
+    } catch {
+      // Ignore malformed application payloads while keeping the stream alive.
+    }
+  }
+
+  function dispatch(eventName: string, data: Record<string, unknown>) {
+    const phase = (data.phase as string) || eventName;
+    if (terminalReceived) return;
+    if (eventName === "done" || phase === "done") {
+      terminalReceived = true;
+      state = "closed";
       onDone?.(data as unknown as SSEDoneEvent);
-    } else if (phase === "error") {
+    } else if (eventName === "error" || phase === "error") {
+      terminalReceived = true;
+      state = "closed";
       onError?.(data as unknown as SSEErrorEvent);
-    } else if (phase === "waiting_approval") {
+    } else if (eventName === "waiting_approval" || phase === "waiting_approval") {
+      terminalReceived = true;
+      state = "closed";
       onWaitingApproval?.(data as unknown as SSEWaitingApprovalEvent);
+    } else if (phase === "module_start") {
+      onModuleStart?.(data as unknown as SSEModuleStartEvent);
+    } else if (phase === "module_done") {
+      onModuleDone?.(data as unknown as SSEModuleDoneEvent);
+    } else if (phase === "module_error") {
+      onModuleError?.(data as unknown as SSEModuleErrorEvent);
     } else {
       onProgress?.(data as SSEProgressEvent);
     }
@@ -181,6 +265,9 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
     close,
     get state() {
       return state;
+    },
+    get lastEventId() {
+      return lastEventId;
     },
   };
 }

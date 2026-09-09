@@ -31,7 +31,7 @@ export const ArrayObject = memo(function ArrayObject({
   previousValues,
   className,
 }: ArrayObjectProps) {
-  const cells = object.cells ?? [];
+  const cells = useMemo(() => object.cells ?? [], [object.cells]);
   const style = object.style ?? {};
 
   const cellEntries = useMemo(
@@ -70,36 +70,34 @@ export const ArrayObject = memo(function ArrayObject({
 
   return (
     <div
-      className={cn("inline-flex items-stretch rounded-md border", className)}
+      className={cn("inline-flex max-w-full flex-col overflow-x-auto rounded-md border", className)}
       role="list"
       aria-label={object.label ?? "数组"}
     >
-      {cellEntries.map((cell, idx) => (
-        <div
-          key={cell.key}
-          role="listitem"
-          aria-label={`索引 ${idx}: ${cell.value}`}
-          className={cn(
-            "flex min-w-[2.5rem] items-center justify-center border-r px-3 py-1.5 text-sm font-mono tabular-nums",
-            "last:border-r-0",
-            // 变化闪烁动画
-            cell.changed && "animate-update-value",
-            // 高亮
-            cell.highlight && "bg-primary/10 ring-2 ring-primary/30",
-            // 交替背景色
-            idx % 2 === 0 ? "bg-muted/30" : "bg-transparent",
-          )}
-          style={cell.cellColor ? { borderColor: cell.cellColor } : undefined}
-        >
-          {String(cell.value)}
-        </div>
-      ))}
+      <div className="flex w-max min-w-full items-stretch">
+        {cellEntries.map((cell, idx) => (
+          <div
+            key={cell.key}
+            role="listitem"
+            aria-label={`索引 ${idx}: ${cell.value}`}
+            className={cn(
+              "flex min-w-[3rem] flex-1 items-center justify-center border-r px-3 py-2 text-sm font-mono tabular-nums last:border-r-0",
+              cell.changed && "animate-update-value",
+              cell.highlight && "bg-primary/10 ring-2 ring-inset ring-primary/30",
+              idx % 2 === 0 ? "bg-muted/30" : "bg-transparent",
+            )}
+            style={cell.cellColor ? { borderColor: cell.cellColor } : undefined}
+          >
+            {String(cell.value)}
+          </div>
+        ))}
+      </div>
       {/* 索引标签 */}
-      <div className="flex border-t" role="presentation">
+      <div className="flex w-max min-w-full border-t bg-[var(--secondary)]/25" role="presentation" aria-label="数组索引">
         {cells.map((cell, idx) => (
           <div
             key={getCellKey(cell.id, idx)}
-            className="flex min-w-[2.5rem] items-center justify-center border-r px-1 py-0.5 text-[10px] text-muted-foreground last:border-r-0"
+            className="flex min-w-[3rem] flex-1 items-center justify-center border-r px-1 py-0.5 text-[10px] text-muted-foreground last:border-r-0"
           >
             {idx}
           </div>

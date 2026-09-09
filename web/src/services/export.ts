@@ -3,6 +3,7 @@
  *
  * POST   /api/projects/{id}/export/manim           创建视频导出
  * GET    /api/export/{job_id}                      查询导出状态
+ * DELETE /api/export/{job_id}                      取消导出任务
  * GET    /api/export/{job_id}/download/{filename}  下载产物
  */
 
@@ -23,6 +24,7 @@ export interface ExportManimRequest {
 export interface ExportCreateResponse {
   job_id: string;
   status: string;
+  source_version_id: string | null;
 }
 
 export interface ExportArtifact {
@@ -33,12 +35,13 @@ export interface ExportArtifact {
 
 export interface ExportJobResponse {
   job_id: string;
-  status: "queued" | "rendering" | "completed" | "failed";
+  status: "queued" | "rendering" | "completed" | "failed" | "cancelled";
   progress_pct: number;
   artifacts: ExportArtifact[] | null;
   error_log: string | null;
   duration_ms: number | null;
   total_frames: number | null;
+  source_version_id: string | null;
 }
 
 // ============================================================================
@@ -57,4 +60,8 @@ export function createExportJob(projectId: string, config: ExportManimRequest = 
 
 export function getExportStatus(jobId: string) {
   return api.get<ExportJobResponse>(`/export/${jobId}`);
+}
+
+export function cancelExportJob(jobId: string) {
+  return api.delete<{ job_id: string; status: "cancelled" }>(`/export/${jobId}`);
 }

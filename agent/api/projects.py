@@ -10,13 +10,18 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import get_session, get_readonly_session
+from db.database import get_readonly_session, get_session
+from db.models import User
 from schema.project import ProjectCreateRequest
+from services.audit import record_audit
+
+from .auth import get_current_user, is_admin, require_editor
 from .deps import parse_project_id
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,8 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 async def create_project(
     body: ProjectCreateRequest,
     session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """创建推演项目。"""
     from db.models import Project
@@ -37,6 +44,7 @@ async def create_project(
         title=body.title,
         audience=body.audience,
         difficulty=body.difficulty,
+        owner_id=str(current_user.id) if current_user is not None else None,
         status="draft",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -51,6 +59,13 @@ async def create_project(
         "input_type": body.input_type,
         "constraints": body.constraints,
     }
+    record_audit(
+        session,
+        action="project.create",
+        resource_type="project",
+        resource_id=str(project.id),
+        actor_id=current_user.id if current_user is not None else None,
+    )
 
     logger.info("项目创建: id=%s | title=%s", project.id, project.title)
 
@@ -68,12 +83,18 @@ async def list_projects(
     page_size: int = Query(default=20, ge=1, le=100),
     status: str | None = Query(default=None),
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """获取项目列表。"""
     from db.models import Project
 
     count_query = select(func.count(Project.id))
     items_query = select(Project).order_by(Project.updated_at.desc())
+
+    if current_user is not None and not is_admin(current_user):
+        owner_id = str(current_user.id)
+        count_query = count_query.where(Project.owner_id == owner_id)
+        items_query = items_query.where(Project.owner_id == owner_id)
 
     if status:
         count_query = count_query.where(Project.status == status)
@@ -127,7 +148,8 @@ async def get_project(
     session: AsyncSession = Depends(get_readonly_session),
 ) -> dict:
     """获取项目详情（含最新 DSL）。"""
-    from db.models import Project, Frame
+    from db.models import Frame, Project
+    from services.project_persistence import load_canonical_project_dsl
 
     project = await session.get(Project, parse_project_id(project_id))
     if project is None:
@@ -141,6 +163,7 @@ async def get_project(
         )
     )
     frame_count = frame_count_result.scalar() or 0
+    canonical_dsl = await load_canonical_project_dsl(project, session)
 
     return {
         "id": str(project.id),
@@ -148,10 +171,17 @@ async def get_project(
         "status": project.status,
         "audience": project.audience,
         "difficulty": project.difficulty,
-        "teaching_plan": project.dsl_snapshot.get("teaching_plan") if project.dsl_snapshot else None,
-        "knowledge_graph": project.dsl_snapshot.get("knowledge_graph") if project.dsl_snapshot else None,
-        "dsl": project.dsl_snapshot,
-        "quality_report": project.dsl_snapshot.get("quality_report") if project.dsl_snapshot else None,
+        "teaching_plan": canonical_dsl.get("teaching_plan") if canonical_dsl else None,
+        "knowledge_graph": canonical_dsl.get("knowledge_graph") if canonical_dsl else None,
+        "dsl": canonical_dsl,
+        "quality_report": canonical_dsl.get("quality_report") if canonical_dsl else None,
+        "module_outputs": canonical_dsl.get("module_outputs") if canonical_dsl else None,
+        "selected_modules": canonical_dsl.get("selected_modules") if canonical_dsl else None,
+        "current_version_id": (
+            str(project.current_version_id)
+            if isinstance(getattr(project, "current_version_id", None), uuid.UUID)
+            else None
+        ),
         "frame_count": frame_count,
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
@@ -162,6 +192,8 @@ async def get_project(
 async def delete_project(
     project_id: str,
     session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> None:
     """删除项目（级联删除帧/参数/版本等关联记录）。"""
     from db.models import Project
@@ -171,4 +203,11 @@ async def delete_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     await session.delete(project)
+    record_audit(
+        session,
+        action="project.delete",
+        resource_type="project",
+        resource_id=str(project.id),
+        actor_id=current_user.id if current_user is not None else None,
+    )
     logger.info("项目删除: id=%s", project_id)

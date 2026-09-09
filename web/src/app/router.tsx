@@ -1,18 +1,14 @@
 import { createBrowserRouter, Navigate, Outlet, useParams, type RouteObject } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
+import { getAuthState } from "@/lib/auth";
 
 // 公开页面
 import { LandingPage } from "@/features/landing/LandingPage";
-import { DijkstraExplorePage } from "@/features/explore/DijkstraExplorePage";
-import { LoginPage } from "@/features/auth/LoginPage";
-import { RegisterPage } from "@/features/auth/RegisterPage";
 
-// 应用页面
-import { Dashboard } from "@/pages/Dashboard";
-import { NewProject } from "@/pages/NewProject";
-import { ProjectWorkspace } from "@/pages/ProjectWorkspace";
-import { TemplateBrowser } from "@/pages/TemplateBrowser";
-import { NotFound } from "@/pages/NotFound";
+const lazyComponent = <T extends Record<string, unknown>, K extends keyof T>(
+  loader: () => Promise<T>,
+  exportName: K,
+) => async () => ({ Component: (await loader())[exportName] as React.ComponentType });
 
 // ── 旧路由重定向 ────────────────────────────────────────────
 
@@ -31,6 +27,10 @@ function AppLayout() {
   );
 }
 
+function AdminRoute() {
+  return getAuthState()?.role === "admin" ? <Outlet /> : <Navigate to="/app" replace />;
+}
+
 // ── 路由 ────────────────────────────────────────────────────
 
 export const appRoutes: RouteObject[] = [
@@ -41,15 +41,18 @@ export const appRoutes: RouteObject[] = [
   },
   {
     path: "/explore/dijkstra",
-    element: <DijkstraExplorePage />,
+    lazy: lazyComponent(
+      () => import("@/features/explore/DijkstraExplorePage"),
+      "DijkstraExplorePage",
+    ),
   },
   {
     path: "/login",
-    element: <LoginPage />,
+    lazy: lazyComponent(() => import("@/features/auth/LoginPage"), "LoginPage"),
   },
   {
     path: "/register",
-    element: <RegisterPage />,
+    lazy: lazyComponent(() => import("@/features/auth/RegisterPage"), "RegisterPage"),
   },
 
   // 应用路由（包裹 AppShell）
@@ -57,12 +60,30 @@ export const appRoutes: RouteObject[] = [
     path: "/app",
     element: <AppLayout />,
     children: [
-      { index: true, element: <Dashboard /> },
-      { path: "new", element: <NewProject /> },
-      { path: "templates", element: <TemplateBrowser /> },
+      {
+        index: true,
+        lazy: lazyComponent(() => import("@/pages/Dashboard"), "Dashboard"),
+      },
+      { path: "new", element: <Navigate to="/app/project/_new" replace /> },
+      {
+        path: "templates",
+        lazy: lazyComponent(() => import("@/pages/TemplateBrowser"), "TemplateBrowser"),
+      },
+      {
+        element: <AdminRoute />,
+        children: [
+          {
+            path: "admin/users",
+            lazy: lazyComponent(() => import("@/pages/AdminUsersPage"), "AdminUsersPage"),
+          },
+        ],
+      },
 
       // 统一项目工作区
-      { path: "project/:projectId", element: <ProjectWorkspace /> },
+      {
+        path: "project/:projectId",
+        lazy: lazyComponent(() => import("@/pages/ProjectWorkspace"), "ProjectWorkspace"),
+      },
 
       // 旧路由 → 重定向到工作区
       {
@@ -91,7 +112,7 @@ export const appRoutes: RouteObject[] = [
   // 兜底
   {
     path: "*",
-    element: <NotFound />,
+    lazy: lazyComponent(() => import("@/pages/NotFound"), "NotFound"),
   },
 ];
 

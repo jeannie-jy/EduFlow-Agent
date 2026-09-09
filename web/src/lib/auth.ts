@@ -1,19 +1,18 @@
 /**
- * @deprecated 临时认证模块 — 当前仅用于 UI 状态的本地缓存（无服务端验证）。
- * 后端认证就绪后需替换为：HttpOnly cookie + /api/auth/me 验证。
- * 不要依赖 localStorage 中的 isAuthenticated 做安全决策。
+ * Auth UI 缓存。
  *
- * Auth 状态管理（最小可用单元）。
- *
- * 当前 MVP：auth 状态写入 localStorage，后续可替换为 React Context 或 Zustand。
+ * 登录凭据保存在服务端散列会话和 HttpOnly cookie 中；localStorage 只缓存昵称等
+ * 展示信息，不能作为授权依据。业务 API 的最终授权由后端完成。
  */
 
 const AUTH_KEY = "eduflow-auth";
 
 export interface AuthState {
+  id?: string;
   isAuthenticated: boolean;
   nickname: string;
   email: string;
+  role?: "student" | "teacher" | "admin";
 }
 
 export function getAuthState(): AuthState | null {

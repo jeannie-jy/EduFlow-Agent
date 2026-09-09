@@ -418,6 +418,44 @@ class TestGenerateAPI:
         )
         assert response.status_code == 404
 
+    async def test_regenerate_stream_url_carries_normalized_scope(self, client: AsyncClient):
+        from urllib.parse import parse_qs, urlparse
+
+        response = await client.post(
+            "/api/projects/11111111-1111-1111-1111-111111111111/regenerate",
+            json={"scope": {"type": "single_frame", "frame_ids": ["f_002"]}},
+        )
+
+        assert response.status_code == 202
+        stream_url = response.json()["stream_url"]
+        encoded_scope = parse_qs(urlparse(stream_url).query)["scope"][0]
+        assert json.loads(encoded_scope) == {
+            "type": "single_frame",
+            "frame_ids": ["f_002"],
+        }
+
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            {"type": "single_frame", "frame_ids": []},
+            {"type": "frame_range", "frame_ids": ["f_001"]},
+            {"type": "unsupported", "frame_ids": []},
+        ],
+    )
+    async def test_regenerate_rejects_invalid_scope(self, client: AsyncClient, scope):
+        response = await client.post(
+            "/api/projects/11111111-1111-1111-1111-111111111111/regenerate",
+            json={"scope": scope},
+        )
+        assert response.status_code == 422
+
+    async def test_regenerate_stream_rejects_malformed_scope(self, client: AsyncClient):
+        response = await client.get(
+            "/api/projects/11111111-1111-1111-1111-111111111111/generate/regenerate/stream",
+            params={"scope": "not-json"},
+        )
+        assert response.status_code == 422
+
 
 # ============================================================================
 # Feedback endpoints

@@ -1,39 +1,43 @@
 """Tool 层：Agent 可调用的工具函数。
 
-- validate_dsl: DSL 确定性校验（Schema + 一致性）
 - validate_dsl_schema: Pydantic 校验 + frame_id 检查
 - check_state_consistency: 帧间状态一致性检查
+- check_algorithm_invariants: 图算法状态不变量检查
+- stabilize_algorithm_trace: 生成边界的确定性算法状态 Guardrail
 - generate_asset: 多模态资源生成（card/mindmap/table/code_snippet）
 - design_parameters: 参数设计工具（5 种知识类型模板）
+- normalize_dsl: 生成边界的 RenderScript 兼容归一化
+
+Agent-facing Function Calling definitions and execution live in
+``services.tool_runtime``; this package retains deterministic internal tools.
 """
 
 from .validate_dsl import (
-    TOOL_DEF_CONSISTENCY,
-    TOOL_DEF_VALIDATE,
+    check_algorithm_invariants,
     check_state_consistency,
+    stabilize_algorithm_trace,
     validate_dsl_schema,
 )
 
 from .generate_asset import (
-    TOOL_DEF_GENERATE_ASSET,
     generate_asset,
 )
 
 from .design_parameters import (
-    TOOL_DEF_DESIGN_PARAMETERS,
     design_parameters,
 )
+from .normalize_dsl import normalize_dsl
 
 __all__ = [
     # validate_dsl
     "validate_dsl_schema",
     "check_state_consistency",
-    "TOOL_DEF_VALIDATE",
-    "TOOL_DEF_CONSISTENCY",
+    "check_algorithm_invariants",
+    "stabilize_algorithm_trace",
     # generate_asset
     "generate_asset",
-    "TOOL_DEF_GENERATE_ASSET",
     # design_parameters
     "design_parameters",
-    "TOOL_DEF_DESIGN_PARAMETERS",
+    # normalize_dsl
+    "normalize_dsl",
 ]

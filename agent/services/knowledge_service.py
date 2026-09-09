@@ -81,11 +81,11 @@ async def search_knowledge_pgvector(
             kb.difficulty,
             kb.object_types,
             kb.animation_types,
-            1.0 - (kb.embedding <=> :embedding::vector) AS similarity
+            1.0 - (kb.embedding <=> CAST(:embedding AS vector)) AS similarity
         FROM knowledge_base kb
-        WHERE 1.0 - (kb.embedding <=> :embedding::vector) >= :threshold
+        WHERE 1.0 - (kb.embedding <=> CAST(:embedding AS vector)) >= :threshold
             {where_sql}
-        ORDER BY kb.embedding <=> :embedding::vector
+        ORDER BY kb.embedding <=> CAST(:embedding AS vector)
         LIMIT :top_k
     """)
 
@@ -94,6 +94,10 @@ async def search_knowledge_pgvector(
         rows = result.fetchall()
     except Exception as exc:
         logger.warning("pgvector 检索失败，回退到关键词匹配: %s", exc)
+        # asyncpg marks the current transaction as failed after a SQL error.
+        # Roll it back before issuing the fallback query; otherwise PostgreSQL
+        # rejects every subsequent statement with InFailedSQLTransactionError.
+        await session.rollback()
         return await _fallback_keyword_search(query, top_k, subject, difficulty, session)
 
     return [
@@ -207,7 +211,7 @@ async def seed_knowledge_embeddings(session: AsyncSession) -> int:
             INSERT INTO knowledge_base
                 (concept, content, embedding, subject, difficulty, object_types, animation_types)
             VALUES
-                (:concept, :content, :embedding::vector, :subject, :difficulty, :object_types, :animation_types)
+                (:concept, :content, CAST(:embedding AS vector), :subject, :difficulty, :object_types, :animation_types)
         """)
         await session.execute(insert_sql, {
             "concept": concept,
