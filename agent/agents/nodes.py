@@ -355,13 +355,60 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
         "required": ["objectives", "outline", "teaching_approach", "estimated_total_frames"],
     }
 
+    compact_eval = constraints.get("eval_output_profile") == "compact"
+    if compact_eval:
+        # The planner only needs a small contract for benchmark generation.
+        # Keeping optional audience/risk/parameter fields out of the schema
+        # prevents a long planning response from consuming the whole provider
+        # completion window before Coder starts.
+        output_schema = {
+            "type": "object",
+            "properties": {
+                "objectives": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {"type": "string", "maxLength": 120},
+                },
+                "outline": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {"type": "integer", "minimum": 1, "maximum": 4},
+                            "title": {"type": "string", "maxLength": 80},
+                            "key_points": {
+                                "type": "array",
+                                "maxItems": 3,
+                                "items": {"type": "string", "maxLength": 120},
+                            },
+                            "estimated_frames": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 8,
+                            },
+                        },
+                        "required": ["step", "title", "key_points", "estimated_frames"],
+                    },
+                },
+                "teaching_approach": {"type": "string", "maxLength": 160},
+                "estimated_total_frames": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8,
+                },
+            },
+            "required": ["objectives", "outline", "teaching_approach", "estimated_total_frames"],
+        }
+
     try:
         teaching_plan = await call_llm_structured(
             system_prompt=PLANNER_SYSTEM_PROMPT,
             user_message=user_message,
             output_schema=output_schema,
             temperature=_llm_temperature(state.get("constraints"), 0.3),
-            max_tokens=8192,  # 输出 schema 已限长，避免无界规划占用工作流预算
+            max_tokens=4096 if compact_eval else 8192,
             routing_key="planner",
         )
     except Exception as exc:

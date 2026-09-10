@@ -126,6 +126,38 @@ class TestPlannerNode:
         assert "时间复杂度" in user_msg
 
     @pytest.mark.asyncio
+    async def test_compact_eval_planner_uses_small_schema_and_budget(self):
+        from agents.nodes import planner_node
+
+        plan_output = {
+            "objectives": ["理解最短路径"],
+            "outline": [
+                {"step": 1, "title": "定义", "key_points": ["图"], "estimated_frames": 2},
+                {"step": 2, "title": "演示", "key_points": ["松弛"], "estimated_frames": 2},
+            ],
+            "teaching_approach": "逐步演示",
+            "estimated_total_frames": 4,
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = plan_output
+            state = AgentStateFactory.minimal()
+            state["constraints"] = {
+                "eval_case_id": "alg_dijkstra_basic",
+                "eval_output_profile": "compact",
+            }
+            await planner_node(state)
+
+        call = mock_llm.await_args.kwargs
+        assert call["max_tokens"] == 4096
+        assert set(call["output_schema"]["properties"]) == {
+            "objectives",
+            "outline",
+            "teaching_approach",
+            "estimated_total_frames",
+        }
+
+    @pytest.mark.asyncio
     async def test_llm_failure_fallback(self):
         """LLM 调用失败时应返回最小回退计划。"""
         from agents.nodes import planner_node
