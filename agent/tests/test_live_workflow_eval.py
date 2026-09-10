@@ -89,6 +89,12 @@ def test_manual_quality_workflow_uses_production_adapter_and_auditable_outputs()
     assert "evals.generators.live_workflow:generate_workflow_case" in workflow
     assert "EDUFLOW_ALLOW_ONLINE_EVAL=1" in workflow
     assert "--dataset evals/datasets/eduflowbench_v1.jsonl" in workflow
+    assert "embedding_endpoint:" in workflow
+    assert "embedding_model:" in workflow
+    assert "embedding_dimension:" in workflow
+    assert "EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}" in workflow
+    assert "EMBEDDING_MODEL: ${{ inputs.embedding_model }}" in workflow
+    assert "EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}" in workflow
     assert "--concurrency 1" in workflow
     assert "--budget-usd" in workflow
     assert "evals.generators.live_judge:judge_workflow_case" in workflow

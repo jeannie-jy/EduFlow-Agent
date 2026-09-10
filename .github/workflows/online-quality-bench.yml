@@ -13,6 +13,21 @@ on:
         required: true
         default: deepseek-chat
         type: string
+      embedding_endpoint:
+        description: OpenAI-compatible embedding endpoint
+        required: true
+        default: https://llm-ffgi4szc2den5n8v.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        type: string
+      embedding_model:
+        description: Embedding model identifier
+        required: true
+        default: text-embedding-v4
+        type: string
+      embedding_dimension:
+        description: Embedding vector dimension used by pgvector
+        required: true
+        default: "1024"
+        type: string
       judge_endpoint:
         description: Independent judge OpenAI-compatible endpoint
         required: true
@@ -48,6 +63,9 @@ jobs:
       LLM_ENDPOINT: ${{ inputs.llm_endpoint }}
       LLM_MODEL: ${{ inputs.llm_model }}
       LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
+      EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}
+      EMBEDDING_MODEL: ${{ inputs.embedding_model }}
+      EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}
       EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
       EDUFLOW_EVAL_JUDGE_ENDPOINT: ${{ inputs.judge_endpoint }}
       EDUFLOW_EVAL_JUDGE_MODEL: ${{ inputs.judge_model }}
@@ -66,7 +84,13 @@ jobs:
           test -n "$LLM_API_KEY"
           test -n "$EMBEDDING_API_KEY"
           test -n "$EDUFLOW_EVAL_JUDGE_API_KEY"
+          test -n "$EMBEDDING_ENDPOINT"
+          test -n "$EMBEDDING_MODEL"
+          test "$EMBEDDING_DIMENSION" -eq "$EMBEDDING_DIMENSION" 2>/dev/null
           test "$LLM_MODEL" != "$EDUFLOW_EVAL_JUDGE_MODEL"
+          echo "Embedding endpoint: $EMBEDDING_ENDPOINT"
+          echo "Embedding model: $EMBEDDING_MODEL"
+          echo "Embedding dimension: $EMBEDDING_DIMENSION"
 
       - name: Start isolated workflow dependencies
         run: >-
