@@ -37,15 +37,43 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
     artifact = state.get("dsl")
     if not isinstance(artifact, dict):
         raise TypeError("production workflow returned no DSL artifact")
+    # The production graph intentionally has deterministic fallbacks for user
+    # experience.  An online benchmark must not count those fallbacks as a
+    # successful model run when the provider is unavailable (for example HTTP
+    # 402 insufficient balance).  Valid no-evidence cases still use the LLM in
+    # Planner/Knowledge/Quality, so their usage is non-zero.
+    input_tokens = int(usage.get("input", 0))
+    output_tokens = int(usage.get("output", 0))
+    if input_tokens + output_tokens <= 0:
+        raise RuntimeError(
+            "online benchmark produced no candidate LLM tokens; "
+            "provider failure was hidden by deterministic fallback"
+        )
+    retrieval = state.get("retrieval") or {}
+    knowledge_graph = state.get("knowledge_graph") or {}
     return {
         "artifact": artifact,
         "usage": {
-            "input": int(usage.get("input", 0)),
-            "output": int(usage.get("output", 0)),
+            "input": input_tokens,
+            "output": output_tokens,
         },
         "cost_usd": float(usage.get("cost_usd", 0.0)),
         "metadata": {
             "quality_report": state.get("quality_report") or {},
             "candidate_latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            # Keep evidence provenance outside the artifact file as auditable
+            # runner metadata while the DSL itself still carries the bounded
+            # knowledge_graph.sources field.
+            "retrieval": retrieval,
+            "knowledge_source_ids": [
+                str(source.get("source_id"))
+                for source in knowledge_graph.get("sources", [])
+                if isinstance(source, dict) and source.get("source_id")
+            ],
+            "artifact_source_ids": [
+                str(source.get("source_id"))
+                for source in (artifact.get("knowledge_graph") or {}).get("sources", [])
+                if isinstance(source, dict) and source.get("source_id")
+            ],
         },
     }

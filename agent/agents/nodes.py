@@ -692,6 +692,48 @@ def _fallback_coder_frame(frame_id: str, user_input: str, batch_index: int) -> d
     }
 
 
+def _evidence_boundary_frames(user_input: str) -> list[dict[str, Any]]:
+    """Return a safe, renderable response when retrieval found no evidence.
+
+    A no-evidence result is a hard grounding boundary: sending the original
+    topic to the Coder LLM would allow it to fill the gap with plausible but
+    unsupported facts.  These frames deliberately explain the limitation
+    without asserting anything about the unknown topic.
+    """
+    topic = " ".join(str(user_input or "").split())[:120] or "当前主题"
+    messages = [
+        (
+            "证据状态",
+            "证据不足",
+            f"知识库未检索到关于“{topic}”的可靠证据，暂不提供确定步骤。",
+        ),
+        (
+            "补充材料",
+            "等待可验证来源",
+            "请补充课程材料、权威来源或可验证定义后再继续生成教学内容。",
+        ),
+        (
+            "生成边界",
+            "避免无依据推断",
+            "在获得可验证来源前，不应把未验证内容当作事实或操作步骤。",
+        ),
+    ]
+    return [
+        {
+            "frame_id": f"f_{index:03d}",
+            "title": title,
+            "learning_goal": goal,
+            "narration": narration,
+            "visual_objects": [],
+            "state_snapshot": {"evidence_status": "no_evidence"},
+            "animations": [],
+            "interaction_hooks": [],
+            "checks": [],
+        }
+        for index, (title, goal, narration) in enumerate(messages, start=1)
+    ]
+
+
 _SECONDARY_GRAPH_MARKERS = (
     "negative",
     "counterexample",
@@ -1169,7 +1211,23 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     }
 
     try:
-        if state.get("coder_batch_mode") and not regeneration_scope:
+        retrieval = state.get("retrieval") or {}
+        no_evidence = (
+            retrieval.get("status") == "no_evidence"
+            and not retrieval.get("sources")
+            and not regeneration_scope
+        )
+        if no_evidence:
+            # Do not ask the model to generate a topic-specific explanation
+            # without retrieved evidence.  Keep the result schema-compatible
+            # so the rest of the workflow can finish and surface the reason.
+            result = {
+                "frames": _evidence_boundary_frames(user_input),
+                "parameters": [],
+                "assets": [],
+            }
+            logger.info("Coder: no evidence; using deterministic boundary frames")
+        elif state.get("coder_batch_mode") and not regeneration_scope:
             result = await _generate_coder_batches(
                 user_message=user_message,
                 output_schema=output_schema,

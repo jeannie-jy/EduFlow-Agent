@@ -523,6 +523,11 @@ async def run_generation_sync_with_usage(
         "project_id": project_id,
         "materials": materials or [],
         "constraints": constraints or {},
+        # Keep the synchronous/internal entrypoint aligned with the streaming
+        # production path: Knowledge must perform retrieval for benchmark and
+        # worker invocations as well, otherwise end-to-end eval silently tests
+        # a non-RAG graph.
+        "enable_retrieval": True,
         "approval_mode": False,
         "coder_batch_mode": True,
         "status": "draft",

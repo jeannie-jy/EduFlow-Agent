@@ -29,6 +29,10 @@ _llm_client_local = threading.local()
 _embedding_client_local = threading.local()
 
 
+class EmbeddingDimensionError(RuntimeError):
+    """Raised when the provider vector dimension disagrees with pgvector."""
+
+
 def _get_llm_client(provider: str = "primary") -> AsyncOpenAI:
     """获取当前线程的 LLM 客户端（每个线程首次调用时创建）。"""
     attribute = "client" if provider == "primary" else "backup_client"
@@ -676,4 +680,16 @@ async def generate_embedding(text: str) -> list[float]:
     if not response.data:
         raise RuntimeError("Embedding API returned empty data")
 
-    return response.data[0].embedding
+    embedding = response.data[0].embedding
+    expected_dimension = settings.embedding_dimension
+    actual_dimension = len(embedding)
+    if actual_dimension != expected_dimension:
+        raise EmbeddingDimensionError(
+            "Embedding dimension mismatch: "
+            f"model={settings.embedding_model}, "
+            f"expected={expected_dimension}, got={actual_dimension}. "
+            "Set EMBEDDING_DIMENSION to the provider dimension and migrate "
+            "knowledge_base.embedding before seeding."
+        )
+
+    return embedding
