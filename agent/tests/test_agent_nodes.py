@@ -956,6 +956,26 @@ class TestReflectionNode:
         assert len(result["revision_history"]) >= 1
 
     @pytest.mark.asyncio
+    async def test_compact_eval_reflection_is_bounded(self):
+        """Smoke 评测的修订请求不能回到默认 8K 输出上限。"""
+        from agents.nodes import reflection_node
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "revision_summary": "no-op",
+                "modified_frame_ids": [],
+                "updated_frames": [],
+                "inserted_frames": [],
+            }
+            state = AgentStateFactory.with_quality_report()
+            state["constraints"] = {"eval_output_profile": "compact"}
+            await reflection_node(state)
+
+        kwargs = mock_llm.call_args.kwargs
+        assert kwargs["max_tokens"] == 4096
+        assert '"current_dsl"' in kwargs["user_message"]
+
+    @pytest.mark.asyncio
     async def test_reflection_increments_count(self):
         """修订次数应正确递增。"""
         from agents.nodes import reflection_node

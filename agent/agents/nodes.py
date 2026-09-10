@@ -1890,9 +1890,39 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
     # 获取被锁定的帧（从 state 读取，由 regenerate 服务在调用前从 DB 帧表查询）
     locked_frame_ids = set(state.get("locked_frame_ids", []))
 
+    constraints = state.get("constraints") or {}
+    compact_eval = constraints.get("eval_output_profile") == "compact"
+
+    # Evaluation runs must keep the repair request bounded as well as the
+    # initial planner/coder requests.  Sending the full DSL back to the model
+    # makes the repair node the last remaining source of provider-side 8K
+    # truncation.  The repair only needs the failing issues and the affected
+    # frame excerpts; the durable state remains the source of truth.
+    if compact_eval:
+        issue_frame_ids = {
+            str(issue.get("frame_id"))
+            for issue in quality_report.get("issues", [])
+            if isinstance(issue, dict) and issue.get("frame_id")
+        }
+        candidate_frames = [
+            frame for frame in dsl.get("frames", [])
+            if not issue_frame_ids or str(frame.get("frame_id")) in issue_frame_ids
+        ][:4]
+        current_dsl_for_prompt = {
+            "topic": dsl.get("topic", state.get("user_input", "")),
+            "frames": candidate_frames,
+        }
+        quality_for_prompt = {
+            "issues": quality_report.get("issues", [])[:8],
+            "scores": quality_report.get("scores", {}),
+        }
+    else:
+        current_dsl_for_prompt = dsl
+        quality_for_prompt = quality_report
+
     user_message = _prompt_json({
-        "quality_report": quality_report,
-        "current_dsl": dsl,
+        "quality_report": quality_for_prompt,
+        "current_dsl": current_dsl_for_prompt,
         "locked_frame_ids": list(locked_frame_ids),
         "teacher_feedback": state.get("user_feedback"),
         "feedback_handling_rule": (
@@ -1911,10 +1941,12 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
             },
             "updated_frames": {
                 "type": "array",
+                "maxItems": 4 if compact_eval else 12,
                 "items": {"type": "object"},
             },
             "inserted_frames": {
                 "type": "array",
+                "maxItems": 2 if compact_eval else 8,
                 "items": {"type": "object"},
             },
         },
@@ -1926,7 +1958,8 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
             system_prompt=REFLECTION_SYSTEM_PROMPT,
             user_message=user_message,
             output_schema=output_schema,
-            temperature=_llm_temperature(state.get("constraints"), 0.2),
+            temperature=_llm_temperature(constraints, 0.2),
+            max_tokens=4096 if compact_eval else 8192,
             routing_key="reflection",
         )
     except Exception as exc:
