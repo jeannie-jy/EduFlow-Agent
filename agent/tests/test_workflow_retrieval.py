@@ -59,6 +59,30 @@ async def test_retrieval_failure_is_an_explicit_nonfatal_degradation():
 
 
 @pytest.mark.asyncio
+async def test_embedding_dimension_mismatch_is_not_hidden_by_keyword_fallback():
+    from agents.llm_client import EmbeddingDimensionError
+    from services.knowledge_service import search_knowledge_pgvector
+
+    session = AsyncMock()
+    with patch(
+        "services.knowledge_service.generate_embedding",
+        new=AsyncMock(side_effect=EmbeddingDimensionError("dimension mismatch")),
+    ):
+        with pytest.raises(EmbeddingDimensionError, match="dimension mismatch"):
+            await search_knowledge_pgvector("Dijkstra", session=session)
+
+    session.execute.assert_not_awaited()
+
+
+def test_lexical_fallback_extracts_specific_anchors_without_generic_unknown_topic_terms():
+    from services.knowledge_service import _lexical_search_terms
+
+    terms = _lexical_search_terms("解释依赖倒置原则在设计模式中的含义")
+    assert "依赖倒置" in terms
+    assert "算法" not in _lexical_search_terms("未收录的私有算法 XQ-17")
+
+
+@pytest.mark.asyncio
 async def test_multi_query_retrieval_fuses_duplicates_and_applies_context_budget():
     from services.retrieval import retrieve_knowledge_context
 
@@ -85,11 +109,45 @@ async def test_multi_query_retrieval_fuses_duplicates_and_applies_context_budget
     ):
         result = await retrieve_knowledge_context("topic", queries=["topic", "objective"])
 
-    assert result["candidate_count"] == 3
+    assert result["candidate_count"] == 2
     assert result["selected_count"] == 1
     assert result["sources"][0]["source_id"] == "shared"
     assert result["sources"][0]["matched_queries"] == ["topic", "objective"]
     assert result["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_abstention_intent_does_not_search_generated_objective_expansions():
+    """Unknown/private topics must not become semantic false positives."""
+    from services.retrieval import retrieve_knowledge_context
+
+    context = AsyncMock()
+    context.__aenter__.return_value = AsyncMock()
+    search = AsyncMock(return_value=[])
+    settings = type("Settings", (), {
+        "knowledge_search_top_k": 5,
+        "retrieval_context_max_chars": 1000,
+    })()
+    with (
+        patch("db.database.async_session_factory", return_value=context),
+        patch("services.knowledge_service.search_knowledge_pgvector", search),
+        patch("services.retrieval.get_settings", return_value=settings),
+    ):
+        result = await retrieve_knowledge_context(
+            "仅根据知识库解释未收录的私有算法 XQ-17",
+            queries=[
+                "仅根据知识库解释未收录的私有算法 XQ-17",
+                "解释动态规划的状态转移",
+            ],
+        )
+
+    search.assert_awaited_once_with(
+        "仅根据知识库解释未收录的私有算法 XQ-17",
+        top_k=5,
+        session=context.__aenter__.return_value,
+    )
+    assert result["status"] == "no_evidence"
+    assert result["sources"] == []
 
 
 @pytest.mark.asyncio
@@ -100,6 +158,7 @@ async def test_pgvector_query_uses_sqlalchemy_safe_vector_cast():
         def fetchall(self):
             return [SimpleNamespace(
                 id="doc-1",
+                source_key="algo_dijkstra",
                 concept="queues",
                 content="queue content",
                 subject="cs",
@@ -131,6 +190,7 @@ async def test_pgvector_query_uses_sqlalchemy_safe_vector_cast():
         result = await search_knowledge_pgvector("queues", session=session)
 
     assert result[0]["id"] == "doc-1"
+    assert result[0]["source_key"] == "algo_dijkstra"
     assert "CAST(:embedding AS vector)" in session.sql
     assert ":embedding::vector" not in session.sql
     assert session.params["embedding"] == "[0.1,0.2]"

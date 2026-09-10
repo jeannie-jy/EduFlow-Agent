@@ -64,6 +64,22 @@ async def test_live_workflow_adapter_rejects_missing_dsl():
         await generate_workflow_case(_case())
 
 
+@pytest.mark.asyncio
+async def test_live_workflow_adapter_rejects_zero_token_provider_fallback():
+    """Online reports must not count deterministic fallback as model quality."""
+    generated_state = {
+        "dsl": {"topic": "冒泡排序", "frames": [{"frame_id": "f_001"}]},
+    }
+    with (
+        patch(
+            "services.generate_service.run_generation_sync_with_usage",
+            new=AsyncMock(return_value=(generated_state, {"cost_usd": 0.0})),
+        ),
+        pytest.raises(RuntimeError, match="no candidate LLM tokens"),
+    ):
+        await generate_workflow_case(_case())
+
+
 def test_manual_quality_workflow_uses_production_adapter_and_auditable_outputs():
     workflow = (
         Path(__file__).parents[2] / ".github/workflows/online-quality-bench.yml"

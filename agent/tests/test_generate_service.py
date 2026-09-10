@@ -203,6 +203,7 @@ class TestRunGenerationSync:
         assert len(initial_state["materials"]) == 1
         assert initial_state["reflection_count"] == 0
         assert initial_state["revision_history"] == []
+        assert initial_state["enable_retrieval"] is True
 
     @pytest.mark.asyncio
     async def test_sync_uses_thread_id_config(self):

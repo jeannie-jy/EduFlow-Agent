@@ -78,7 +78,7 @@ def create_mock_llm_response(tool_content: dict[str, Any] | None = None) -> Magi
     return MockLLMResponse(tool_content=tool_content).build()
 
 
-def create_mock_embedding_response(dim: int = 1536) -> MagicMock:
+def create_mock_embedding_response(dim: int = 1024) -> MagicMock:
     """创建 mock embedding 响应。"""
     import random
     response = MagicMock()

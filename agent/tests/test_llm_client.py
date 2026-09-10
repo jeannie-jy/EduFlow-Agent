@@ -14,6 +14,7 @@ import pytest
 from openai import AsyncOpenAI
 
 from agents.llm_client import (
+    EmbeddingDimensionError,
     _get_llm_client,
     _get_embedding_client,
     call_llm,
@@ -635,7 +636,7 @@ class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_normal_embedding(self, mock_embedding_client):
         """正常 embedding 返回 float 列表。"""
-        dim = 1536
+        dim = 1024
         mock_response = MagicMock()
         embedding_data = MagicMock()
         embedding_data.embedding = [0.1] * dim
@@ -662,7 +663,7 @@ class TestGenerateEmbedding:
         """应使用配置中的 embedding_model。"""
         mock_response = MagicMock()
         embedding_data = MagicMock()
-        embedding_data.embedding = [0.0] * 1536
+        embedding_data.embedding = [0.0] * 1024
         mock_response.data = [embedding_data]
         mock_embedding_client.embeddings.create.return_value = mock_response
 
@@ -672,3 +673,15 @@ class TestGenerateEmbedding:
         if call_kwargs and call_kwargs[1]:
             assert "model" in call_kwargs[1]
             assert call_kwargs[1]["input"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_dimension_mismatch_raises_clear_error(self, mock_embedding_client):
+        """Provider dimension drift must fail before pgvector insertion."""
+        mock_response = MagicMock()
+        embedding_data = MagicMock()
+        embedding_data.embedding = [0.0] * 1536
+        mock_response.data = [embedding_data]
+        mock_embedding_client.embeddings.create.return_value = mock_response
+
+        with pytest.raises(EmbeddingDimensionError, match="dimension mismatch"):
+            await generate_embedding("test")

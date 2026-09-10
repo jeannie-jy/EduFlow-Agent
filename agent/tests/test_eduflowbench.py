@@ -21,6 +21,7 @@ from evals.runners.run_online import _report_exit_code, run_online_cases
 DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "eduflowbench_v1.jsonl"
 INJECTION_DATASET = DATASET.with_name("injection_cases.jsonl")
 RETRIEVAL_DATASET = DATASET.with_name("retrieval_cases.jsonl")
+PRODUCTION_RETRIEVAL_DATASET = DATASET.with_name("retrieval_production_v1.jsonl")
 TOOL_ONLINE_DATASET = DATASET.with_name("tool_online_cases.jsonl")
 CASE_SCHEMA = DATASET.parents[1] / "schemas" / "case.schema.json"
 
@@ -101,6 +102,41 @@ def test_online_tool_dataset_targets_real_registry_contract():
         for tool in case.tools.expected_tools
     }
     assert expected == {"knowledge_search", "material_lookup", "get_project_context"}
+
+
+def test_production_retrieval_dataset_uses_stable_source_keys():
+    cases = load_cases(PRODUCTION_RETRIEVAL_DATASET)
+    assert len(cases) == 10
+    assert all(case.retrieval is not None for case in cases)
+    assert all(
+        case.retrieval.relevant_document_ids
+        for case in cases
+        if not case.retrieval.must_abstain_without_evidence
+    )
+    abstention_cases = [
+        case for case in cases if case.retrieval.must_abstain_without_evidence
+    ]
+    assert len(abstention_cases) == 1
+    assert abstention_cases[0].retrieval.relevant_document_ids == ["sentinel-no-match"]
+
+
+def test_rag_groundedness_requires_source_propagation():
+    from evals.runners.run_rag_groundedness import _grade_groundedness
+
+    case = load_cases(PRODUCTION_RETRIEVAL_DATASET)[0]
+    base_result = {
+        "passed": True,
+        "generator_metadata": {
+            "retrieval": {
+                "status": "ok",
+                "sources": [{"source_id": "algo-dijkstra-constraints"}],
+            },
+            "artifact_source_ids": ["algo-dijkstra-constraints"],
+        },
+    }
+    assert _grade_groundedness(case, base_result)["passed"] is True
+    base_result["generator_metadata"]["artifact_source_ids"] = []
+    assert _grade_groundedness(case, base_result)["passed"] is False
 
 
 @pytest.mark.asyncio

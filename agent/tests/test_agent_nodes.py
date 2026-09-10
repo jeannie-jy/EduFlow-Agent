@@ -326,6 +326,27 @@ class TestCoderNode:
     """Coder Agent 节点测试。"""
 
     @pytest.mark.asyncio
+    async def test_no_evidence_uses_deterministic_boundary_without_llm(self):
+        """无检索证据时不得让 Coder 编造主题事实。"""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["user_input"] = "仅根据知识库解释未收录的私有算法 XQ-17"
+        state["retrieval"] = {"status": "no_evidence", "sources": []}
+        state["coder_batch_mode"] = True
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            result = await coder_node(state)
+
+        mock_llm.assert_not_awaited()
+        frames = result["dsl"]["frames"]
+        assert 1 <= len(frames) <= 3
+        text = json.dumps(frames, ensure_ascii=False)
+        assert "证据不足" in text
+        assert "XQ-17 的确定步骤" not in text
+        assert all(frame["state_snapshot"]["evidence_status"] == "no_evidence" for frame in frames)
+
+    @pytest.mark.asyncio
     async def test_normal_dsl_generation(self):
         """正常情况应生成完整 DSL。"""
         from agents.nodes import coder_node
