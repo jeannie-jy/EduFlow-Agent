@@ -66,6 +66,8 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
         },
         "cost_usd": float(usage.get("cost_usd", 0.0)),
         "metadata": {
+            "raw_coder_output": state.get("raw_coder_output") or {},
+            "normalization_report": artifact.get("normalization_report") or {},
             "quality_report": state.get("quality_report") or {},
             "algorithm_trace_compilation": artifact.get("algorithm_trace_compilation") or {},
             "candidate_latency_ms": round((time.perf_counter() - started) * 1000, 2),

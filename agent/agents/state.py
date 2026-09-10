@@ -33,6 +33,7 @@ class AgentState(TypedDict, total=False):
 
     # ── Coder 产出 ───────────────────────────────────────
     dsl: dict                          # 完整 RenderScript
+    raw_coder_output: dict              # 归一化前的有界 Coder 输出（仅用于审计）
     coder_batch_mode: bool             # Coder 是否按小批次生成帧，避免单次超长 JSON
 
     # ── Quality 产出 ─────────────────────────────────────

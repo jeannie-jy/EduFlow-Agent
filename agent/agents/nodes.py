@@ -1421,6 +1421,10 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             "assets": [],
         }
 
+    # Preserve the bounded provider response before normalization, deterministic
+    # frame padding, and algorithm-state compilation.  It is audit data only;
+    # downstream nodes must consume ``dsl`` instead.
+    raw_coder_output = deepcopy(_bounded_coder_output(result))
     result = _bounded_coder_output(result)
     result = _ensure_eval_frame_count(
         result,
@@ -1505,6 +1509,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
 
     return {
         "dsl": dsl,
+        "raw_coder_output": raw_coder_output,
         "status": "generating",
     }
 

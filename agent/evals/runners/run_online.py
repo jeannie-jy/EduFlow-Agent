@@ -137,6 +137,14 @@ async def run_online_cases(
                                 f"judge failed: {type(exc).__name__}: {exc}"
                             )
                             result["judge_error"] = type(exc).__name__
+                # Keep the auditable decision separate from the generator
+                # metadata so raw provider output, canonical artifact and the
+                # final gate outcome can be inspected independently.
+                result["final_decision"] = {
+                    "passed": bool(result.get("passed")),
+                    "metrics": result.get("metrics", {}),
+                    "issues": result.get("issues", []),
+                }
                 # Backward-compatible aggregate fields used by report summaries.
                 result["usage"] = generated.get("usage", {})
                 result["cost_usd"] = round(total_case_cost, 8)
@@ -147,6 +155,22 @@ async def run_online_cases(
                     artifacts_dir.mkdir(parents=True, exist_ok=True)
                     (artifacts_dir / f"{case.case_id}.json").write_text(
                         json.dumps(artifact, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                    metadata = result.get("generator_metadata", {})
+                    (artifacts_dir / f"{case.case_id}.audit.json").write_text(
+                        json.dumps(
+                            {
+                                "case_id": case.case_id,
+                                "raw_coder_output": metadata.get("raw_coder_output", {}),
+                                "normalization_report": metadata.get("normalization_report", {}),
+                                "normalized_artifact": artifact,
+                                "final_decision": result.get("final_decision", {}),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n",
                         encoding="utf-8",
                     )
                 finished = time.perf_counter()

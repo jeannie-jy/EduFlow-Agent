@@ -1,5 +1,6 @@
 """EduFlowBench dataset and deterministic grader tests."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -475,7 +476,18 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
     ] == 0.8
     assert report["summary"]["normalization_repaired_cases"] == 4
     assert report["summary"]["normalization_repair_count"] == 8
-    assert len(list(tmp_path.glob("*.json"))) == 4
+    # Each case writes the normalized artifact plus an audit bundle containing
+    # raw output, normalization metadata and the final decision.
+    assert len(list(tmp_path.glob("*.json"))) == 8
+    audit = json.loads((tmp_path / "alg_online_0.audit.json").read_text(encoding="utf-8"))
+    assert set(audit) == {
+        "case_id",
+        "raw_coder_output",
+        "normalization_report",
+        "normalized_artifact",
+        "final_decision",
+    }
+    assert audit["final_decision"]["passed"] is True
 
 
 @pytest.mark.asyncio
