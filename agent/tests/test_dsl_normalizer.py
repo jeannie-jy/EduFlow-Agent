@@ -187,3 +187,18 @@ def test_algorithm_trace_schema_rejects_legacy_alias_after_normalization_boundar
 
     assert result["valid"] is False
     assert any("missing priority" in error for error in result["errors"])
+
+
+def test_topic_inference_does_not_mark_concept_only_comparison_frame_as_trace():
+    source = _legacy_dsl()
+    source["topic"] = "Bellman-Ford 负权边"
+    source["frames"][0]["state_snapshot"] = {
+        "concept": "negative_edge",
+        "dijkstra_failure": True,
+        "bellman_ford_handles": True,
+    }
+
+    normalized = normalize_dsl(source)
+
+    assert "schema_version" not in normalized["frames"][0]["state_snapshot"]
+    assert "algorithm" not in normalized["frames"][0]["state_snapshot"]

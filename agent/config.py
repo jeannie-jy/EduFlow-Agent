@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     llm_module_model: str = ""
     llm_manim_model: str = ""
     llm_timeout_seconds: float = Field(default=120.0, ge=1, le=600)
+    # ``auto`` uses provider capability defaults (DeepSeek/MaaS currently use
+    # JSON mode); ``json_schema`` opts into strict OpenAI-compatible schemas
+    # and automatically falls back to JSON mode when the endpoint rejects it.
+    llm_response_format: Literal["auto", "json_object", "json_schema"] = "auto"
     llm_gateway_max_retries: int = Field(default=2, ge=0, le=8)
     llm_gateway_retry_base_seconds: float = Field(default=0.5, ge=0, le=30)
     llm_gateway_max_concurrency: int = Field(default=8, ge=1, le=128)

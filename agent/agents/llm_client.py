@@ -66,6 +66,40 @@ def _backup_available(settings) -> bool:
     )
 
 
+def _structured_response_format(
+    settings: Any,
+    endpoint: str,
+    output_schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Select strict schema mode only where the provider contract supports it."""
+    mode = getattr(settings, "llm_response_format", "auto")
+    if mode == "json_object":
+        return {"type": "json_object"}
+    if mode == "json_schema" or (
+        mode == "auto"
+        and "deepseek.com" not in endpoint.casefold()
+        and "maas.aliyuncs.com" not in endpoint.casefold()
+    ):
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "eduflow_structured_output",
+                "strict": True,
+                "schema": output_schema,
+            },
+        }
+    return {"type": "json_object"}
+
+
+def _schema_mode_rejected(exc: BaseException) -> bool:
+    """Recognize provider 4xx responses caused by unsupported JSON Schema."""
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in {400, 404, 415, 422}:
+        return False
+    text = str(exc).casefold()
+    return any(token in text for token in ("response_format", "json_schema", "json schema", "structured output"))
+
+
 def _routed_model(settings, explicit_model: str | None, routing_key: str | None) -> str:
     if explicit_model:
         return explicit_model
@@ -305,7 +339,9 @@ async def call_llm_structured(
             "max_tokens": current_max_tokens,
         }
         if json_mode:
-            primary_kwargs["response_format"] = {"type": "json_object"}
+            primary_kwargs["response_format"] = _structured_response_format(
+                settings, settings.llm_endpoint, output_schema
+            )
         if disable_thinking and "deepseek.com" in settings.llm_endpoint.lower():
             primary_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
@@ -320,17 +356,39 @@ async def call_llm_structured(
         ):
             backup_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
-        response, used_fallback = await execute_llm_call_with_fallback(
-            settings.llm_endpoint,
-            "structured",
-            lambda: client.chat.completions.create(**primary_kwargs),
-            fallback_provider=settings.llm_backup_endpoint if backup_client else None,
-            fallback_call=(
-                lambda: backup_client.chat.completions.create(**backup_kwargs)
-                if backup_client
-                else None
-            ),
-        )
+        try:
+            response, used_fallback = await execute_llm_call_with_fallback(
+                settings.llm_endpoint,
+                "structured",
+                lambda: client.chat.completions.create(**primary_kwargs),
+                fallback_provider=settings.llm_backup_endpoint if backup_client else None,
+                fallback_call=(
+                    lambda: backup_client.chat.completions.create(**backup_kwargs)
+                    if backup_client
+                    else None
+                ),
+            )
+        except Exception as exc:
+            # Strict schema is an optimization, not a provider lock-in.  A
+            # compatible endpoint may advertise JSON mode only; retry this
+            # same logical attempt with the older mode before spending a
+            # larger-token retry or falling back to a deterministic artifact.
+            if primary_kwargs.get("response_format", {}).get("type") != "json_schema" or not _schema_mode_rejected(exc):
+                raise
+            logger.warning("Provider rejected json_schema; falling back to json_object: %s", exc)
+            primary_kwargs["response_format"] = {"type": "json_object"}
+            backup_kwargs["response_format"] = {"type": "json_object"}
+            response, used_fallback = await execute_llm_call_with_fallback(
+                settings.llm_endpoint,
+                "structured.json_object_fallback",
+                lambda: client.chat.completions.create(**primary_kwargs),
+                fallback_provider=settings.llm_backup_endpoint if backup_client else None,
+                fallback_call=(
+                    lambda: backup_client.chat.completions.create(**backup_kwargs)
+                    if backup_client
+                    else None
+                ),
+            )
 
         if not response.choices:
             logger.error("Structured LLM call returned empty choices")

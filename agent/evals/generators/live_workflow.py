@@ -34,6 +34,9 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
             # not carry these keys and retain their existing planning policy.
             "min_frames": case.expected.min_frames,
             "max_frames": case.expected.max_frames,
+            # Freeze decoding for comparable online runs. Production requests
+            # do not set this flag and keep their node-specific temperatures.
+            "eval_deterministic": True,
         },
         materials=case.materials,
         thread_id=thread_id,
@@ -64,6 +67,7 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
         "cost_usd": float(usage.get("cost_usd", 0.0)),
         "metadata": {
             "quality_report": state.get("quality_report") or {},
+            "algorithm_trace_compilation": artifact.get("algorithm_trace_compilation") or {},
             "candidate_latency_ms": round((time.perf_counter() - started) * 1000, 2),
             # Keep evidence provenance outside the artifact file as auditable
             # runner metadata while the DSL itself still carries the bounded

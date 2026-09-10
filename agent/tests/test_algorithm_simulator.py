@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from tools.algorithm_simulator import simulate_bellman_ford, simulate_dijkstra
+from tools.algorithm_simulator import (
+    simulate_bellman_ford,
+    simulate_bfs,
+    simulate_dfs,
+    simulate_dijkstra,
+)
 
 
 GRAPH = {
@@ -51,3 +56,19 @@ def test_bellman_ford_derives_round_states_and_supports_negative_edges():
     assert states[-1]["algorithm"] == "bellman_ford"
     assert states[-1]["dist"] == {"s": 0, "a": 4, "b": 2}
     assert [state["round"] for state in states] == [0, 1, 2]
+
+
+def test_bfs_derives_fifo_visit_order_and_queue_events():
+    states = simulate_bfs(GRAPH, "s")
+
+    assert states[-1]["algorithm"] == "bfs"
+    assert states[-1]["visited"] == ["s", "a", "b", "c"]
+    assert states[1]["events"][0] == {"operation": "dequeue", "target": "s", "source": None, "weight": None, "value": None}
+    assert all(entry["priority"] is None for state in states for entry in state["queue"])
+
+
+def test_dfs_derives_lifo_visit_order_without_reversing_graph_contract():
+    states = simulate_dfs(GRAPH, "s")
+
+    assert states[-1]["algorithm"] == "dfs"
+    assert states[-1]["visited"] == ["s", "a", "c", "b"]

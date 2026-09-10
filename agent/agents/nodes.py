@@ -18,6 +18,7 @@ from copy import deepcopy
 from typing import Any
 
 from config import get_settings
+from tools.algorithm_trace_compiler import compile_algorithm_trace
 from tools.normalize_dsl import normalize_dsl
 from tools.validate_dsl import stabilize_algorithm_trace
 
@@ -74,6 +75,13 @@ def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
 
 def _bounded_list(value: Any, limit: int) -> list[Any]:
     return value[:limit] if isinstance(value, list) else []
+
+
+def _llm_temperature(constraints: dict[str, Any] | None, default: float) -> float:
+    """Use deterministic decoding for benchmark runs without changing production UX."""
+    if isinstance(constraints, dict) and constraints.get("eval_deterministic"):
+        return 0.0
+    return default
 
 
 def _bounded_teaching_plan(plan: Any) -> dict[str, Any]:
@@ -352,7 +360,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
             system_prompt=PLANNER_SYSTEM_PROMPT,
             user_message=user_message,
             output_schema=output_schema,
-            temperature=0.3,
+            temperature=_llm_temperature(state.get("constraints"), 0.3),
             max_tokens=8192,  # 输出 schema 已限长，避免无界规划占用工作流预算
             routing_key="planner",
         )
@@ -664,7 +672,7 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             system_prompt=KNOWLEDGE_SYSTEM_PROMPT,
             user_message=user_message,
             output_schema=output_schema,
-            temperature=0.2,
+            temperature=_llm_temperature(state.get("constraints"), 0.2),
             max_tokens=6144,  # 概念/关系有硬上限，保留足够空间但避免无效长输出
             routing_key="knowledge",
         )
@@ -1061,7 +1069,7 @@ async def _generate_coder_batches(
                 system_prompt=CODER_SYSTEM_PROMPT if not start else CODER_BATCH_SYSTEM_PROMPT,
                 user_message=batch_prompt,
                 output_schema=batch_schema,
-                temperature=0.3,
+                temperature=_llm_temperature(constraints, 0.3),
                 max_tokens=8192,
                 routing_key=routing_key,
             )
@@ -1259,6 +1267,28 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                 },
                                 "predecessor": {"type": "object"},
                                 "round": {"type": ["integer", "null"], "minimum": 0},
+                                "events": {
+                                    "type": "array",
+                                    "maxItems": 8,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "operation": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "select", "relax", "enqueue", "dequeue",
+                                                    "visit", "detect_negative_cycle", "complete",
+                                                ],
+                                            },
+                                            "source": {"type": ["string", "null"]},
+                                            "target": {"type": ["string", "null"]},
+                                            "weight": {"type": ["number", "null"]},
+                                            "value": {},
+                                        },
+                                        "required": ["operation"],
+                                        "additionalProperties": False,
+                                    },
+                                },
                             },
                         },
                         "animations": {
@@ -1377,7 +1407,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                 system_prompt=CODER_SYSTEM_PROMPT,
                 user_message=user_message,
                 output_schema=output_schema,
-                temperature=0.3,
+                temperature=_llm_temperature(constraints, 0.3),
                 max_tokens=32768,  # 局部重生成保留单次调用，范围已由 scope 限制
                 routing_key="coder",
             )
@@ -1467,6 +1497,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     # older prompts without weakening deterministic validation.
     dsl = normalize_dsl(dsl)
     dsl = stabilize_algorithm_trace(dsl)
+    dsl = compile_algorithm_trace(dsl)
     dsl = _sanitize_eval_forbidden_claims(dsl, constraints=constraints)
 
     frame_count = len(dsl["frames"])
@@ -1601,7 +1632,7 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
                 system_prompt=QUALITY_SYSTEM_PROMPT,
                 user_message=user_message,
                 output_schema=output_schema,
-                temperature=0.1,
+                temperature=_llm_temperature(state.get("constraints"), 0.1),
                 max_tokens=2048,
                 routing_key="quality",
             )
@@ -1628,6 +1659,21 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
             "description": f"必需知识点未在可见帧内容中出现：{concept}",
         })
 
+    compilation_report = dsl.get("algorithm_trace_compilation")
+    compilation_issues = (
+        compilation_report.get("issues", [])
+        if isinstance(compilation_report, dict)
+        else []
+    )
+    for issue in compilation_issues:
+        issues.append({
+            "severity": "high",
+            "type": "algorithm_trace_compilation",
+            "description": issue.get("message", str(issue))
+            if isinstance(issue, dict)
+            else str(issue),
+        })
+
     # LLM 评分的 issues（非阻塞型，但影响评分）
     if llm_scores:
         for iss in llm_scores.get("issues", []):
@@ -1641,6 +1687,7 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         or not consistency_result["consistent"]
         or not algorithm_result["consistent"]
         or bool(missing_required_concepts)
+        or bool(compilation_issues)
     )
 
     if llm_scores:
@@ -1696,6 +1743,11 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         # Keep representation repairs auditable without treating equivalent
         # legacy encodings as semantic failures.
         quality_report["normalization"] = normalization_report
+    if isinstance(compilation_report, dict):
+        # The report is intentionally separate from the deterministic score:
+        # it records whether state came from model events or graph replay and
+        # exposes any rejected semantic hint without weakening the gate.
+        quality_report["algorithm_trace_compilation"] = compilation_report
 
     logger.info("Quality: 完成 | overall=%.2f | blocking=%s | issues=%d | llm=%s",
                 final_overall, is_blocking, len(issues), "yes" if llm_scores else "no")
@@ -1762,7 +1814,7 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
             system_prompt=REFLECTION_SYSTEM_PROMPT,
             user_message=user_message,
             output_schema=output_schema,
-            temperature=0.2,
+            temperature=_llm_temperature(state.get("constraints"), 0.2),
             routing_key="reflection",
         )
     except Exception as exc:
@@ -1827,6 +1879,7 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
     # 重建 DSL
     new_dsl = normalize_dsl({**dsl, "frames": new_frames})
     new_dsl = stabilize_algorithm_trace(new_dsl)
+    new_dsl = compile_algorithm_trace(new_dsl)
 
     # 更新修订历史
     history = state.get("revision_history", [])

@@ -87,7 +87,12 @@ def _normalise_algorithm_snapshot(
         return snapshot
     result = _normalise_queue_sentinels(snapshot)
     inferred = result.get("algorithm") or algorithm
-    has_algorithm_state = inferred is not None or any(
+    # Topic inference alone is not enough to opt every explanatory/comparison
+    # frame into the executable protocol.  Only frames that actually carry
+    # algorithm state (or explicitly declare ``algorithm``) receive the
+    # versioned schema; otherwise concept-only frames would fail because they
+    # have no queue/dist fields to validate.
+    has_algorithm_state = bool(result.get("algorithm")) or any(
         key in result
         for key in ("dist", "distances", "visited", "processed", *_QUEUE_STATE_KEYS)
     )
@@ -117,6 +122,16 @@ def _normalise_algorithm_snapshot(
         repairs.append("processed_to_visited")
     if canonical_algorithm:
         result.pop("processed", None)
+
+    if "predecessor" not in result:
+        for alias in ("prev", "predecessors", "parents", "parent"):
+            if isinstance(result.get(alias), dict):
+                result["predecessor"] = deepcopy(result[alias])
+                repairs.append(f"{alias}_to_predecessor")
+                break
+    if canonical_algorithm:
+        for alias in ("prev", "predecessors", "parents", "parent"):
+            result.pop(alias, None)
 
     queue_key = next((key for key in _QUEUE_STATE_KEYS if key in result), None)
     if queue_key is not None and canonical_algorithm:
@@ -350,6 +365,46 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
             cell if isinstance(cell, dict) else {"index": position, "value": cell}
             for position, cell in enumerate(cells)
         ]
+    elif object_type == "graph":
+        # Older generators wrapped graph payloads under ``data`` and used
+        # ``vertices``/``from``/``to`` aliases.  Expose the same payload on
+        # the canonical graph fields so renderers and reference checks inspect
+        # the actual topology instead of an empty shell.
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        raw_nodes = item.get("nodes") or item.get("vertices") or data.get("nodes") or data.get("vertices")
+        raw_edges = item.get("edges") or item.get("graph_edges") or data.get("edges") or data.get("graph_edges")
+        if isinstance(raw_nodes, list):
+            nodes = []
+            seen_nodes: set[str] = set()
+            for node in raw_nodes:
+                if isinstance(node, dict):
+                    node_id = node.get("id", node.get("label"))
+                    normalised_node = dict(node)
+                    if node_id is not None:
+                        normalised_node["id"] = _text(node_id)
+                else:
+                    node_id = node
+                    normalised_node = {"id": _text(node_id), "label": _text(node_id)}
+                if node_id is not None and _text(node_id) not in seen_nodes:
+                    nodes.append(normalised_node)
+                    seen_nodes.add(_text(node_id))
+            item["nodes"] = nodes
+        if isinstance(raw_edges, list):
+            edges = []
+            for edge in raw_edges:
+                if not isinstance(edge, dict):
+                    continue
+                source = edge.get("source", edge.get("from"))
+                target = edge.get("target", edge.get("to"))
+                if source is None or target is None:
+                    continue
+                canonical_edge = dict(edge)
+                canonical_edge["source"] = _text(source)
+                canonical_edge["target"] = _text(target)
+                canonical_edge.pop("from", None)
+                canonical_edge.pop("to", None)
+                edges.append(canonical_edge)
+            item["edges"] = edges
     elif object_type == "mindmap" and not isinstance(item.get("root"), dict):
         item["root"] = {"label": _text(item.get("root"), item.get("label", ""))}
     elif object_type == "code_block":

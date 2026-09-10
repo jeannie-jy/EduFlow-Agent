@@ -35,10 +35,7 @@ class QueueEntry(BaseModel):
     vertex: str = Field(min_length=1, max_length=120)
     priority: float | int | str | None = None
 
-    # RenderScript keeps teaching-specific fields such as ``current`` and
-    # ``shortest_path_tree`` in the same snapshot.  The validator below
-    # enforces the algorithm core while preserving those renderer extensions.
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class AlgorithmEvent(BaseModel):
@@ -80,7 +77,12 @@ class AlgorithmState(BaseModel):
     round: int | None = Field(default=None, ge=0)
     events: list[AlgorithmEvent] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
+    # Renderer-specific fields (for example ``current``, ``terminated`` and
+    # ``shortest_path_tree``) live beside the executable algorithm state.  They
+    # are not part of the core protocol, but dropping them would break the
+    # teaching presentation.  Legacy aliases are still rejected explicitly by
+    # ``validate_algorithm_snapshot`` below.
+    model_config = ConfigDict(extra="allow")
 
 
 def is_algorithm_snapshot(snapshot: Any) -> bool:

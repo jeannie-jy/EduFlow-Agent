@@ -246,6 +246,14 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
 8. 图算法状态必须遵循 algorithm-trace-v1；格式不确定时压缩 narration，优先保证
    schema_version、algorithm、dist、visited、queue 和 predecessor 完整闭合。
 
+9. 图算法的可执行状态优先由操作事件驱动。若当前帧发生算法操作，必须在
+   state_snapshot.events 中写出 1-3 个事件，事件只能使用：
+   {"operation":"select|relax|enqueue|dequeue|visit|detect_negative_cycle|complete",
+   "source":"...", "target":"...", "weight": 数字或 null}。
+   Dijkstra 的 relax 必须引用图中真实边及其权重；Bellman-Ford 的每轮松弛必须引用
+   真实边。程序会根据主图重放事件并推导 dist、visited、queue、predecessor，模型
+   不得用事件之外的自由发挥覆盖这些字段。概念介绍或比较帧可以省略 events。
+
 生成完成前逐项复核上述不变量；如果材料没有足够信息，不要编造边权或状态，明确标记信息不足。
 """
 
@@ -267,6 +275,7 @@ dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `
 图算法 state_snapshot 必须遵循 algorithm-trace-v1：queue 使用
 `[{"vertex":"A","priority":3}]`，禁止 `[["A",3]]`、`A(3)`、priority_queue、heap、unvisited
 等别名；不要同时输出同一状态的多个字段别名。
+如果帧包含算法操作，附带 state_snapshot.events；不要伪造不存在的边或权重。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 

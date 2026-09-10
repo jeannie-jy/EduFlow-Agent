@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib
 import json
 import math
@@ -256,6 +257,34 @@ async def run_online_cases(
         summary["normalization_repair_rate"] = round(
             repaired_cases / len(normalization_reports), 4
         )
+    compilation_reports = [
+        item.get("generator_metadata", {}).get("algorithm_trace_compilation")
+        for item in results
+        if isinstance(item.get("generator_metadata"), dict)
+    ]
+    compilation_reports = [
+        report for report in compilation_reports if isinstance(report, dict) and report
+    ]
+    if compilation_reports:
+        compiled_frames = sum(
+            int(report.get("frames_compiled", 0))
+            for report in compilation_reports
+            if isinstance(report.get("frames_compiled", 0), (int, float))
+        )
+        event_frames = sum(
+            int(report.get("event_frames", 0))
+            for report in compilation_reports
+            if isinstance(report.get("event_frames", 0), (int, float))
+        )
+        compilation_issues = sum(
+            len(report.get("issues", []))
+            for report in compilation_reports
+            if isinstance(report.get("issues"), list)
+        )
+        summary["algorithm_trace_compilation_case_count"] = len(compilation_reports)
+        summary["algorithm_trace_compiled_frames"] = compiled_frames
+        summary["algorithm_trace_event_frames"] = event_frames
+        summary["algorithm_trace_compilation_issue_count"] = compilation_issues
     return {
         "schema_version": "1.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -279,6 +308,14 @@ def _report_exit_code(report: dict[str, Any]) -> int:
     passed = report["summary"]["passed_cases"] == len(report["results"])
     within_budget = not report["summary"].get("budget_exceeded", False)
     return 0 if passed and within_budget else 1
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main() -> int:
@@ -333,16 +370,21 @@ def main() -> int:
         artifacts_dir=args.artifacts_dir,
         run_metadata={
             "model": args.model,
+            "candidate_model": args.model,
             "prompt_version": args.prompt_version,
             "budget_usd": args.budget_usd,
             "dataset": str(args.dataset),
+            "dataset_version": args.dataset.stem,
+            "dataset_sha256": _sha256_file(args.dataset),
             "dataset_total_cases": len(all_cases),
             "case_offset": args.offset,
             "case_limit": args.limit,
             "generator": args.generator,
             "judge_generator": args.judge_generator,
             "judge_model": args.judge_model,
-            "response_format": "json_object",
+            "response_format": "auto(json_schema->json_object)",
+            "temperature": 0.0,
+            "temperature_policy": "eval_deterministic",
             "algorithm_trace_schema": "algorithm-trace-v1",
             "normalization_enabled": True,
         },

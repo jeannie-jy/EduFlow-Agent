@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from tools.normalize_dsl import normalize_dsl
+from tools.algorithm_trace_compiler import compile_algorithm_trace
 
 from .base import BaseGenerator
 from .registry import register_generator
@@ -339,6 +340,7 @@ class FramesGenerator(BaseGenerator):
         }
 
         dsl = normalize_dsl(dsl)
+        dsl = compile_algorithm_trace(dsl)
 
         version_payload = json.dumps(
             dsl["frames"], ensure_ascii=False, sort_keys=True, default=str

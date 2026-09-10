@@ -183,6 +183,26 @@ class TestPlannerNode:
         assert call_args[1]["temperature"] == 0.3
 
     @pytest.mark.asyncio
+    async def test_eval_mode_freezes_planner_temperature(self):
+        """Online evaluation constraints must force deterministic decoding."""
+        from agents.nodes import planner_node
+
+        plan_output = {
+            "objectives": ["x"],
+            "outline": [{"step": 1, "title": "x", "key_points": ["x"], "estimated_frames": 1}],
+            "teaching_approach": "x",
+            "estimated_total_frames": 1,
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = plan_output
+            state = AgentStateFactory.minimal()
+            state["constraints"] = {"eval_deterministic": True}
+            await planner_node(state)
+
+        assert mock_llm.call_args[1]["temperature"] == 0.0
+
+    @pytest.mark.asyncio
     async def test_output_schema_has_required_fields(self):
         """Planner 的输出 schema 应包含所有必需字段。"""
         import inspect

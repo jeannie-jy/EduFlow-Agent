@@ -27,6 +27,7 @@ from .design_parameters import (
     design_parameters,
 )
 from .normalize_dsl import normalize_dsl
+from .algorithm_trace_compiler import compile_algorithm_trace
 
 __all__ = [
     # validate_dsl
@@ -40,4 +41,5 @@ __all__ = [
     "design_parameters",
     # normalize_dsl
     "normalize_dsl",
+    "compile_algorithm_trace",
 ]
