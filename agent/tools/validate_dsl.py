@@ -78,7 +78,11 @@ def _negative_counterexample_issues(frame: dict[str, Any]) -> list[str]:
     if not isinstance(snapshot, dict):
         return []
     explicitly_wrong_trace = "visited_wrong" in snapshot or "wrong_dist" in snapshot
-    if any(_graph_role(graph) == "primary" for graph in _graph_visuals(frame)) and not explicitly_wrong_trace:
+    if (
+        any(_graph_role(graph) == "primary" for graph in _graph_visuals(frame))
+        and not explicitly_wrong_trace
+        and not _frame_state_likely_secondary(frame)
+    ):
         # In a mixed comparison frame, ordinary ``visited``/``dist`` belongs
         # to the primary graph.  Only explicitly named wrong-trace fields may
         # be evaluated against the secondary counterexample.
@@ -279,6 +283,234 @@ def _frame_has_primary_graph(frame: dict[str, Any], primary_graph_id: str | None
     return False
 
 
+def _graph_vertices(visual: dict[str, Any]) -> set[str]:
+    """Return vertex ids declared by one graph visual."""
+    vertices: set[str] = set()
+    for node in visual.get("nodes", []):
+        if isinstance(node, dict):
+            node_id = node.get("id", node.get("label"))
+            if node_id is not None:
+                vertices.add(str(node_id))
+    for edge in visual.get("edges", visual.get("graph_edges", [])):
+        if not isinstance(edge, dict):
+            continue
+        if edge.get("source") is not None:
+            vertices.add(str(edge["source"]))
+        if edge.get("target") is not None:
+            vertices.add(str(edge["target"]))
+    return vertices
+
+
+def _graph_has_negative_edge(visual: dict[str, Any]) -> bool:
+    for edge in visual.get("edges", visual.get("graph_edges", [])):
+        if not isinstance(edge, dict):
+            continue
+        weight = _distance_value(edge.get("weight"))
+        if weight is not None and math.isfinite(weight) and weight < 0:
+            return True
+    return False
+
+
+def _state_distance_map(frame: dict[str, Any]) -> dict[str, Any] | None:
+    snapshot = frame.get("state_snapshot", {})
+    if not isinstance(snapshot, dict):
+        return None
+    for key in ("dist", "distances", "distance"):
+        value = snapshot.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _frame_state_likely_secondary(frame: dict[str, Any]) -> bool:
+    """Detect a secondary trace embedded beside the primary graph.
+
+    Models frequently render both graphs in one frame but put the secondary
+    graph's ordinary ``dist``/``visited`` fields in the top-level snapshot.
+    When the snapshot vertex set exactly matches a negative graph and omits a
+    vertex from the primary graph, it cannot be the primary execution state.
+    This inference is deliberately narrow so ordinary mixed comparison frames
+    remain part of the primary trace.
+    """
+    distance_map = _state_distance_map(frame)
+    snapshot = frame.get("state_snapshot", {})
+    if not isinstance(distance_map, dict) or not isinstance(snapshot, dict):
+        return False
+    secondary_graphs = [
+        graph
+        for graph in _graph_visuals(frame)
+        if _graph_role(graph) == "secondary" and _graph_has_negative_edge(graph)
+    ]
+    if not secondary_graphs:
+        return False
+    state_vertices = {str(vertex) for vertex in distance_map}
+    primary_vertices: set[str] = set()
+    for graph in _graph_visuals(frame):
+        if _graph_role(graph) == "primary":
+            primary_vertices.update(_graph_vertices(graph))
+    for graph in secondary_graphs:
+        secondary_vertices = _graph_vertices(graph)
+        if secondary_vertices and state_vertices == secondary_vertices:
+            return True
+    # A negative trace may expose only a subset of its graph, but an explicit
+    # negative-only state must still not reset the primary baseline.
+    if primary_vertices and state_vertices and state_vertices < primary_vertices:
+        return any(
+            key in snapshot
+            for key in ("negative_edge", "dijkstra_result", "wrong_dist", "neg_dist")
+        )
+    return False
+
+
+def _topic_requests_negative_counterexample(topic_text: str) -> bool:
+    markers = (
+        "负权反例",
+        "负权边反例",
+        "反例",
+        "counterexample",
+        "negative edge example",
+    )
+    return any(marker in topic_text for marker in markers)
+
+
+def _strip_unrequested_negative_examples(
+    frames: list[dict[str, Any]],
+    *,
+    topic_text: str,
+) -> list[dict[str, Any]]:
+    """Remove invalid illustrative negative graphs when the topic did not ask for one.
+
+    The primary lesson remains intact, while a model's optional counterexample
+    cannot poison the executable Dijkstra trace. Explicit counterexample topics
+    are never modified and continue to be checked strictly.
+    """
+    if _topic_requests_negative_counterexample(topic_text):
+        return frames
+
+    cleaned: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            cleaned.append(frame)
+            continue
+        negative_graphs = [
+            visual
+            for visual in _graph_visuals(frame)
+            if _graph_has_negative_edge(visual)
+        ]
+        if not negative_graphs:
+            cleaned.append(frame)
+            continue
+
+        secondary_state = _frame_state_likely_secondary(frame)
+        has_safe_primary = any(
+            _graph_role(visual) == "primary" and not _graph_has_negative_edge(visual)
+            for visual in _graph_visuals(frame)
+        )
+        has_negative_primary = any(
+            _graph_role(visual) == "primary" and _graph_has_negative_edge(visual)
+            for visual in negative_graphs
+        )
+        # If the frame only contains a negative primary graph, it is an
+        # unrequested counterexample rather than a valid execution step. Drop
+        # it instead of relabelling a negative trace as the main algorithm.
+        if has_negative_primary and not has_safe_primary:
+            continue
+
+        state = frame.get("state_snapshot")
+        if not isinstance(state, dict):
+            state = {}
+            frame["state_snapshot"] = state
+        frame["visual_objects"] = [
+            visual
+            for visual in frame.get("visual_objects", [])
+            if not (
+                isinstance(visual, dict)
+                and visual.get("type") == "graph"
+                and visual in negative_graphs
+            )
+        ]
+
+        # Mixed frames may carry a correctly named primary snapshot alongside
+        # the negative trace. Preserve the primary state and discard only the
+        # counterexample fields.
+        primary_dist = state.get("primary_dist")
+        primary_visited = state.get("primary_visited")
+        if isinstance(primary_dist, dict) and not isinstance(state.get("dist"), dict):
+            state["dist"] = deepcopy(primary_dist)
+        if isinstance(primary_visited, list) and not isinstance(state.get("visited"), list):
+            state["visited"] = deepcopy(primary_visited)
+        if secondary_state and not isinstance(primary_dist, dict):
+            for key in ("dist", "distances", "distance", "visited", "processed"):
+                state.pop(key, None)
+        for key in list(state):
+            normalized = str(key).casefold()
+            if (
+                normalized.startswith(("neg_", "negative_", "wrong_"))
+                or normalized in {
+                    "primary_dist",
+                    "primary_visited",
+                    "visited_wrong",
+                    "dijkstra_result",
+                    "true_result",
+                    "error_step",
+                    "negative_edge",
+                }
+            ):
+                state.pop(key, None)
+
+        # A frame that only described the discarded counterexample carries no
+        # executable primary state; dropping it is safer than relabelling a
+        # wrong trace as the main algorithm.
+        if (
+            secondary_state
+            or (
+                not isinstance(state.get("dist"), dict)
+                and not isinstance(state.get("distances"), dict)
+                and not isinstance(state.get("distance"), dict)
+                and not isinstance(state.get("visited"), list)
+                and not isinstance(state.get("processed"), list)
+            )
+        ):
+            continue
+        cleaned.append(frame)
+    return cleaned
+
+
+def _stabilize_primary_graph_topology(
+    frames: list[dict[str, Any]],
+    *,
+    topic_text: str,
+) -> int:
+    """Keep a Dijkstra primary graph immutable across execution frames."""
+    if _topic_requests_negative_counterexample(topic_text):
+        return 0
+    baseline: dict[str, Any] | None = None
+    baseline_signature: frozenset[tuple[str, str, str]] | None = None
+    repairs = 0
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        for visual in _graph_visuals(frame):
+            if _graph_role(visual) != "primary" or _graph_has_negative_edge(visual):
+                continue
+            signature = _frame_graph_signature(
+                {"visual_objects": [visual]},
+                primary_graph_id=None,
+            )
+            if baseline is None:
+                baseline = deepcopy(visual)
+                baseline_signature = signature
+                continue
+            if signature == baseline_signature:
+                continue
+            # Preserve frame-local styling/labels but restore the executable
+            # topology (nodes and edges) to the first valid primary graph.
+            visual["nodes"] = deepcopy(baseline.get("nodes", []))
+            visual["edges"] = deepcopy(baseline.get("edges", []))
+            repairs += 1
+    return repairs
+
+
 def _frame_graph_signature(
     frame: dict[str, Any],
     *,
@@ -366,16 +598,20 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
     frames = result.get("frames", [])
     if not isinstance(frames, list):
         return result
+    frames = _strip_unrequested_negative_examples(frames, topic_text=topic_text)
+    result["frames"] = frames
+    repairs = _stabilize_primary_graph_topology(frames, topic_text=topic_text)
     primary_graph_id = _primary_graph_id(frames)
     previous_visited: list[Any] = []
+    previous_dist: dict[str, float] = {}
     secondary_trace_active = False
-    repairs = 0
 
     for frame in frames:
         if not isinstance(frame, dict):
             continue
         has_secondary = _frame_has_secondary_graph(frame)
-        has_primary = _frame_has_primary_graph(frame, primary_graph_id)
+        state_is_secondary = _frame_state_likely_secondary(frame)
+        has_primary = _frame_has_primary_graph(frame, primary_graph_id) and not state_is_secondary
         # A mixed comparison frame can show a secondary graph beside the
         # primary graph.  Its state snapshot still belongs to the explicitly
         # present primary trace; only a secondary-only frame starts an
@@ -391,6 +627,35 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         snapshot = frame.get("state_snapshot")
         if not isinstance(snapshot, dict):
             continue
+        raw_dist = snapshot.get(
+            "dist", snapshot.get("distances", snapshot.get("distance"))
+        )
+        distances = {
+            str(vertex): distance
+            for vertex, value in raw_dist.items()
+            if (distance := _distance_value(value)) is not None
+        } if isinstance(raw_dist, dict) else {}
+        if isinstance(raw_dist, dict) and previous_dist:
+            for key, value in list(raw_dist.items()):
+                current = _distance_value(value)
+                before = previous_dist.get(str(key))
+                if (
+                    current is not None
+                    and before is not None
+                    and math.isfinite(before)
+                    and (
+                        (math.isfinite(current) and current > before + 1e-9)
+                        or math.isinf(current)
+                    )
+                ):
+                    raw_dist[key] = before
+                    distances[str(key)] = before
+                    repairs += 1
+        if distances:
+            previous_dist = {
+                **previous_dist,
+                **distances,
+            }
         visited_key = (
             "visited"
             if isinstance(snapshot.get("visited"), list)
@@ -400,15 +665,6 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         )
         if visited_key is None:
             continue
-
-        raw_dist = snapshot.get(
-            "dist", snapshot.get("distances", snapshot.get("distance"))
-        )
-        distances = {
-            str(vertex): distance
-            for vertex, value in raw_dist.items()
-            if (distance := _distance_value(value)) is not None
-        } if isinstance(raw_dist, dict) else {}
 
         current: list[Any] = []
         current_ids: set[str] = set()
@@ -517,8 +773,9 @@ async def check_algorithm_invariants(
         # Do not compare its state against the primary execution trace; the
         # following frames may continue that illustration without repeating the
         # graph object.
+        state_is_secondary = _frame_state_likely_secondary(frame)
         has_secondary = _frame_has_secondary_graph(frame)
-        has_primary = _frame_has_primary_graph(frame, primary_graph_id)
+        has_primary = _frame_has_primary_graph(frame, primary_graph_id) and not state_is_secondary
         if has_secondary and not has_primary:
             secondary_trace_active = True
             continue

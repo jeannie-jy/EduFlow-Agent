@@ -286,6 +286,95 @@ def test_mixed_primary_secondary_frame_still_stabilizes_primary_snapshot():
     assert stabilized["frames"][1]["state_snapshot"]["visited"] == ["A", "B"]
 
 
+def test_guardrail_clamps_primary_distance_regression():
+    first = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A", "B"]},
+    )
+    second = _graph_frame(
+        "f_002",
+        {"dist": {"A": 0, "B": 2, "C": 5}, "visited": ["A", "B", "C"]},
+    )
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 最短路径",
+        "frames": [first, second],
+    })
+
+    assert stabilized["frames"][1]["state_snapshot"]["dist"] == {
+        "A": 0,
+        "B": 1,
+        "C": 3,
+    }
+
+
+def test_unrequested_negative_counterexample_is_removed_from_primary_trace():
+    primary = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A", "B"]},
+    )
+    mixed = {
+        "frame_id": "f_002",
+        "visual_objects": [
+            primary["visual_objects"][0],
+            {
+                "id": "negative_graph",
+                "type": "graph",
+                "graph_role": "secondary",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "B", "weight": 2},
+                    {"source": "A", "target": "C", "weight": 5},
+                    {"source": "C", "target": "B", "weight": -4},
+                ],
+            },
+        ],
+        "state_snapshot": {
+            "dist": {"A": 0, "B": 2, "C": 5},
+            "visited": ["A", "B", "C"],
+        },
+    }
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 为什么要求非负边权",
+        "frames": [primary, mixed],
+    })
+
+    assert len(stabilized["frames"]) == 1
+    assert all(
+        not (
+            visual.get("type") == "graph"
+            and any(float(edge.get("weight", 0)) < 0 for edge in visual.get("edges", []))
+        )
+        for frame in stabilized["frames"]
+        for visual in frame.get("visual_objects", [])
+        if isinstance(visual, dict)
+    )
+
+
+def test_unrequested_negative_primary_frames_are_dropped():
+    positive = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A"]},
+    )
+    negative = _graph_frame(
+        "f_002",
+        {"dist": {"A": 0, "B": -9, "C": 1}, "visited": ["A", "C", "B"]},
+    )
+    negative["visual_objects"][0]["edges"] = [
+        {"source": "A", "target": "B", "weight": 5},
+        {"source": "A", "target": "C", "weight": 1},
+        {"source": "C", "target": "B", "weight": -10},
+    ]
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 为什么要求非负边权",
+        "frames": [positive, negative],
+    })
+
+    assert [frame["frame_id"] for frame in stabilized["frames"]] == ["f_001"]
+
+
 @pytest.mark.asyncio
 async def test_dijkstra_graph_edges_cannot_change_between_frames():
     first = _graph_frame("f_001", {"dist": {"A": 0, "B": 1, "C": 3}})
