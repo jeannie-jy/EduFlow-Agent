@@ -298,6 +298,49 @@ def test_bellman_ford_guardrail_repairs_in_place_round_values_and_table():
     assert "dist[c]=4" in frame["narration"]
 
 
+def test_dijkstra_guardrail_rebuilds_tree_from_consistent_predecessors():
+    dsl = {
+        "topic": "用逐帧方式讲解 Dijkstra 最短路径算法",
+        "frames": [{
+            "frame_id": "f_001",
+            "visual_objects": [{
+                "id": "primary_graph",
+                "type": "graph",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "C", "weight": 2},
+                    {"source": "B", "target": "C", "weight": 1},
+                ],
+            }, {
+                "id": "shortest_path_tree",
+                "type": "graph",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "C", "weight": 2},
+                    {"source": "B", "target": "C", "weight": 1},
+                ],
+            }],
+            "state_snapshot": {
+                "dist": {"A": 0, "B": 3, "C": 2},
+                "prev": {"C": "A"},
+                "shortest_path_tree": [
+                    {"source": "A", "target": "C", "weight": 2},
+                    {"source": "B", "target": "C", "weight": 1},
+                ],
+            },
+        }],
+    }
+
+    stabilized = stabilize_algorithm_trace(dsl)
+    frame = stabilized["frames"][0]
+
+    assert frame["state_snapshot"]["shortest_path_tree"] == [
+        {"source": "A", "target": "C", "weight": 2}
+    ]
+    derived = frame["visual_objects"][1]
+    assert derived["edges"] == frame["state_snapshot"]["shortest_path_tree"]
+
+
 def test_mixed_primary_secondary_frame_still_stabilizes_primary_snapshot():
     first = _graph_frame(
         "f_001",

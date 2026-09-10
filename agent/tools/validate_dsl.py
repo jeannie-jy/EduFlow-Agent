@@ -513,14 +513,115 @@ def _stabilize_primary_graph_topology(
     return repairs
 
 
-def _bellman_primary_graph(frames: list[dict[str, Any]]) -> tuple[list[str], list[tuple[str, str, float]]]:
-    """Extract the immutable primary graph used by a Bellman-Ford trace."""
-    primary_id = _primary_graph_id(frames)
+def _repair_shortest_path_trees(frames: list[dict[str, Any]]) -> int:
+    """Rebuild explicit path-tree visuals from the frame's predecessor map.
+
+    A model may leave an examined-but-not-selected edge (for example ``B->C``)
+    in the final tree even though ``prev[C]`` is ``A``.  The predecessor map
+    and distance snapshot are the executable source of truth, so derived tree
+    visuals are normalized to that single parent per vertex.
+    """
+    _, edges = _graph_edges(frames)
+    weights: dict[tuple[str, str], list[float]] = {}
+    for edge in edges:
+        source, target = edge.get("source"), edge.get("target")
+        weight = _distance_value(edge.get("weight"))
+        if source is not None and target is not None and weight is not None and math.isfinite(weight):
+            weights.setdefault((str(source), str(target)), []).append(weight)
+    if not weights:
+        return 0
+    repairs = 0
     for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        tree_keys = [key for key in ("shortest_path_tree", "path_tree") if key in snapshot]
+        derived_visuals = [
+            visual
+            for visual in _graph_visuals(frame)
+            if _graph_role(visual) == "derived"
+            and any(marker in " ".join(str(visual.get(key, "")) for key in ("id", "label", "title")).casefold() for marker in _DERIVED_GRAPH_MARKERS)
+        ]
+        if not tree_keys and not derived_visuals:
+            continue
+
+        raw_dist = snapshot.get("dist", snapshot.get("distances", snapshot.get("distance")))
+        distances = {
+            str(vertex): value
+            for vertex, raw_value in raw_dist.items()
+            if (value := _distance_value(raw_value)) is not None
+        } if isinstance(raw_dist, dict) else {}
+        raw_prev = snapshot.get("prev", snapshot.get("predecessors", {}))
+        candidates: list[tuple[str, str, float]] = []
+        if isinstance(raw_prev, dict):
+            for child, parent in raw_prev.items():
+                if parent is None:
+                    continue
+                parent_text, child_text = str(parent), str(child)
+                for weight in weights.get((parent_text, child_text), []):
+                    parent_dist = distances.get(parent_text)
+                    child_dist = distances.get(child_text)
+                    if parent_dist is None or child_dist is None or (
+                        math.isfinite(parent_dist)
+                        and math.isfinite(child_dist)
+                        and math.isclose(child_dist, parent_dist + weight, abs_tol=1e-9)
+                    ):
+                        candidates.append((parent_text, child_text, weight))
+                        break
+        if not candidates and distances:
+            for (parent_text, child_text), edge_weights in weights.items():
+                parent_dist = distances.get(parent_text)
+                child_dist = distances.get(child_text)
+                if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
+                    continue
+                if math.isclose(child_dist, parent_dist + edge_weights[0], abs_tol=1e-9):
+                    candidates.append((parent_text, child_text, edge_weights[0]))
+        # Preserve one deterministic parent per child.
+        desired: list[dict[str, Any]] = []
+        seen_children: set[str] = set()
+        for parent_text, child_text, weight in candidates:
+            if child_text in seen_children:
+                continue
+            seen_children.add(child_text)
+            desired.append({"source": parent_text, "target": child_text, "weight": int(weight) if weight.is_integer() else weight})
+
+        if not desired and not candidates:
+            # Do not erase an intentionally empty/partially specified tree when
+            # the snapshot provides insufficient evidence to reconstruct it.
+            continue
+
+        for key in tree_keys:
+            if snapshot.get(key) != desired:
+                snapshot[key] = deepcopy(desired)
+                repairs += 1
+        for visual in derived_visuals:
+            if visual.get("edges") != desired:
+                visual["edges"] = deepcopy(desired)
+                repairs += 1
+    return repairs
+
+
+def _bellman_frame_is_illustrative(frame: dict[str, Any]) -> bool:
+    """Identify a Dijkstra comparison frame in a Bellman-Ford lesson."""
+    snapshot = frame.get("state_snapshot", {})
+    if isinstance(snapshot, dict) and snapshot.get("phase") == "dijkstra_failure_demo":
+        return True
+    identity = " ".join(
+        str(frame.get(key, "")) for key in ("title", "narration")
+    ).casefold()
+    return "dijkstra" in identity and "bellman" not in identity
+
+
+def _bellman_primary_graph(frames: list[dict[str, Any]]) -> tuple[list[str], list[tuple[str, str, float]]]:
+    """Extract the main Bellman-Ford teaching graph, not comparison examples."""
+    candidates: list[tuple[int, list[str], list[tuple[str, str, float]]]] = []
+    for frame in frames:
+        if not isinstance(frame, dict) or _bellman_frame_is_illustrative(frame):
+            continue
         for visual in _graph_visuals(frame):
             if _graph_role(visual) != "primary":
-                continue
-            if primary_id and str(visual.get("id")) != primary_id:
                 continue
             vertices = list(_graph_vertices(visual))
             edges: list[tuple[str, str, float]] = []
@@ -533,8 +634,15 @@ def _bellman_primary_graph(frames: list[dict[str, Any]]) -> tuple[list[str], lis
                     continue
                 edges.append((str(source), str(target), weight))
             if vertices and edges:
-                return sorted(set(vertices)), edges
-    return [], []
+                identity = " ".join(str(visual.get(key, "")) for key in ("id", "label", "title")).casefold()
+                score = 2 if "bellman" in identity else 0
+                if isinstance(frame.get("state_snapshot"), dict) and "round" in frame["state_snapshot"]:
+                    score += 1
+                candidates.append((score, sorted(set(vertices)), edges))
+    if not candidates:
+        return [], []
+    _, vertices, edges = max(candidates, key=lambda item: item[0])
+    return vertices, edges
 
 
 def _bellman_pass_states(
@@ -619,6 +727,8 @@ def _stabilize_bellman_ford_trace(frames: list[dict[str, Any]]) -> int:
     secondary_active = False
     for frame in frames:
         if not isinstance(frame, dict):
+            continue
+        if _bellman_frame_is_illustrative(frame):
             continue
         has_secondary = _frame_has_secondary_graph(frame)
         # Bellman-Ford lesson plans often redraw the same teaching graph with
@@ -717,6 +827,8 @@ def _bellman_ford_invariant_issues(frames: list[dict[str, Any]]) -> list[str]:
     secondary_active = False
     for frame in frames:
         if not isinstance(frame, dict):
+            continue
+        if _bellman_frame_is_illustrative(frame):
             continue
         has_secondary = _frame_has_secondary_graph(frame)
         has_primary = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
@@ -845,6 +957,9 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         return result
     frames = _strip_unrequested_negative_examples(frames, topic_text=topic_text)
     result["frames"] = frames
+    tree_repairs = _repair_shortest_path_trees(frames)
+    if tree_repairs:
+        logger.info("Algorithm guardrail stabilized shortest-path tree | repairs=%d", tree_repairs)
     repairs = _stabilize_primary_graph_topology(frames, topic_text=topic_text)
     primary_graph_id = _primary_graph_id(frames)
     previous_visited: list[Any] = []
