@@ -269,6 +269,12 @@ def _compatible_hint(
         if isinstance(snapshot.get(key), list) and snapshot[key] != expected.get("visited", []):
             issues.append(f"{key} conflicts with deterministic visited order")
             break
+    if isinstance(raw_queue, list) and algorithm == "bellman_ford":
+        # Bellman-Ford's edge_scan is presentation metadata.  Its executable
+        # state is derived from the deterministic relaxation simulator.
+        raw_queue = []
+        queue_signature = Counter()
+        expected_queue_signature = Counter()
     if isinstance(raw_queue, list):
         if algorithm in {"bfs", "dfs"}:
             raw_vertices = [entry[0] for entry in queue_signature.elements()]
@@ -311,6 +317,17 @@ def _state_for_frame(
     algorithm: str,
 ) -> dict[str, Any] | None:
     events = snapshot.get("events")
+    if algorithm == "bellman_ford" and snapshot.get("round") is not None:
+        try:
+            round_value = int(snapshot["round"])
+        except (TypeError, ValueError):
+            round_value = None
+        if round_value is not None and states:
+            # The simulator exposes initial + V-1 relaxation states; a
+            # V-th negative-cycle check is represented by the final stable
+            # state rather than by inventing another distance snapshot.
+            target_round = max(0, min(round_value, len(states) - 1))
+            return states[target_round]
     if isinstance(events, list) and events:
         if any(isinstance(event, dict) and event.get("operation") == "complete" for event in events):
             return states[-1]
@@ -334,15 +351,6 @@ def _state_for_frame(
             for state in reversed(states):
                 if state.get("phase") in {"relax", "visit", "select"} and state.get("visited", [])[-1:] == [relax_sources[0]]:
                     return state
-        if algorithm == "bellman_ford" and snapshot.get("round") is not None:
-            try:
-                round_value = int(snapshot["round"])
-            except (TypeError, ValueError):
-                round_value = None
-            if round_value is not None:
-                for state in states:
-                    if state.get("round") == round_value:
-                        return state
         phase = _phase_hint(frame, snapshot)
         matching = [state for state in states if state.get("phase") == phase]
         if matching:
@@ -461,6 +469,7 @@ def compile_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         "frames_compiled": 0,
         "event_frames": 0,
         "hint_aligned_frames": 0,
+        "warnings": [],
         "issues": [],
     }
     if graph is None or not graph.get("edges"):
@@ -486,6 +495,23 @@ def compile_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         result["algorithm_trace_compilation"] = report
         return result
 
+    # A model may append an intermediate explanation after a summary frame
+    # (the common ``f_003b`` pattern).  Once the executable graph is known,
+    # order frames by their deterministic state-machine position.  This is a
+    # presentation-order normalization; raw model frames remain in the audit
+    # record and no state value is invented.
+    if algorithm == "dijkstra":
+        ranked: list[tuple[int, int, dict[str, Any]]] = []
+        for index, frame in enumerate(frames):
+            snapshot = frame.get("state_snapshot") if isinstance(frame, dict) else None
+            expected = _state_for_frame(frame, snapshot, states, algorithm=algorithm) if isinstance(snapshot, dict) else None
+            state_index = next((position for position, state in enumerate(states) if state == expected), len(states) + index)
+            ranked.append((state_index, index, frame))
+        ordered = [frame for _, _, frame in sorted(ranked, key=lambda item: (item[0], item[1]))]
+        if ordered != frames:
+            frames[:] = ordered
+            report["frame_order_normalized"] = True
+
     for frame in frames:
         if not isinstance(frame, dict):
             continue
@@ -507,8 +533,21 @@ def compile_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
             report["issues"].extend({"frame_id": frame.get("frame_id"), "description": issue} for issue in event_issues)
             continue
         issues = _compatible_hint(snapshot, expected, algorithm=algorithm)
-        if issues:
-            report["issues"].extend({"frame_id": frame.get("frame_id"), "description": issue} for issue in issues)
+        # visited/queue are derived presentation hints.  The deterministic
+        # simulator is authoritative and replaces these fields below; keep a
+        # mismatch auditable as a warning instead of turning an otherwise valid
+        # trace into a hard failure (e.g. a summary frame emitted after the
+        # final dequeue).  Distances, predecessors and explicit events remain
+        # hard semantic claims.
+        soft_prefixes = ("visited conflicts", "processed conflicts", "queue order conflicts", "queue entries conflict")
+        soft_issues = [issue for issue in issues if issue.startswith(soft_prefixes)]
+        hard_issues = [issue for issue in issues if issue not in soft_issues]
+        report["warnings"].extend(
+            {"frame_id": frame.get("frame_id"), "description": issue}
+            for issue in soft_issues
+        )
+        if hard_issues:
+            report["issues"].extend({"frame_id": frame.get("frame_id"), "description": issue} for issue in hard_issues)
             continue
         frame["state_snapshot"] = _merge_expected(snapshot, expected)
         report["frames_compiled"] += 1

@@ -1372,6 +1372,19 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                         "additionalProperties": False,
                                     },
                                 },
+                                "edge_scan": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "source": {"type": "string"},
+                                            "target": {"type": "string"},
+                                            "weight": {"type": ["number", "null"]},
+                                        },
+                                        "required": ["source", "target", "weight"],
+                                        "additionalProperties": False,
+                                    },
+                                },
                                 "predecessor": {"type": "object"},
                                 "round": {"type": ["integer", "null"], "minimum": 0},
                                 "events": {

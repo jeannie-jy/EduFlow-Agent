@@ -202,6 +202,8 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
 `[{"vertex":"C","priority":8}]`；禁止使用 `[["C",8]]`、`["C(8)"]`、
 `priority_queue`、`heap` 或 `unvisited` 作为替代字段。FIFO/DFS 队列的 priority
 可以为 null，但 vertex 必须是字符串。不要同时输出同一状态的多个别名字段。
+Bellman-Ford 不使用优先队列；若展示每轮扫描的边，使用
+`edge_scan:[{"source":"u","target":"v","weight":-1}]`，`queue` 保持为空数组。
 
 ## 动画类型
 
@@ -276,6 +278,7 @@ dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `
 `[{"vertex":"A","priority":3}]`，禁止 `[["A",3]]`、`A(3)`、priority_queue、heap、unvisited
 等别名；不要同时输出同一状态的多个字段别名。
 如果帧包含算法操作，附带 state_snapshot.events；不要伪造不存在的边或权重。
+Bellman-Ford 的边扫描使用 `edge_scan`，不要把 `u→v(w)` 字符串放入 queue。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 

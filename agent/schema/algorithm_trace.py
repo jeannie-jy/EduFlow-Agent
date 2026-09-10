@@ -38,6 +38,16 @@ class QueueEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EdgeScanEntry(BaseModel):
+    """Canonical Bellman-Ford edge-scan item (not a priority queue entry)."""
+
+    source: str = Field(min_length=1, max_length=120)
+    target: str = Field(min_length=1, max_length=120)
+    weight: float | int | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AlgorithmEvent(BaseModel):
     """Deterministic operation emitted by an algorithm-aware generator."""
 
@@ -73,6 +83,7 @@ class AlgorithmState(BaseModel):
     dist: dict[str, float | int | str] = Field(default_factory=dict)
     visited: list[str] = Field(default_factory=list)
     queue: list[QueueEntry] = Field(default_factory=list)
+    edge_scan: list[EdgeScanEntry] = Field(default_factory=list)
     predecessor: dict[str, str | None] = Field(default_factory=dict)
     round: int | None = Field(default=None, ge=0)
     events: list[AlgorithmEvent] = Field(default_factory=list)
@@ -123,6 +134,7 @@ def validate_algorithm_snapshot(snapshot: Any) -> list[str]:
     present = sorted(alias for alias in aliases if alias in snapshot)
     if present:
         errors.append(f"algorithm-trace-v1 forbids legacy aliases: {present}")
+    algorithm = snapshot.get("algorithm")
     queue = snapshot.get("queue")
     if not isinstance(queue, list):
         errors.append("algorithm-trace-v1 queue must be an array")
@@ -132,11 +144,20 @@ def validate_algorithm_snapshot(snapshot: Any) -> list[str]:
                 errors.append(f"algorithm-trace-v1 queue[{index}] must contain string vertex")
             elif "priority" not in entry:
                 errors.append(f"algorithm-trace-v1 queue[{index}] missing priority")
+    if algorithm == "bellman_ford":
+        edge_scan = snapshot.get("edge_scan", [])
+        if not isinstance(edge_scan, list):
+            errors.append("algorithm-trace-v1 edge_scan must be an array")
+        else:
+            for index, entry in enumerate(edge_scan):
+                if not isinstance(entry, dict) or not isinstance(entry.get("source"), str) or not isinstance(entry.get("target"), str):
+                    errors.append(f"algorithm-trace-v1 edge_scan[{index}] must contain source and target")
     return errors
 
 
 __all__ = [
     "AlgorithmEvent",
+    "EdgeScanEntry",
     "AlgorithmName",
     "AlgorithmPhase",
     "AlgorithmState",

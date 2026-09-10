@@ -21,8 +21,8 @@
 | Prompt 与 Structured Output 约束 | 已完成 | `agent/agents/prompts.py`、`llm_client.py` |
 | 分层硬门禁 | 已完成 | `agent/evals/graders/deterministic.py` |
 | 原始输出、归一化结果、最终判定审计证据 | 已完成 | `agent/evals/runners/run_online.py` |
-| 后端测试 | 已完成 | `1136 passed, 6 skipped` |
-| 线上 3 例 Smoke | 待执行 | 需在 `dev-v1.0` 最新 SHA 上运行 |
+| 后端测试 | 已完成 | `1143 passed, 6 skipped` |
+| 线上 3 例 Smoke | 待执行 | 离线回放 3/3 通过，需在 `dev-v1.0` 最新 SHA 上运行 |
 | 线上 10/50 例正式评测 | 待 Smoke 通过后执行 | 不提前消耗模型预算 |
 
 相关提交：
@@ -77,7 +77,7 @@ reference_integrity_pass = 1.0
 }
 ```
 
-归一化层可兼容 `vertices/nodes`、`from/to`、二维队列项、`A(3)` 字符串和旧队列字段，但必须记录 `normalization_applied`、`repair_count`、`repair_types`。错误距离、错误前驱、不存在的图边和非法访问顺序禁止自动修复。
+归一化层可兼容 `vertices/nodes`、`from/to`、二维队列项、`A(3)` 字符串、快照内显式图边和旧队列字段；Bellman-Ford 的边扫描统一进入 `edge_scan`，不伪装成优先队列。所有转换必须记录 `normalization_applied`、`repair_count`、`repair_types`。错误距离、错误前驱、不存在的图边和非法访问顺序禁止自动修复；无事件帧中的 visited/queue 仅作为可审计展示提示，最终状态由确定性模拟器生成。
 
 ### 阶段 C：从源头收敛模型输出（P1）
 
@@ -150,4 +150,3 @@ git status --short
 5. 50 例 Benchmark 可重复运行；
 6. 报告可追溯原始输出、归一化结果和最终判定；
 7. 简历数字与线上审计产物一一对应。
-

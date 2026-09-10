@@ -579,7 +579,10 @@ def _repair_shortest_path_trees(frames: list[dict[str, Any]]) -> int:
             for vertex, raw_value in raw_dist.items()
             if (value := _distance_value(raw_value)) is not None
         } if isinstance(raw_dist, dict) else {}
-        raw_prev = snapshot.get("prev", snapshot.get("predecessors", {}))
+        raw_prev = snapshot.get(
+            "predecessor",
+            snapshot.get("prev", snapshot.get("predecessors", snapshot.get("parents", {}))),
+        )
         candidates: list[tuple[str, str, float]] = []
         if isinstance(raw_prev, dict):
             for child, parent in raw_prev.items():
@@ -918,7 +921,8 @@ def _frame_graph_signature(
         candidates = visual.get("edges", visual.get("graph_edges", []))
         if isinstance(candidates, list):
             raw_edges.extend(item for item in candidates if isinstance(item, dict))
-    if not _frame_has_secondary_graph(frame):
+    has_primary_visual = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
+    if not _frame_has_secondary_graph(frame) and not has_primary_visual:
         for visual in frame.get("visual_objects", []):
             if isinstance(visual, dict) and visual.get("type") == "edge":
                 raw_edges.append(visual)
@@ -1146,6 +1150,7 @@ async def check_algorithm_invariants(
     graph_signature: frozenset[tuple[str, str, str]] | None = None
     primary_graph_id = _primary_graph_id(frames)
     final_dist: dict[str, float] = {}
+    dist_by_frame: dict[str, dict[str, float]] = {}
     # A frame may expose the same path tree both as a derived graph and in its
     # state snapshot. Later frames may repeat an unchanged tree. Keep evidence
     # scoped to each frame so those representations are not mistaken for
@@ -1217,6 +1222,7 @@ async def check_algorithm_invariants(
             }
             if current_dist:
                 final_dist = current_dist
+                dist_by_frame[frame_id] = current_dist
 
         if current_dist is not None and previous_dist is not None:
             for vertex in set(previous_dist) & set(current_dist):
@@ -1314,8 +1320,9 @@ async def check_algorithm_invariants(
                 if not weights:
                     issues.append({"frame_id": tree_frame_id, "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
                     continue
-                parent_dist = final_dist.get(parent)
-                child_dist = final_dist.get(child)
+                frame_dist = dist_by_frame.get(tree_frame_id, final_dist)
+                parent_dist = frame_dist.get(parent)
+                child_dist = frame_dist.get(child)
                 if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
                     continue
                 if not any(math.isclose(child_dist, parent_dist + weight, rel_tol=1e-9, abs_tol=1e-9) for weight in weights):

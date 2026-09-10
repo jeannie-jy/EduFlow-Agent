@@ -34,6 +34,153 @@ _ALGORITHM_MARKERS = {
 }
 
 
+_EDGE_TEXT_RE = re.compile(
+    r"(?P<source>[\w.-]+)\s*(?:→|->)\s*(?P<target>[\w.-]+)\s*"
+    r"\(\s*(?P<weight>-?\d+(?:\.\d+)?)\s*\)"
+)
+_EDGE_OBJECT_RE = re.compile(
+    r"@\{\s*from\s*=\s*(?P<source>[^;\s]+)\s*;\s*"
+    r"to\s*=\s*(?P<target>[^;\s]+)\s*;\s*"
+    r"weight\s*=\s*(?P<weight>-?\d+(?:\.\d+)?)\s*\}"
+)
+
+
+def _numeric_weight(value: Any) -> int | float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not number == number or number in {float("inf"), float("-inf")}:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _parse_edge_text(value: Any) -> dict[str, Any] | None:
+    """Parse a declared edge string without inferring missing semantics.
+
+    The model has historically emitted graph state as ``@{from=...}`` strings
+    or as labels such as ``A→B(2)``.  These are equivalent encodings of an
+    explicitly declared edge, so converting them to the canonical object form
+    is a presentation/transport normalization, not a semantic repair.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _EDGE_OBJECT_RE.fullmatch(value.strip()) or _EDGE_TEXT_RE.fullmatch(value.strip())
+    if not match:
+        return None
+    weight = _numeric_weight(match.group("weight"))
+    if weight is None:
+        return None
+    return {
+        "source": match.group("source").strip(),
+        "target": match.group("target").strip(),
+        "weight": weight,
+    }
+
+
+def _parse_edge_texts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, str):
+        return []
+    edges: list[dict[str, Any]] = []
+    for match in _EDGE_TEXT_RE.finditer(value):
+        weight = _numeric_weight(match.group("weight"))
+        if weight is not None:
+            edges.append({
+                "source": match.group("source").strip(),
+                "target": match.group("target").strip(),
+                "weight": weight,
+            })
+    return edges
+
+
+def _canonical_graph_payload(graph: Any, *, label: Any = None) -> dict[str, Any] | None:
+    """Return an executable graph payload when the source explicitly declares one."""
+    if not isinstance(graph, dict):
+        return None
+    raw_nodes = graph.get("nodes") or graph.get("vertices")
+    raw_edges = graph.get("edges") or graph.get("graph_edges")
+    if isinstance(raw_edges, str):
+        raw_edges = [raw_edges]
+    edges: list[dict[str, Any]] = []
+    if isinstance(raw_edges, list):
+        for raw_edge in raw_edges:
+            if isinstance(raw_edge, dict):
+                source = raw_edge.get("source", raw_edge.get("from"))
+                target = raw_edge.get("target", raw_edge.get("to"))
+                weight = _numeric_weight(raw_edge.get("weight", 1))
+                if source is not None and target is not None and weight is not None:
+                    edges.append({"source": _text(source), "target": _text(target), "weight": weight})
+            elif (edge := _parse_edge_text(raw_edge)) is not None:
+                edges.append(edge)
+    if not edges and isinstance(label, str):
+        edges = _parse_edge_texts(label)
+    if not edges:
+        return None
+    nodes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_node in raw_nodes if isinstance(raw_nodes, list) else []:
+        node_id = raw_node.get("id", raw_node.get("label")) if isinstance(raw_node, dict) else raw_node
+        if node_id is not None and _text(node_id) not in seen:
+            node_id_text = _text(node_id)
+            nodes.append({"id": node_id_text, "label": node_id_text})
+            seen.add(node_id_text)
+    for edge in edges:
+        for endpoint in (edge["source"], edge["target"]):
+            if endpoint not in seen:
+                nodes.append({"id": endpoint, "label": endpoint})
+                seen.add(endpoint)
+    return {"nodes": nodes, "edges": edges, "directed": graph.get("directed", True)}
+
+
+def _inject_explicit_graphs(item: dict[str, Any], *, repairs: list[str]) -> None:
+    """Expose graph state in one canonical visual for renderers and graders."""
+    visuals = item.get("visual_objects", [])
+    if not isinstance(visuals, list):
+        return
+    snapshot = item.get("state_snapshot")
+    state_graph = snapshot.get("graph") if isinstance(snapshot, dict) else None
+    payload = _canonical_graph_payload(state_graph)
+    if payload is None:
+        for visual in visuals:
+            if not isinstance(visual, dict) or visual.get("type") != "graph":
+                continue
+            identity = " ".join(_text(visual.get(key)) for key in ("id", "label", "title"))
+            lowered = identity.casefold()
+            if any(marker in lowered for marker in ("负环示例", "被松弛", "改为", "negative cycle example")):
+                continue
+            # Only explicit graph labels are parsed; prose without edge syntax
+            # remains a card/graph with no executable topology.
+            candidate = _canonical_graph_payload(visual, label=identity)
+            if candidate is not None:
+                payload = candidate
+                visual.setdefault("graph_role", "primary")
+                break
+    if payload is None:
+        return
+
+    primary = next(
+        (
+            visual for visual in visuals
+            if isinstance(visual, dict)
+            and visual.get("type") == "graph"
+            and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+        ),
+        None,
+    )
+    if primary is None:
+        primary = {"id": "primary_graph", "type": "graph", "graph_role": "primary"}
+        visuals.insert(0, primary)
+        repairs.append("explicit_graph_state_to_visual")
+    before = (primary.get("nodes"), primary.get("edges"), primary.get("directed"))
+    primary["nodes"] = deepcopy(payload["nodes"])
+    primary["edges"] = deepcopy(payload["edges"])
+    primary["directed"] = payload.get("directed", True)
+    primary["graph_role"] = "primary"
+    after = (primary.get("nodes"), primary.get("edges"), primary.get("directed"))
+    if before != after:
+        repairs.append("graph_edges_to_canonical_objects")
+
+
 def _normalise_queue_sentinels(snapshot: Any) -> Any:
     """Canonicalize scalar empty-queue markers while preserving real node lists."""
     if not isinstance(snapshot, dict):
@@ -76,6 +223,26 @@ def _queue_entry(value: Any) -> dict[str, Any] | None:
     return {"vertex": str(vertex).strip(), "priority": priority}
 
 
+def _edge_scan_entry(value: Any) -> dict[str, Any] | None:
+    """Convert a Bellman-Ford edge token into the non-priority scan form."""
+    if isinstance(value, dict):
+        source = value.get("source", value.get("from"))
+        target = value.get("target", value.get("to"))
+        weight = value.get("weight", value.get("priority"))
+        if source is not None and target is not None:
+            parsed_weight = _numeric_weight(weight)
+            return {"source": _text(source), "target": _text(target), "weight": parsed_weight}
+        value = value.get("vertex", value.get("id"))
+    if isinstance(value, str):
+        edge = _parse_edge_text(value)
+        if edge is not None:
+            return edge
+        match = re.fullmatch(r"(.+?)\s*(?:→|->)\s*(.+)", value.strip())
+        if match:
+            return {"source": match.group(1).strip(), "target": match.group(2).strip(), "weight": None}
+    return None
+
+
 def _normalise_algorithm_snapshot(
     snapshot: Any,
     *,
@@ -105,7 +272,7 @@ def _normalise_algorithm_snapshot(
         if result.get("schema_version") != "algorithm-trace-v1":
             result["schema_version"] = "algorithm-trace-v1"
             repairs.append("algorithm_schema_version")
-    canonical_algorithm = bool(inferred)
+    canonical_algorithm = str(inferred) if inferred else None
 
     if "dist" not in result:
         for alias in ("distances", "distance"):
@@ -146,13 +313,30 @@ def _normalise_algorithm_snapshot(
             ]
         else:
             result["queue"] = []
-        if queue_key != "queue":
+        if canonical_algorithm == "bellman_ford":
+            raw_items = raw_queue if isinstance(raw_queue, list) else []
+            scan = [entry for item in raw_items if (entry := _edge_scan_entry(item)) is not None]
+            # Bellman-Ford scans a declared edge list; it does not maintain a
+            # Dijkstra-style priority queue.  Preserve the edge sequence under
+            # edge_scan and keep the canonical queue empty.
+            if scan and all("source" in entry and "target" in entry for entry in scan):
+                result["edge_scan"] = scan
+                result["queue"] = []
+                repairs.append("bellman_queue_to_edge_scan")
+            if queue_key != "queue":
+                repairs.append(f"{queue_key}_to_queue")
+        elif queue_key != "queue":
             repairs.append(f"{queue_key}_to_queue")
         if any(isinstance(item, (list, tuple, str)) for item in (raw_queue or []) if isinstance(raw_queue, list)):
             repairs.append("queue_entries_to_objects")
         for alias in _QUEUE_STATE_KEYS:
             if alias != "queue":
                 result.pop(alias, None)
+    elif canonical_algorithm:
+        # Explanatory/summary frames may omit queue, but the versioned
+        # protocol carries an explicit empty value after normalization.
+        result["queue"] = []
+        repairs.append("bellman_queue_default" if canonical_algorithm == "bellman_ford" else "algorithm_queue_default")
     elif queue_key is not None:
         # Generic lessons may still use legacy queue fields. Preserve those
         # keys for backwards-compatible rendering; algorithm lessons opt into
@@ -393,6 +577,9 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
             edges = []
             for edge in raw_edges:
                 if not isinstance(edge, dict):
+                    parsed = _parse_edge_text(edge)
+                    if parsed is not None:
+                        edges.append(parsed)
                     continue
                 source = edge.get("source", edge.get("from"))
                 target = edge.get("target", edge.get("to"))
@@ -510,6 +697,7 @@ def _normalise_frame(
         for index, value in enumerate(visual_objects if isinstance(visual_objects, list) else [])
         if (normalised := _normalise_visual_object(value, index)) is not None
     ]
+    _inject_explicit_graphs(item, repairs=repairs if repairs is not None else [])
     for field, normaliser in (
         ("animations", _normalise_animation),
         ("interaction_hooks", _normalise_hook),
