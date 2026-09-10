@@ -59,6 +59,25 @@ async def test_dijkstra_queue_cannot_disappear_without_dequeue():
 
 
 @pytest.mark.asyncio
+async def test_dijkstra_priority_queue_pair_encoding_uses_vertex_only():
+    frames = [
+        _graph_frame(
+            "f_001",
+            {"visited": ["A"], "queue": [["C", 8]]},
+        ),
+        _graph_frame(
+            "f_002",
+            {"visited": ["A", "C"], "queue": []},
+        ),
+    ]
+
+    result = await check_algorithm_invariants(frames, topic="Dijkstra 最短路径")
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
 async def test_dijkstra_scalar_empty_queue_sentinel_is_not_a_vertex():
     frames = [
         _graph_frame(

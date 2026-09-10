@@ -59,6 +59,12 @@ def _queue_values(value: Any) -> list[str]:
     for item in value:
         if isinstance(item, dict):
             candidate = item.get("id", item.get("vertex", item.get("node", item.get("key"))))
+        elif isinstance(item, (list, tuple)):
+            # Priority queues are commonly serialized as ``[vertex, key]``
+            # pairs, e.g. ``[["C", 8]]``. Only the vertex participates in
+            # visited/queue invariants; treating the whole pair as an id
+            # creates false "unprocessed vertex" failures.
+            candidate = item[0] if item else None
         else:
             candidate = item
         if candidate is not None:
