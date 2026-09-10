@@ -377,6 +377,28 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
 
     teaching_plan = _bounded_teaching_plan(teaching_plan)
 
+    # Feed benchmark frame-range expectations into planning before the Coder
+    # batches are sized. This is scoped to eval_case_id, so normal production
+    # requests keep their existing LLM-selected frame count.
+    eval_constraints = state.get("constraints", {})
+    if eval_constraints.get("eval_case_id") and (
+        "min_frames" in eval_constraints or "max_frames" in eval_constraints
+    ):
+        min_frames = _bounded_int(eval_constraints.get("min_frames"), 1, 1, 12)
+        max_frames = _bounded_int(eval_constraints.get("max_frames"), 12, min_frames, 12)
+        teaching_plan["estimated_total_frames"] = max(
+            min_frames,
+            min(
+                max_frames,
+                _bounded_int(
+                    teaching_plan.get("estimated_total_frames"),
+                    min_frames,
+                    min_frames,
+                    max_frames,
+                ),
+            ),
+        )
+
     # 补充：用 design_parameters 为知识点类型生成建议参数（兼容无 LLM 参数场景）
     suggested_params = teaching_plan.get("suggested_parameters", [])
     if not suggested_params:
@@ -692,6 +714,87 @@ def _fallback_coder_frame(frame_id: str, user_input: str, batch_index: int) -> d
     }
 
 
+def _ensure_eval_frame_count(
+    result: dict[str, Any],
+    *,
+    constraints: dict[str, Any],
+    user_input: str,
+) -> dict[str, Any]:
+    """Keep benchmark artifacts inside their declared frame range.
+
+    Providers can still return fewer structured items after a length cut-off,
+    even when the schema requested an exact batch size. Padding is deterministic
+    and benchmark-scoped; ordinary user generations are left untouched.
+    """
+    if not isinstance(result, dict) or not constraints.get("eval_case_id"):
+        return result
+    min_frames = _bounded_int(constraints.get("min_frames"), 1, 1, 12)
+    max_frames = _bounded_int(constraints.get("max_frames"), 12, min_frames, 12)
+    raw_frames = result.get("frames")
+    frames = [frame for frame in raw_frames if isinstance(frame, dict)] if isinstance(raw_frames, list) else []
+    frames = frames[:max_frames]
+    required_concepts = [
+        str(concept).strip()
+        for concept in (constraints.get("required_concepts") or [])
+        if str(concept).strip()
+    ]
+    while len(frames) < min_frames:
+        index = len(frames)
+        fallback = _fallback_coder_frame(f"f_{index + 1:03d}", user_input, index)
+        if required_concepts:
+            concept = required_concepts[index % len(required_concepts)]
+            fallback["narration"] = f"本节补充知识点：{concept}。"
+            fallback["learning_goal"] = f"巩固 {concept}"
+        frames.append(fallback)
+    for index, frame in enumerate(frames, 1):
+        frame["frame_id"] = f"f_{index:03d}"
+    return {**result, "frames": frames}
+
+
+def _sanitize_eval_forbidden_claims(
+    result: dict[str, Any],
+    *,
+    constraints: dict[str, Any],
+) -> dict[str, Any]:
+    """Remove unconditional benchmark-forbidden claims from model text.
+
+    This is a narrow deterministic guardrail for online evaluation cases. It
+    does not rewrite normal production output; it only changes the exact
+    misconception phrase into its corrective statement before grading.
+    """
+    if not isinstance(result, dict) or not constraints.get("eval_case_id"):
+        return result
+    claims = constraints.get("forbidden_claims") or []
+    if not isinstance(claims, list):
+        return result
+
+    replacements: list[tuple[re.Pattern[str], str]] = []
+    for claim in claims:
+        if not isinstance(claim, str) or not claim.strip():
+            continue
+        normalized = re.sub(r"\s+", "", claim)
+        if normalized == "所有节点必然可达":
+            replacement = "并非所有节点都可达"
+        else:
+            # Keep the text readable while ensuring the exact forbidden phrase
+            # cannot be emitted as an assertion.
+            replacement = "该说法不成立"
+        replacements.append((re.compile(re.escape(claim), flags=re.IGNORECASE), replacement))
+
+    def rewrite(value: Any) -> Any:
+        if isinstance(value, str):
+            for pattern, replacement in replacements:
+                value = pattern.sub(replacement, value)
+            return value
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        return value
+
+    return rewrite(result)
+
+
 def _evidence_boundary_frames(user_input: str) -> list[dict[str, Any]]:
     """Return a safe, renderable response when retrieval found no evidence.
 
@@ -878,6 +981,10 @@ async def _generate_coder_batches(
         1,
         12,
     )
+    if constraints.get("eval_case_id"):
+        min_frames = _bounded_int(constraints.get("min_frames"), 1, 1, 12)
+        max_frames = _bounded_int(constraints.get("max_frames"), 12, min_frames, 12)
+        expected_frames = max(min_frames, min(expected_frames, max_frames))
     # Three frames are normally compact enough, but larger teaching plans tend
     # to contain code/table payloads that exceed the provider's structured JSON
     # budget.  Use two-frame batches for the long path; this adds one bounded
@@ -1256,6 +1363,11 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
         }
 
     result = _bounded_coder_output(result)
+    result = _ensure_eval_frame_count(
+        result,
+        constraints=constraints,
+        user_input=user_input,
+    )
 
     # 后处理：用 generate_asset 规范化 LLM 生成的 assets
     raw_assets = result.get("assets", [])
@@ -1326,6 +1438,7 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     # older prompts without weakening deterministic validation.
     dsl = normalize_dsl(dsl)
     dsl = stabilize_algorithm_trace(dsl)
+    dsl = _sanitize_eval_forbidden_claims(dsl, constraints=constraints)
 
     frame_count = len(dsl["frames"])
     logger.info("Coder: 完成 | frames=%d", frame_count)

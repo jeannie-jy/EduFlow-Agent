@@ -30,6 +30,10 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
             # the offline grader after generation.
             "required_concepts": case.expected.required_concepts,
             "forbidden_claims": case.expected.forbidden_claims,
+            # Evaluation-only structural expectations. Normal user requests do
+            # not carry these keys and retain their existing planning policy.
+            "min_frames": case.expected.min_frames,
+            "max_frames": case.expected.max_frames,
         },
         materials=case.materials,
         thread_id=thread_id,

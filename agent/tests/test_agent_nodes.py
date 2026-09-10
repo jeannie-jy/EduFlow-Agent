@@ -514,6 +514,40 @@ class TestCoderNode:
         ]
 
     @pytest.mark.asyncio
+    async def test_eval_constraints_pad_frames_and_sanitize_forbidden_claim(self):
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["coder_batch_mode"] = True
+        state["teaching_plan"]["estimated_total_frames"] = 2
+        state["constraints"] = {
+            "eval_case_id": "alg_dijkstra_unreachable",
+            "min_frames": 4,
+            "max_frames": 18,
+            "forbidden_claims": ["所有节点必然可达"],
+        }
+        frame = {
+            "frame_id": "f_001",
+            "title": "不可达节点",
+            "learning_goal": "识别不可达顶点",
+            "narration": "所有节点必然可达。",
+            "visual_objects": [],
+            "state_snapshot": {},
+            "animations": [],
+            "interaction_hooks": [],
+            "checks": [],
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {"frames": [frame], "parameters": [], "assets": []}
+            result = await coder_node(state)
+
+        frames = result["dsl"]["frames"]
+        assert len(frames) == 4
+        assert all(frame["frame_id"] == f"f_{index:03d}" for index, frame in enumerate(frames, 1))
+        assert "所有节点必然可达" not in str(result["dsl"])
+
+    @pytest.mark.asyncio
     async def test_coder_dsl_structure_complete(self):
         """生成的 DSL 应包含所有顶层字段。"""
         from agents.nodes import coder_node

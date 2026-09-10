@@ -258,6 +258,46 @@ def test_secondary_trace_cannot_reset_primary_guardrail_baseline():
     assert stabilized["frames"][2]["state_snapshot"]["visited"] == ["A", "B"]
 
 
+def test_bellman_ford_guardrail_repairs_in_place_round_values_and_table():
+    graph = {
+        "id": "primary_graph",
+        "type": "graph",
+        "graph_role": "primary",
+        "nodes": [{"id": "s"}, {"id": "a"}, {"id": "b"}, {"id": "c"}],
+        "edges": [
+            {"source": "s", "target": "a", "weight": 6},
+            {"source": "s", "target": "b", "weight": 7},
+            {"source": "a", "target": "c", "weight": 5},
+            {"source": "b", "target": "c", "weight": -3},
+            {"source": "c", "target": "a", "weight": 1},
+        ],
+    }
+    dsl = {
+        "topic": "讲解 Bellman-Ford 迭代松弛",
+        "frames": [{
+            "frame_id": "f_001",
+            "visual_objects": [graph, {
+                "id": "dist_table",
+                "type": "table",
+                "headers": ["轮次", "s", "a", "b", "c"],
+                "rows": [["第1轮", 0, 6, 7, 16]],
+            }],
+            "state_snapshot": {
+                "round": 1,
+                "dist": {"s": 0, "a": 6, "b": 7, "c": 16},
+            },
+            "narration": "第 1 轮后 dist[a]=6, dist[b]=7, dist[c]=16。",
+        }],
+    }
+
+    stabilized = stabilize_algorithm_trace(dsl)
+    frame = stabilized["frames"][0]
+
+    assert frame["state_snapshot"]["dist"]["c"] == 4
+    assert frame["visual_objects"][1]["rows"][0][-1] == 4
+    assert "dist[c]=4" in frame["narration"]
+
+
 def test_mixed_primary_secondary_frame_still_stabilizes_primary_snapshot():
     first = _graph_frame(
         "f_001",

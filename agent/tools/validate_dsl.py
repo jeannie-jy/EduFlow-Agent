@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _INFINITY_VALUES = {"∞", "inf", "+inf", "infinity", "无穷", "无穷大"}
 _EMPTY_QUEUE_SENTINELS = {"", "[]", "empty", "none", "null", "空", "空队列"}
 _SHORTEST_PATH_MARKERS = ("dijkstra", "shortest path", "最短路径")
+_BELLMAN_FORD_MARKERS = ("bellman-ford", "bellman ford", "bellmanford", "bellman-ford", "bellman")
 _SECONDARY_GRAPH_MARKERS = (
     "negative",
     "counterexample",
@@ -23,6 +24,7 @@ _SECONDARY_GRAPH_MARKERS = (
     "exercise",
     "反例",
     "练习",
+    "负环",
 )
 _DERIVED_GRAPH_MARKERS = ("path_tree", "path-tree", "shortest_path_tree", "路径树")
 
@@ -511,6 +513,245 @@ def _stabilize_primary_graph_topology(
     return repairs
 
 
+def _bellman_primary_graph(frames: list[dict[str, Any]]) -> tuple[list[str], list[tuple[str, str, float]]]:
+    """Extract the immutable primary graph used by a Bellman-Ford trace."""
+    primary_id = _primary_graph_id(frames)
+    for frame in frames:
+        for visual in _graph_visuals(frame):
+            if _graph_role(visual) != "primary":
+                continue
+            if primary_id and str(visual.get("id")) != primary_id:
+                continue
+            vertices = list(_graph_vertices(visual))
+            edges: list[tuple[str, str, float]] = []
+            for edge in visual.get("edges", visual.get("graph_edges", [])):
+                if not isinstance(edge, dict):
+                    continue
+                source, target = edge.get("source"), edge.get("target")
+                weight = _distance_value(edge.get("weight"))
+                if source is None or target is None or weight is None or math.isinf(weight):
+                    continue
+                edges.append((str(source), str(target), weight))
+            if vertices and edges:
+                return sorted(set(vertices)), edges
+    return [], []
+
+
+def _bellman_pass_states(
+    vertices: list[str],
+    edges: list[tuple[str, str, float]],
+    source: str,
+) -> list[dict[str, float]]:
+    """Compute deterministic in-place Bellman-Ford states by relaxation round."""
+    distances = {vertex: math.inf for vertex in vertices}
+    distances[source] = 0.0
+    states = [dict(distances)]
+    for _ in range(max(0, len(vertices) - 1)):
+        for left, right, weight in edges:
+            if math.isfinite(distances.get(left, math.inf)):
+                candidate = distances[left] + weight
+                if candidate < distances.get(right, math.inf):
+                    distances[right] = candidate
+        states.append(dict(distances))
+    return states
+
+
+def _encode_distance(value: float, original: Any) -> Any:
+    """Preserve the artifact's infinity representation while repairing numbers."""
+    if math.isinf(value):
+        return original if isinstance(original, str) else "∞"
+    if isinstance(original, int) and not isinstance(original, bool):
+        return int(value) if float(value).is_integer() else value
+    return int(value) if float(value).is_integer() else value
+
+
+def _repair_bellman_text(value: str, states: list[dict[str, float]]) -> str:
+    """Correct explicit ``第 k 轮 ... dist[x]=y`` claims in model prose."""
+    if not isinstance(value, str) or not states:
+        return value
+    repaired = value
+    for round_index, expected in enumerate(states):
+        if round_index == 0:
+            round_pattern = r"初始"
+        else:
+            round_pattern = rf"第\s*{round_index}\s*轮"
+        match = re.search(round_pattern, repaired)
+        if not match:
+            continue
+        end_match = re.search(r"[；;。！？!?\n]", repaired[match.end():])
+        end = match.end() + end_match.start() if end_match else len(repaired)
+        clause = repaired[match.start():end]
+        for vertex, distance in expected.items():
+            number = "∞" if math.isinf(distance) else (str(int(distance)) if distance.is_integer() else str(distance))
+            token = re.compile(
+                rf"(dist\s*\[\s*{re.escape(vertex)}\s*\]\s*=\s*)(-?\d+(?:\.\d+)?|∞|inf|无穷(?:大)?)",
+                flags=re.IGNORECASE,
+            )
+            clause = token.sub(rf"\g<1>{number}", clause)
+        repaired = repaired[:match.start()] + clause + repaired[end:]
+    return repaired
+
+
+def _stabilize_bellman_ford_trace(frames: list[dict[str, Any]]) -> int:
+    """Repair Bellman-Ford snapshots/tables against the declared graph.
+
+    LLMs often mix in-place and synchronous relaxation when narrating a round.
+    The graph and round number are already structured data, so recomputing the
+    expected state is deterministic and avoids spending another LLM request.
+    """
+    vertices, edges = _bellman_primary_graph(frames)
+    if not vertices or not edges:
+        return 0
+    source = None
+    for frame in frames:
+        snapshot = frame.get("state_snapshot", {}) if isinstance(frame, dict) else {}
+        raw_dist = snapshot.get("dist", snapshot.get("distances")) if isinstance(snapshot, dict) else None
+        if isinstance(raw_dist, dict):
+            for vertex, raw_value in raw_dist.items():
+                if _distance_value(raw_value) == 0:
+                    source = str(vertex)
+                    break
+        if source:
+            break
+    source = source or vertices[0]
+    states = _bellman_pass_states(vertices, edges, source)
+    repairs = 0
+    secondary_active = False
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        has_secondary = _frame_has_secondary_graph(frame)
+        # Bellman-Ford lesson plans often redraw the same teaching graph with
+        # a new visual id in each frame. Unlike Dijkstra's immutable id
+        # contract, accept any non-secondary primary graph here.
+        has_primary = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
+        if has_secondary and not has_primary:
+            secondary_active = True
+            continue
+        if secondary_active and not has_primary:
+            continue
+        if has_primary:
+            secondary_active = False
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        round_value = snapshot.get("round", snapshot.get("iteration"))
+        try:
+            round_index = max(0, min(int(round_value), len(states) - 1))
+        except (TypeError, ValueError):
+            round_index = None
+        expected = states[round_index] if round_index is not None else None
+        if expected is not None:
+            key = "dist" if isinstance(snapshot.get("dist"), dict) else "distances" if isinstance(snapshot.get("distances"), dict) else None
+            if key:
+                raw_dist = snapshot[key]
+                for vertex, distance in expected.items():
+                    original = raw_dist.get(vertex, raw_dist.get(str(vertex)))
+                    if original is None:
+                        continue
+                    repaired = _encode_distance(distance, original)
+                    if raw_dist.get(vertex, raw_dist.get(str(vertex))) != repaired:
+                        raw_dist[vertex] = repaired
+                        repairs += 1
+
+            for visual in frame.get("visual_objects", []):
+                if not isinstance(visual, dict) or visual.get("type") != "table":
+                    continue
+                headers = visual.get("headers", visual.get("columns", []))
+                rows = visual.get("rows")
+                if not isinstance(headers, list) or not isinstance(rows, list):
+                    continue
+                header_index = {str(header): index for index, header in enumerate(headers)}
+                for row in rows:
+                    if not isinstance(row, list):
+                        continue
+                    label = str(row[0]) if row else ""
+                    round_match = re.search(r"(?:第\s*)?(\d+)\s*轮", label)
+                    if not round_match:
+                        continue
+                    row_round = max(0, min(int(round_match.group(1)), len(states) - 1))
+                    for vertex, distance in states[row_round].items():
+                        index = header_index.get(vertex)
+                        if index is None or index >= len(row):
+                            continue
+                        repaired = _encode_distance(distance, row[index])
+                        if row[index] != repaired:
+                            row[index] = repaired
+                            repairs += 1
+
+        def repair(value: Any) -> Any:
+            if isinstance(value, str):
+                return _repair_bellman_text(value, states)
+            if isinstance(value, list):
+                return [repair(item) for item in value]
+            if isinstance(value, dict):
+                return {key: repair(item) for key, item in value.items()}
+            return value
+
+        repaired_frame = repair(frame)
+        if repaired_frame != frame:
+            frame.clear()
+            frame.update(repaired_frame)
+            repairs += 1
+    return repairs
+
+
+def _bellman_ford_invariant_issues(frames: list[dict[str, Any]]) -> list[str]:
+    """Check structured Bellman-Ford distances against graph relaxation rounds."""
+    vertices, edges = _bellman_primary_graph(frames)
+    if not vertices or not edges:
+        return []
+    source = None
+    for frame in frames:
+        snapshot = frame.get("state_snapshot", {}) if isinstance(frame, dict) else {}
+        raw_dist = snapshot.get("dist", snapshot.get("distances")) if isinstance(snapshot, dict) else None
+        if isinstance(raw_dist, dict):
+            source = next(
+                (str(vertex) for vertex, value in raw_dist.items() if _distance_value(value) == 0),
+                None,
+            )
+        if source:
+            break
+    states = _bellman_pass_states(vertices, edges, source or vertices[0])
+    issues: list[str] = []
+    secondary_active = False
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        has_secondary = _frame_has_secondary_graph(frame)
+        has_primary = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
+        if has_secondary and not has_primary:
+            secondary_active = True
+            continue
+        if secondary_active and not has_primary:
+            continue
+        if has_primary:
+            secondary_active = False
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        raw_dist = snapshot.get("dist", snapshot.get("distances"))
+        if not isinstance(raw_dist, dict):
+            continue
+        try:
+            round_index = max(0, min(int(snapshot.get("round", snapshot.get("iteration", 0))), len(states) - 1))
+        except (TypeError, ValueError):
+            continue
+        expected = states[round_index]
+        for vertex, distance in expected.items():
+            actual = _distance_value(raw_dist.get(vertex, raw_dist.get(str(vertex))))
+            if actual is None:
+                continue
+            if (math.isinf(distance) and not math.isinf(actual)) or (
+                not math.isinf(distance) and (math.isinf(actual) or abs(actual - distance) > 1e-9)
+            ):
+                issues.append(
+                    f"Bellman-Ford 第 {round_index} 轮 dist[{vertex}]={actual:g}，"
+                    f"按图和边遍历顺序应为 {('∞' if math.isinf(distance) else f'{distance:g}')}"
+                )
+    return issues
+
+
 def _frame_graph_signature(
     frame: dict[str, Any],
     *,
@@ -592,11 +833,15 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         return {}
     result = deepcopy(dsl)
     topic_text = str(result.get("topic", "")).casefold()
-    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
-        return result
-
     frames = result.get("frames", [])
     if not isinstance(frames, list):
+        return result
+    if any(marker in topic_text for marker in _BELLMAN_FORD_MARKERS):
+        bellman_repairs = _stabilize_bellman_ford_trace(frames)
+        if bellman_repairs:
+            logger.info("Algorithm guardrail stabilized Bellman-Ford trace | repairs=%d", bellman_repairs)
+    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
+        result["frames"] = frames
         return result
     frames = _strip_unrequested_negative_examples(frames, topic_text=topic_text)
     result["frames"] = frames
@@ -711,10 +956,17 @@ async def check_algorithm_invariants(
     lessons are not rejected merely because they use different state shapes.
     """
     topic_text = str(topic).casefold()
-    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
+    bellman_requested = any(marker in topic_text for marker in _BELLMAN_FORD_MARKERS)
+    shortest_path_requested = any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS)
+    if not shortest_path_requested and not bellman_requested:
         return {"checked": False, "consistent": True, "issues": []}
 
     issues: list[dict[str, Any]] = []
+    if bellman_requested:
+        issues.extend(
+            {"frame_id": "?", "description": description}
+            for description in _bellman_ford_invariant_issues(frames)
+        )
     vertices, edges = _graph_edges(frames)
     edge_map: dict[tuple[str, str], list[float]] = {}
     for edge in edges:
