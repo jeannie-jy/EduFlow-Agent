@@ -534,6 +534,56 @@ class TestCoderNode:
         ]
 
     @pytest.mark.asyncio
+    async def test_compact_eval_profile_shrinks_schema_and_token_budget(self):
+        """在线评测应使用紧凑协议，避免大 schema 触发 provider 截断。"""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["coder_batch_mode"] = True
+        state["teaching_plan"]["estimated_total_frames"] = 4
+        state["constraints"] = {
+            "eval_case_id": "alg_live_workflow",
+            "min_frames": 4,
+            "max_frames": 8,
+            "eval_max_frames": 4,
+            "eval_output_profile": "compact",
+        }
+
+        def batch_output(start):
+            return {
+                "frames": [
+                    {
+                        "frame_id": f"f_{index:03d}",
+                        "title": f"步骤 {index}",
+                        "narration": "简短讲解",
+                        "visual_objects": [],
+                        "state_snapshot": {},
+                        "animations": [],
+                        "checks": [],
+                    }
+                    for index in range(start, start + 2)
+                ]
+            }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [batch_output(1), batch_output(3)]
+            result = await coder_node(state)
+
+        assert mock_llm.await_count == 2
+        for call in mock_llm.await_args_list:
+            assert call.kwargs["max_tokens"] == 6144
+            schema = call.kwargs["output_schema"]
+            assert "parameters" not in schema["properties"]
+            assert "assets" not in schema["properties"]
+            frame_properties = schema["properties"]["frames"]["items"]["properties"]
+            assert "learning_goal" not in frame_properties
+            assert frame_properties["narration"]["maxLength"] == 180
+            assert frame_properties["visual_objects"]["maxItems"] == 2
+        assert [frame["frame_id"] for frame in result["dsl"]["frames"]] == [
+            "f_001", "f_002", "f_003", "f_004"
+        ]
+
+    @pytest.mark.asyncio
     async def test_eval_constraints_pad_frames_and_sanitize_forbidden_claim(self):
         from agents.nodes import coder_node
 

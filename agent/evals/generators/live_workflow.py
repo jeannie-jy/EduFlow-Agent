@@ -34,6 +34,10 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
             # not carry these keys and retain their existing planning policy.
             "min_frames": case.expected.min_frames,
             "max_frames": case.expected.max_frames,
+            # Keep online Coder responses below common provider completion
+            # ceilings; production requests retain the richer output profile.
+            "eval_output_profile": "compact",
+            "eval_max_frames": min(case.expected.max_frames, 8),
             # Freeze decoding for comparable online runs. Production requests
             # do not set this flag and keep their node-specific temperatures.
             "eval_deterministic": True,

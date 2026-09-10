@@ -47,6 +47,8 @@ async def test_live_workflow_adapter_uses_production_graph_and_reports_usage():
     args = generate.await_args.args
     assert args[1] == "冒泡排序"
     assert generate.await_args.kwargs["constraints"]["eval_case_id"] == "alg_live_workflow"
+    assert generate.await_args.kwargs["constraints"]["eval_output_profile"] == "compact"
+    assert generate.await_args.kwargs["constraints"]["eval_max_frames"] == 8
     assert generate.await_args.kwargs["thread_id"].startswith(
         "eval:alg_live_workflow:"
     )
