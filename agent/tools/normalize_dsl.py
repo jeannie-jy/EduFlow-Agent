@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -25,6 +26,12 @@ _EMPTY_QUEUE_SENTINELS = {
     "空队列",
 }
 _QUEUE_STATE_KEYS = ("queue", "priority_queue", "heap", "unvisited")
+_ALGORITHM_MARKERS = {
+    "dijkstra": ("dijkstra",),
+    "bellman_ford": ("bellman-ford", "bellman ford", "bellmanford"),
+    "bfs": ("bfs", "广度优先"),
+    "dfs": ("dfs", "深度优先"),
+}
 
 
 def _normalise_queue_sentinels(snapshot: Any) -> Any:
@@ -36,6 +43,108 @@ def _normalise_queue_sentinels(snapshot: Any) -> Any:
         value = result.get(key)
         if isinstance(value, str) and value.strip().casefold() in _EMPTY_QUEUE_SENTINELS:
             result[key] = []
+    return result
+
+
+def _infer_algorithm(topic: Any) -> str | None:
+    text = _text(topic).casefold()
+    for algorithm, markers in _ALGORITHM_MARKERS.items():
+        if any(marker in text for marker in markers):
+            return algorithm
+    return None
+
+
+def _queue_entry(value: Any) -> dict[str, Any] | None:
+    """Convert supported legacy queue encodings to one canonical object."""
+    if isinstance(value, dict):
+        vertex = value.get("vertex", value.get("node", value.get("id")))
+        priority = value.get("priority", value.get("distance", value.get("key")))
+    elif isinstance(value, (list, tuple)):
+        vertex = value[0] if value else None
+        priority = value[1] if len(value) > 1 else None
+    elif isinstance(value, str):
+        text = value.strip()
+        match = re.fullmatch(r"(.+?)\s*\(([^()]*)\)", text)
+        if match:
+            vertex, priority = match.group(1).strip(), match.group(2).strip()
+        else:
+            vertex, priority = text, None
+    else:
+        vertex, priority = value, None
+    if vertex is None or not str(vertex).strip():
+        return None
+    return {"vertex": str(vertex).strip(), "priority": priority}
+
+
+def _normalise_algorithm_snapshot(
+    snapshot: Any,
+    *,
+    algorithm: str | None,
+    repairs: list[str],
+) -> Any:
+    """Canonicalize algorithm state aliases without changing semantic values."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    result = _normalise_queue_sentinels(snapshot)
+    inferred = result.get("algorithm") or algorithm
+    has_algorithm_state = inferred is not None or any(
+        key in result
+        for key in ("dist", "distances", "visited", "processed", *_QUEUE_STATE_KEYS)
+    )
+    if not has_algorithm_state:
+        return result
+    if inferred:
+        if result.get("algorithm") != inferred:
+            result["algorithm"] = inferred
+            repairs.append("algorithm_alias")
+        if result.get("schema_version") != "algorithm-trace-v1":
+            result["schema_version"] = "algorithm-trace-v1"
+            repairs.append("algorithm_schema_version")
+    canonical_algorithm = bool(inferred)
+
+    if "dist" not in result:
+        for alias in ("distances", "distance"):
+            if isinstance(result.get(alias), dict):
+                result["dist"] = deepcopy(result[alias])
+                repairs.append(f"{alias}_to_dist")
+                break
+    if canonical_algorithm:
+        for alias in ("distances", "distance"):
+            if alias in result:
+                result.pop(alias, None)
+    if "visited" not in result and isinstance(result.get("processed"), list):
+        result["visited"] = list(result["processed"])
+        repairs.append("processed_to_visited")
+    if canonical_algorithm:
+        result.pop("processed", None)
+
+    queue_key = next((key for key in _QUEUE_STATE_KEYS if key in result), None)
+    if queue_key is not None and canonical_algorithm:
+        raw_queue = result.get(queue_key)
+        if isinstance(raw_queue, str) and raw_queue.strip().casefold() in _EMPTY_QUEUE_SENTINELS:
+            result["queue"] = []
+        elif isinstance(raw_queue, list):
+            result["queue"] = [
+                entry
+                for item in raw_queue
+                if (entry := _queue_entry(item)) is not None
+            ]
+        else:
+            result["queue"] = []
+        if queue_key != "queue":
+            repairs.append(f"{queue_key}_to_queue")
+        if any(isinstance(item, (list, tuple, str)) for item in (raw_queue or []) if isinstance(raw_queue, list)):
+            repairs.append("queue_entries_to_objects")
+        for alias in _QUEUE_STATE_KEYS:
+            if alias != "queue":
+                result.pop(alias, None)
+    elif queue_key is not None:
+        # Generic lessons may still use legacy queue fields. Preserve those
+        # keys for backwards-compatible rendering; algorithm lessons opt into
+        # the single canonical queue field above.
+        for alias in _QUEUE_STATE_KEYS:
+            if alias in result:
+                result[alias] = _normalise_queue_sentinels({alias: result[alias]})[alias]
     return result
 
 
@@ -325,12 +434,21 @@ def _normalise_check(value: Any) -> dict[str, Any] | None:
     return item
 
 
-def _normalise_frame(frame: Any) -> dict[str, Any] | None:
+def _normalise_frame(
+    frame: Any,
+    *,
+    algorithm: str | None = None,
+    repairs: list[str] | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(frame, dict):
         return None
     item = deepcopy(frame)
     if "state_snapshot" in item:
-        item["state_snapshot"] = _normalise_queue_sentinels(item["state_snapshot"])
+        item["state_snapshot"] = _normalise_algorithm_snapshot(
+            item["state_snapshot"],
+            algorithm=algorithm,
+            repairs=repairs if repairs is not None else [],
+        )
     visual_objects = item.get("visual_objects", [])
     item["visual_objects"] = [
         normalised
@@ -362,6 +480,7 @@ def normalize_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(dsl, dict):
         return {}
     result = deepcopy(dsl)
+    repairs: list[str] = []
     result["audience"] = _canonical_audience(result.get("audience"))
     difficulty = _text(result.get("difficulty"), "intermediate").casefold()
     result["difficulty"] = difficulty if difficulty in _DIFFICULTIES else "intermediate"
@@ -372,11 +491,19 @@ def normalize_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
         if (normalised := _normalise_parameter(value)) is not None
     ]
     frames = result.get("frames", [])
+    algorithm = _infer_algorithm(result.get("topic"))
     result["frames"] = [
         normalised
         for value in (frames if isinstance(frames, list) else [])
-        if (normalised := _normalise_frame(value)) is not None
+        if (normalised := _normalise_frame(value, algorithm=algorithm, repairs=repairs)) is not None
     ]
+    if repairs:
+        result["normalization_report"] = {
+            "applied": True,
+            "schema_version": "algorithm-trace-v1" if algorithm else None,
+            "repair_types": sorted(set(repairs)),
+            "repair_count": len(repairs),
+        }
     return result
 
 

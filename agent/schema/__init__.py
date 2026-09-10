@@ -90,7 +90,20 @@ from .project import (
     RegenerateRequest,
 )
 
+from .algorithm_trace import (
+    AlgorithmEvent,
+    AlgorithmName,
+    AlgorithmPhase,
+    AlgorithmState,
+    QueueEntry,
+    is_algorithm_snapshot,
+)
+
 __all__ = [
+    "AlgorithmEvent",
+    "AlgorithmName",
+    "AlgorithmPhase",
+    "AlgorithmState",
     "Animation",
     "AnimationType",
     "AppearAnimation",
@@ -158,6 +171,7 @@ __all__ = [
     "ProjectListResponse",
     "ProjectStatus",
     "QualityStatus",
+    "QueueEntry",
     "RecomputeRequest",
     "RegenerateRequest",
     "RelaxEdgeAnimation",
@@ -175,4 +189,5 @@ __all__ = [
     "UpdateValueAnimation",
     "VisualObject",
     "VisualObjectType",
+    "is_algorithm_snapshot",
 ]

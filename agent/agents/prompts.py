@@ -194,6 +194,15 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
 - 排序: `{"array":[3,1,5,8], "i":1, "j":2}`
 - 图: `{"distances":{"A":0,"B":3}, "visited":["A"], "current":"B"}`
 
+### algorithm-trace-v1（图算法主题必用）
+
+当主题涉及 Dijkstra、Bellman-Ford、BFS 或 DFS 时，state_snapshot 必须使用
+`schema_version="algorithm-trace-v1"`、`algorithm`、`phase`、`dist`、`visited`、
+`queue` 和 `predecessor` 字段。优先队列必须写成对象数组，例如
+`[{"vertex":"C","priority":8}]`；禁止使用 `[["C",8]]`、`["C(8)"]`、
+`priority_queue`、`heap` 或 `unvisited` 作为替代字段。FIFO/DFS 队列的 priority
+可以为 null，但 vertex 必须是字符串。不要同时输出同一状态的多个别名字段。
+
 ## 动画类型
 
 appear, disappear, highlight, update_value, compare, swap, move, relax_edge
@@ -234,6 +243,9 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
    算法失效而伪造错误选点顺序或漏掉本应执行的松弛。
    除非教学计划明确要求负权边反例，否则只说明“要求非负权重”即可，不要额外引入反例图。
 
+8. 图算法状态必须遵循 algorithm-trace-v1；格式不确定时压缩 narration，优先保证
+   schema_version、algorithm、dist、visited、queue 和 predecessor 完整闭合。
+
 生成完成前逐项复核上述不变量；如果材料没有足够信息，不要编造边权或状态，明确标记信息不足。
 """
 
@@ -252,6 +264,9 @@ dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `
 `graph_role=primary`；其他反例/练习图必须标记为 `secondary`，不要让它们重置主轨迹。
 距离为无穷大的不可达节点不得加入 visited，后续总结帧必须继承主轨迹的终态。
 负权反例也必须按当前最小暂定距离选点并执行所有可用松弛，不能用错误步骤证明算法失效。
+图算法 state_snapshot 必须遵循 algorithm-trace-v1：queue 使用
+`[{"vertex":"A","priority":3}]`，禁止 `[["A",3]]`、`A(3)`、priority_queue、heap、unvisited
+等别名；不要同时输出同一状态的多个字段别名。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 

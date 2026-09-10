@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from schema.dsl import RenderScript
+from schema.algorithm_trace import AlgorithmState
 from tools.normalize_dsl import normalize_dsl
 
 
@@ -141,3 +142,30 @@ def test_normalize_dsl_repairs_array_cells_and_preserves_quiz_content():
     assert "下一步选择哪个元素" in objects[1]["content"]
     assert "options" in objects[1]["content"]
     RenderScript.model_validate(normalized)
+
+
+def test_normalize_dsl_uses_versioned_algorithm_trace_queue_contract():
+    source = _legacy_dsl()
+    source["topic"] = "用逐帧方式讲解 Dijkstra 最短路径算法"
+    source["frames"][0]["state_snapshot"] = {
+        "distances": {"s": 0, "C": 8},
+        "processed": ["s"],
+        "priority_queue": [["C", 8], "A(3)"],
+    }
+
+    normalized = normalize_dsl(source)
+    snapshot = normalized["frames"][0]["state_snapshot"]
+
+    assert snapshot["schema_version"] == "algorithm-trace-v1"
+    assert snapshot["algorithm"] == "dijkstra"
+    assert snapshot["dist"] == {"s": 0, "C": 8}
+    assert snapshot["visited"] == ["s"]
+    assert snapshot["queue"] == [
+        {"vertex": "C", "priority": 8},
+        {"vertex": "A", "priority": "3"},
+    ]
+    assert "priority_queue" not in snapshot
+    report = normalized["normalization_report"]
+    assert report["applied"] is True
+    assert "queue_entries_to_objects" in report["repair_types"]
+    AlgorithmState.model_validate(snapshot)

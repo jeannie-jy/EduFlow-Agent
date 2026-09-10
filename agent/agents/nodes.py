@@ -1231,7 +1231,36 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                 "required": ["id", "type"],
                             },
                         },
-                        "state_snapshot": {"type": "object"},
+                        "state_snapshot": {
+                            "type": "object",
+                            "description": (
+                                "For graph algorithms use algorithm-trace-v1: "
+                                "schema_version, algorithm, phase, dist, visited, "
+                                "queue=[{vertex,priority}], predecessor. Do not use "
+                                "priority_queue/heap/unvisited aliases."
+                            ),
+                            "properties": {
+                                "schema_version": {"type": "string", "enum": ["algorithm-trace-v1"]},
+                                "algorithm": {"type": "string", "enum": ["dijkstra", "bellman_ford", "bfs", "dfs", "generic"]},
+                                "phase": {"type": "string", "maxLength": 40},
+                                "dist": {"type": "object"},
+                                "visited": {"type": "array", "items": {"type": "string"}},
+                                "queue": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "vertex": {"type": "string"},
+                                            "priority": {},
+                                        },
+                                        "required": ["vertex", "priority"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "predecessor": {"type": "object"},
+                                "round": {"type": ["integer", "null"], "minimum": 0},
+                            },
+                        },
                         "animations": {
                             "type": "array",
                             "maxItems": 6,
@@ -1662,6 +1691,11 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         "suggestions": suggestions,
         "is_blocking": is_blocking,
     }
+    normalization_report = dsl.get("normalization_report")
+    if isinstance(normalization_report, dict):
+        # Keep representation repairs auditable without treating equivalent
+        # legacy encodings as semantic failures.
+        quality_report["normalization"] = normalization_report
 
     logger.info("Quality: 完成 | overall=%.2f | blocking=%s | issues=%d | llm=%s",
                 final_overall, is_blocking, len(issues), "yes" if llm_scores else "no")
