@@ -97,6 +97,7 @@ from .algorithm_trace import (
     AlgorithmState,
     QueueEntry,
     is_algorithm_snapshot,
+    validate_algorithm_snapshot,
 )
 
 __all__ = [
@@ -190,4 +191,5 @@ __all__ = [
     "VisualObject",
     "VisualObjectType",
     "is_algorithm_snapshot",
+    "validate_algorithm_snapshot",
 ]

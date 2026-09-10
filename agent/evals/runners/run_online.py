@@ -235,6 +235,27 @@ async def run_online_cases(
         summary["budget_exceeded"] = (
             budget_exhausted or summary.get("total_cost_usd", 0) > budget_usd
         )
+    normalization_reports = [
+        item.get("generator_metadata", {}).get("quality_report", {}).get("normalization")
+        for item in results
+        if isinstance(item.get("generator_metadata"), dict)
+    ]
+    normalization_reports = [
+        report for report in normalization_reports if isinstance(report, dict)
+    ]
+    if normalization_reports:
+        repaired_cases = sum(bool(report.get("applied")) for report in normalization_reports)
+        repair_count = sum(
+            int(report.get("repair_count", 0))
+            for report in normalization_reports
+            if isinstance(report.get("repair_count", 0), (int, float))
+        )
+        summary["normalization_case_count"] = len(normalization_reports)
+        summary["normalization_repaired_cases"] = repaired_cases
+        summary["normalization_repair_count"] = repair_count
+        summary["normalization_repair_rate"] = round(
+            repaired_cases / len(normalization_reports), 4
+        )
     return {
         "schema_version": "1.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -321,6 +342,9 @@ def main() -> int:
             "generator": args.generator,
             "judge_generator": args.judge_generator,
             "judge_model": args.judge_model,
+            "response_format": "json_object",
+            "algorithm_trace_schema": "algorithm-trace-v1",
+            "normalization_enabled": True,
         },
         budget_usd=args.budget_usd,
         judge=_load_generator(args.judge_generator) if args.judge_generator else None,

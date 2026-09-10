@@ -1330,6 +1330,7 @@ async def check_algorithm_invariants(
 async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     """使用 Pydantic 校验 DSL 结构完整性。"""
     from schema.dsl import RenderScript
+    from schema.algorithm_trace import validate_algorithm_snapshot
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -1346,6 +1347,9 @@ async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     for i, frame in enumerate(frames):
         if not frame.get("frame_id"):
             errors.append(f"Frame at index {i} missing frame_id")
+            valid = False
+        for trace_error in validate_algorithm_snapshot(frame.get("state_snapshot")):
+            errors.append(f"Frame {frame.get('frame_id', i)} algorithm trace: {trace_error}")
             valid = False
 
     # 检查：帧间 order 连续性

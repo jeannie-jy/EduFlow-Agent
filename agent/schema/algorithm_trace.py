@@ -35,7 +35,10 @@ class QueueEntry(BaseModel):
     vertex: str = Field(min_length=1, max_length=120)
     priority: float | int | str | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    # RenderScript keeps teaching-specific fields such as ``current`` and
+    # ``shortest_path_tree`` in the same snapshot.  The validator below
+    # enforces the algorithm core while preserving those renderer extensions.
+    model_config = ConfigDict(extra="allow")
 
 
 class AlgorithmEvent(BaseModel):
@@ -105,6 +108,31 @@ def is_algorithm_snapshot(snapshot: Any) -> bool:
     )
 
 
+def validate_algorithm_snapshot(snapshot: Any) -> list[str]:
+    """Validate the canonical representation without judging algorithm truth."""
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") is None:
+        return []
+    errors: list[str] = []
+    try:
+        AlgorithmState.model_validate(snapshot)
+    except Exception as exc:  # pragma: no cover - pydantic formats nested errors
+        errors.append(str(exc))
+    aliases = {"priority_queue", "heap", "unvisited", "distances", "processed"}
+    present = sorted(alias for alias in aliases if alias in snapshot)
+    if present:
+        errors.append(f"algorithm-trace-v1 forbids legacy aliases: {present}")
+    queue = snapshot.get("queue")
+    if not isinstance(queue, list):
+        errors.append("algorithm-trace-v1 queue must be an array")
+    else:
+        for index, entry in enumerate(queue):
+            if not isinstance(entry, dict) or not isinstance(entry.get("vertex"), str):
+                errors.append(f"algorithm-trace-v1 queue[{index}] must contain string vertex")
+            elif "priority" not in entry:
+                errors.append(f"algorithm-trace-v1 queue[{index}] missing priority")
+    return errors
+
+
 __all__ = [
     "AlgorithmEvent",
     "AlgorithmName",
@@ -112,4 +140,5 @@ __all__ = [
     "AlgorithmState",
     "QueueEntry",
     "is_algorithm_snapshot",
+    "validate_algorithm_snapshot",
 ]

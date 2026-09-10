@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from schema.dsl import RenderScript
 from schema.algorithm_trace import AlgorithmState
 from tools.normalize_dsl import normalize_dsl
+from tools.validate_dsl import validate_dsl_schema
 
 
 def _legacy_dsl() -> dict:
@@ -169,3 +170,20 @@ def test_normalize_dsl_uses_versioned_algorithm_trace_queue_contract():
     assert report["applied"] is True
     assert "queue_entries_to_objects" in report["repair_types"]
     AlgorithmState.model_validate(snapshot)
+
+
+def test_algorithm_trace_schema_rejects_legacy_alias_after_normalization_boundary():
+    source = _legacy_dsl()
+    source["topic"] = "Dijkstra 最短路径"
+    source["frames"][0]["state_snapshot"] = {
+        "schema_version": "algorithm-trace-v1",
+        "algorithm": "dijkstra",
+        "queue": [{"vertex": "A"}],
+    }
+
+    import asyncio
+
+    result = asyncio.run(validate_dsl_schema(source))
+
+    assert result["valid"] is False
+    assert any("missing priority" in error for error in result["errors"])

@@ -449,7 +449,15 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
             "artifact": _artifact(),
             "usage": {"input": 10, "output": 20},
             "cost_usd": 0.01,
-            "metadata": {"quality_report": {"overall_score": 0.8}},
+            "metadata": {
+                "quality_report": {
+                    "overall_score": 0.8,
+                    "normalization": {
+                        "applied": True,
+                        "repair_count": 2,
+                    },
+                }
+            },
         }
 
     cases = [
@@ -465,6 +473,8 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
     assert report["results"][0]["generator_metadata"]["quality_report"][
         "overall_score"
     ] == 0.8
+    assert report["summary"]["normalization_repaired_cases"] == 4
+    assert report["summary"]["normalization_repair_count"] == 8
     assert len(list(tmp_path.glob("*.json"))) == 4
 
 
