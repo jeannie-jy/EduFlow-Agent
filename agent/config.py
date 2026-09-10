@@ -91,9 +91,12 @@ class Settings(BaseSettings):
 
     # ── Embedding ─────────────────────────────────────────
     embedding_endpoint: str = "https://api.openai.com/v1"
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "text-embedding-v4"
     embedding_api_key: str = "your-openai-api-key"
-    embedding_dimension: int = 1536
+    # The configured Alibaba-compatible text-embedding-v4 endpoint returns
+    # 1024-dimensional vectors. Keep this explicit: pgvector dimensions must
+    # match the provider response exactly.
+    embedding_dimension: int = Field(default=1024, ge=1, le=8192)
 
     # ── 知识库 ────────────────────────────────────────────
     knowledge_search_top_k: int = 5

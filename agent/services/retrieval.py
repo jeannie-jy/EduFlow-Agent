@@ -14,6 +14,23 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 
+_ABSTENTION_MARKERS = (
+    "未收录",
+    "私有算法",
+    "未知算法",
+    "不存在",
+    "没有相关",
+    "无相关",
+    "证据不足",
+)
+
+
+def _is_abstention_intent(topic: str) -> bool:
+    """Detect explicit requests to abstain on an unknown/private topic."""
+    normalized = " ".join(str(topic or "").split()).casefold()
+    return any(marker.casefold() in normalized for marker in _ABSTENTION_MARKERS)
+
+
 def build_retrieval_queries(topic: str, teaching_plan: dict[str, Any]) -> list[str]:
     """Produce bounded query variants without another paid model call."""
     settings = get_settings()
@@ -37,6 +54,11 @@ async def retrieve_knowledge_context(
 ) -> dict[str, Any]:
     settings = get_settings()
     search_queries = queries or [query]
+    # For an explicit unknown/private-topic request, generated objectives are
+    # not independent evidence. Searching them can turn a semantic near-match
+    # (e.g. a generic DP document) into a false positive and defeat abstention.
+    if _is_abstention_intent(query):
+        search_queries = [search_queries[0] if search_queries else query]
     try:
         from db.database import async_session_factory
         from services.knowledge_service import search_knowledge_pgvector
@@ -50,11 +72,33 @@ async def retrieve_knowledge_context(
                     session=session,
                 )
                 for rank, row in enumerate(rows, 1):
-                    source_id = str(row.get("id") or row.get("concept") or f"knowledge-{rank}")
+                    source_id = str(
+                        row.get("source_key")
+                        or row.get("id")
+                        or row.get("concept")
+                        or f"knowledge-{rank}"
+                    )
                     entry = fused.setdefault(source_id, {**row, "rrf_score": 0.0, "matched_queries": []})
                     entry["rrf_score"] += 1 / (60 + rank)
                     entry["matched_queries"].append(search_query)
         rows = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
+        # Objectives and key points are useful query expansions, but they can
+        # be broader than the user's topic (for example, ``贪心`` can match
+        # unrelated graph algorithms). If the primary topic already has
+        # evidence, keep only primary hits or documents corroborated by at
+        # least two query variants. This preserves RRF while preventing a
+        # single noisy expansion from becoming a cited source in the DSL.
+        if len(search_queries) > 1:
+            primary_hits = [
+                row for row in rows if search_queries[0] in row.get("matched_queries", [])
+            ]
+            if primary_hits:
+                rows = [
+                    row
+                    for row in rows
+                    if search_queries[0] in row.get("matched_queries", [])
+                    or len(row.get("matched_queries", [])) >= 2
+                ]
     except Exception as exc:
         logger.warning("workflow retrieval unavailable; continuing without evidence: %s", exc)
         return {"status": "unavailable", "query": query, "sources": [], "error_type": type(exc).__name__}
@@ -66,7 +110,9 @@ async def retrieve_knowledge_context(
         if sources and used_chars + len(content) > settings.retrieval_context_max_chars:
             break
         source = {
-            "source_id": str(row.get("id") or f"knowledge-{index}"),
+            "source_id": str(
+                row.get("source_key") or row.get("id") or f"knowledge-{index}"
+            ),
             "title": str(row.get("concept") or "untitled")[:200],
             "content": content,
             "similarity": float(row.get("similarity") or 0),

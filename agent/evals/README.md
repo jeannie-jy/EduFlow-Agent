@@ -161,6 +161,74 @@ called by default CI. Set the repository variables
 report keeps Token counts but its LLM cost estimate is zero. Embedding-provider
 cost is not included in that LLM estimate.
 
+### Production RAG retrieval benchmark
+
+`retrieval_production_v1.jsonl` is a small, auditable retrieval set aligned to
+the seeded production knowledge corpus. Its gold IDs are stable `source_key`
+values rather than database UUIDs, so a fresh evaluation database produces the
+same labels after reseeding. It also includes one explicit no-evidence case to
+measure abstention instead of rewarding an unrelated hit.
+
+Run a one-case smoke test first, then the full ten-case retrieval evaluation:
+
+```bash
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+python -m evals.runners.run_retrieval \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --limit 1 \
+  --concurrency 1 \
+  --output evals/reports/retrieval-production-smoke.json
+
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+python -m evals.runners.run_retrieval \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --concurrency 1 \
+  --output evals/reports/retrieval-production-v1.json
+```
+
+The runner records Recall@K, Precision@K, MRR, abstention pass rate, and
+retrieval-only mean/p50/p95 latency. It calls the embedding provider and is
+therefore intentionally opt-in; `--concurrency 1` avoids provider rate-limit
+noise and makes latency comparisons reproducible. These metrics evaluate
+retrieval and abstention only, not end-to-end generated teaching quality.
+
+### End-to-end RAG groundedness benchmark
+
+The retrieval-only run does not prove that evidence reaches the generated DSL.
+`run_rag_groundedness` executes the production LangGraph workflow, checks the
+normal deterministic artifact contract, and then verifies that the relevant
+retrieved `source_id` values survive into `knowledge_graph.sources`. It reports
+retrieval recall/precision/MRR, citation coverage/correctness, evidence
+propagation, abstention, latency, and candidate cost.
+
+Run one case before the full set because each case executes the complete
+Planner–Knowledge–Coder–Quality–Reflection workflow:
+
+```bash
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+python -m evals.runners.run_rag_groundedness \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --limit 1 --concurrency 1 --budget-usd 1 \
+  --artifacts-dir evals/reports/rag-groundedness-smoke-artifacts \
+  --output evals/reports/rag-groundedness-smoke.json
+
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+python -m evals.runners.run_rag_groundedness \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --concurrency 1 --budget-usd 3 \
+  --artifacts-dir evals/reports/rag-groundedness-v1-artifacts \
+  --output evals/reports/rag-groundedness-v1.json
+```
+
+To rerun only the explicit no-evidence case, use `--offset 9 --limit 1`.
+Unknown/private-topic requests are an intentional grounding boundary: the
+retriever ignores generated objective expansions, and the Coder emits a small
+deterministic evidence-boundary artifact instead of inventing topic facts.
+
+This is an end-to-end grounding check, not a claim of factual accuracy across
+the open world; the dataset size and corpus version must be reported with any
+result.
+
 ## Evaluation policy
 
 - Deterministic failures are blocking and cannot be overwritten by an LLM judge.

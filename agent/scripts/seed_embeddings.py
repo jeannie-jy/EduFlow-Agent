@@ -6,7 +6,7 @@
     python -m scripts.seed_embeddings
 
 从 data/seed_knowledge.json 读取 22 个知识点，
-为每个知识点生成 text-embedding-3-small 向量，
+为每个知识点生成配置的 Embedding 向量，
 写入 PostgreSQL knowledge_base 表。
 """
 
