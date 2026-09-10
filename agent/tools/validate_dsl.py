@@ -120,7 +120,7 @@ def _negative_counterexample_issues(frame: dict[str, Any]) -> list[str]:
         for edge in raw_edges:
             if not isinstance(edge, dict):
                 continue
-            source, target = edge.get("source"), edge.get("target")
+            source, target = _edge_endpoints(edge)
             weight = _distance_value(edge.get("weight"))
             if (
                 source is None
@@ -201,14 +201,17 @@ def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str,
             if not isinstance(visual, dict):
                 continue
             if visual.get("type") == "graph" and _graph_role(visual) == "primary":
-                for node in visual.get("nodes", []):
+                raw_nodes = visual.get("nodes") or visual.get("vertices", [])
+                for node in raw_nodes if isinstance(raw_nodes, list) else []:
                     if isinstance(node, dict):
                         node_id = node.get("id", node.get("label"))
                         if node_id is not None:
                             vertices.add(str(node_id))
+                    elif node is not None:
+                        vertices.add(str(node))
                 candidates = visual.get("edges", visual.get("graph_edges", []))
                 if isinstance(candidates, list):
-                    edges.extend(item for item in candidates if isinstance(item, dict))
+                    edges.extend(_normalise_edge(item) for item in candidates if isinstance(item, dict))
             elif visual.get("type") == "edge":
                 edges.append(visual)
         graph_state = frame.get("state_snapshot", {}).get("graph", {})
@@ -220,7 +223,7 @@ def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str,
                     vertices.add(str(node))
             state_edges = graph_state.get("edges", graph_state.get("graph_edges", []))
             if isinstance(state_edges, list):
-                edges.extend(item for item in state_edges if isinstance(item, dict))
+                edges.extend(_normalise_edge(item) for item in state_edges if isinstance(item, dict))
         if vertices and edges:
             break
     return vertices, edges
@@ -288,18 +291,22 @@ def _frame_has_primary_graph(frame: dict[str, Any], primary_graph_id: str | None
 def _graph_vertices(visual: dict[str, Any]) -> set[str]:
     """Return vertex ids declared by one graph visual."""
     vertices: set[str] = set()
-    for node in visual.get("nodes", []):
+    raw_vertices = visual.get("nodes") or visual.get("vertices", [])
+    for node in raw_vertices if isinstance(raw_vertices, list) else []:
         if isinstance(node, dict):
             node_id = node.get("id", node.get("label"))
             if node_id is not None:
                 vertices.add(str(node_id))
+        elif node is not None:
+            vertices.add(str(node))
     for edge in visual.get("edges", visual.get("graph_edges", [])):
         if not isinstance(edge, dict):
             continue
-        if edge.get("source") is not None:
-            vertices.add(str(edge["source"]))
-        if edge.get("target") is not None:
-            vertices.add(str(edge["target"]))
+        source, target = _edge_endpoints(edge)
+        if source is not None:
+            vertices.add(str(source))
+        if target is not None:
+            vertices.add(str(target))
     return vertices
 
 
@@ -322,6 +329,19 @@ def _state_distance_map(frame: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(value, dict):
             return value
     return None
+
+
+def _edge_endpoints(edge: dict[str, Any]) -> tuple[Any, Any]:
+    """Read canonical and legacy graph edge endpoint aliases."""
+    return edge.get("source", edge.get("from")), edge.get("target", edge.get("to"))
+
+
+def _normalise_edge(edge: dict[str, Any]) -> dict[str, Any]:
+    """Expose legacy ``from/to`` graph edges through the canonical keys."""
+    source, target = _edge_endpoints(edge)
+    if "source" in edge and "target" in edge:
+        return edge
+    return {**edge, "source": source, "target": target}
 
 
 def _frame_state_likely_secondary(frame: dict[str, Any]) -> bool:
@@ -524,7 +544,7 @@ def _repair_shortest_path_trees(frames: list[dict[str, Any]]) -> int:
     _, edges = _graph_edges(frames)
     weights: dict[tuple[str, str], list[float]] = {}
     for edge in edges:
-        source, target = edge.get("source"), edge.get("target")
+        source, target = _edge_endpoints(edge)
         weight = _distance_value(edge.get("weight"))
         if source is not None and target is not None and weight is not None and math.isfinite(weight):
             weights.setdefault((str(source), str(target)), []).append(weight)
@@ -606,7 +626,10 @@ def _repair_shortest_path_trees(frames: list[dict[str, Any]]) -> int:
 def _bellman_frame_is_illustrative(frame: dict[str, Any]) -> bool:
     """Identify a Dijkstra comparison frame in a Bellman-Ford lesson."""
     snapshot = frame.get("state_snapshot", {})
-    if isinstance(snapshot, dict) and snapshot.get("phase") == "dijkstra_failure_demo":
+    if isinstance(snapshot, dict) and snapshot.get("phase") in {
+        "dijkstra_failure_demo",
+        "negative_cycle_detection",
+    }:
         return True
     identity = " ".join(
         str(frame.get(key, "")) for key in ("title", "narration")
@@ -628,7 +651,7 @@ def _bellman_primary_graph(frames: list[dict[str, Any]]) -> tuple[list[str], lis
             for edge in visual.get("edges", visual.get("graph_edges", [])):
                 if not isinstance(edge, dict):
                     continue
-                source, target = edge.get("source"), edge.get("target")
+                source, target = _edge_endpoints(edge)
                 weight = _distance_value(edge.get("weight"))
                 if source is None or target is None or weight is None or math.isinf(weight):
                     continue
@@ -845,8 +868,13 @@ def _bellman_ford_invariant_issues(frames: list[dict[str, Any]]) -> list[str]:
         raw_dist = snapshot.get("dist", snapshot.get("distances"))
         if not isinstance(raw_dist, dict):
             continue
+        round_value = snapshot.get("round", snapshot.get("iteration"))
+        if round_value is None:
+            # Intro/summary/negative-cycle frames do not identify a specific
+            # relaxation pass and must not be compared with pass state.
+            continue
         try:
-            round_index = max(0, min(int(snapshot.get("round", snapshot.get("iteration", 0))), len(states) - 1))
+            round_index = max(0, min(int(round_value), len(states) - 1))
         except (TypeError, ValueError):
             continue
         expected = states[round_index]
@@ -893,19 +921,20 @@ def _frame_graph_signature(
             candidates = graph_state.get("edges", graph_state.get("graph_edges", []))
             if isinstance(candidates, list):
                 raw_edges.extend(item for item in candidates if isinstance(item, dict))
-    return frozenset(
-        (
-            str(edge.get("source")),
-            str(edge.get("target")),
+    signature: set[tuple[str, str, str]] = set()
+    for edge in raw_edges:
+        source, target = _edge_endpoints(edge)
+        if source is None or target is None:
+            continue
+        weight = _distance_value(edge.get("weight"))
+        signature.add(
             (
-                "" if edge.get("weight") is None
-                else f"{weight:g}" if (weight := _distance_value(edge.get("weight"))) is not None
-                else str(edge.get("weight"))
-            ),
+                str(source),
+                str(target),
+                "" if edge.get("weight") is None else f"{weight:g}" if weight is not None else str(edge.get("weight")),
+            )
         )
-        for edge in raw_edges
-        if edge.get("source") is not None and edge.get("target") is not None
-    )
+    return frozenset(signature)
 
 
 def _extract_tree_edges(value: Any) -> list[tuple[str, str]]:
@@ -1082,6 +1111,11 @@ async def check_algorithm_invariants(
             {"frame_id": "?", "description": description}
             for description in _bellman_ford_invariant_issues(frames)
         )
+        # Bellman-Ford permits distance re-relaxation and often contains a
+        # Dijkstra comparison frame. Do not apply Dijkstra monotonic-distance
+        # and visited-set rules to a Bellman-only lesson.
+        if bellman_requested:
+            return {"checked": True, "consistent": not issues, "issues": issues}
     vertices, edges = _graph_edges(frames)
     edge_map: dict[tuple[str, str], list[float]] = {}
     for edge in edges:

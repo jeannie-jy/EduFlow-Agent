@@ -298,6 +298,51 @@ def test_bellman_ford_guardrail_repairs_in_place_round_values_and_table():
     assert "dist[c]=4" in frame["narration"]
 
 
+@pytest.mark.asyncio
+async def test_bellman_ford_legacy_graph_aliases_ignore_comparison_and_summary_frames():
+    """Legacy vertices/from/to output must not trigger Dijkstra reset errors."""
+    frames = [
+        {
+            "frame_id": "f_001",
+            "visual_objects": [{
+                "id": "vo_g1",
+                "type": "graph",
+                "vertices": ["s", "a", "b"],
+                "edges": [{"from": "s", "to": "a", "weight": 2}],
+            }],
+            "state_snapshot": {
+                "phase": "dijkstra_failure_demo",
+                "dist": {"s": 0, "a": 2, "b": 5},
+            },
+        },
+        {
+            "frame_id": "f_003",
+            "state_snapshot": {"phase": "init", "dist": {"s": 0, "a": "∞", "b": "∞"}},
+        },
+        {
+            "frame_id": "f_005",
+            "visual_objects": [{
+                "id": "bellman_graph",
+                "type": "graph",
+                "vertices": ["s", "a", "b"],
+                "edges": [
+                    {"from": "s", "to": "a", "weight": 2},
+                    {"from": "a", "to": "b", "weight": -1},
+                ],
+            }],
+            "state_snapshot": {"dist": {"s": 0, "a": 2, "b": 1}},
+        },
+    ]
+
+    result = await check_algorithm_invariants(
+        frames, topic="讲解 Bellman-Ford 如何处理负权边并检测负环"
+    )
+
+    assert result["checked"] is True
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
 def test_dijkstra_guardrail_rebuilds_tree_from_consistent_predecessors():
     dsl = {
         "topic": "用逐帧方式讲解 Dijkstra 最短路径算法",
