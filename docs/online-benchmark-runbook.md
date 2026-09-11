@@ -45,7 +45,7 @@ Actions 表单建议填写：
 | Judge endpoint | 独立 Judge 的 OpenAI-compatible `/v1` 地址 |
 | Judge model | 必须不同于候选模型，例如 `qwen3.8-flash` |
 | Maximum reported total run cost | `5.00` |
-| Number of cases to run | `3` |
+| Number of cases to run (`case_limit`) | `3` (`case_limit=3`) |
 
 Smoke 只覆盖：
 
