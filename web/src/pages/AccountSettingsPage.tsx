@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { changePassword } from "@/features/auth/auth";
+import { ApiError } from "@/services/api-client";
 import {
   getUsage,
   exportAccountData,
@@ -30,7 +31,9 @@ export function AccountSettingsPage() {
   const [purpose, setPurpose] = useState<CredentialPurpose>("generation");
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
+  const [validatingCredentialId, setValidatingCredentialId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [credentialMessage, setCredentialMessage] = useState("");
   const [taskMaxTokens, setTaskMaxTokens] = useState("");
   const [monthlyCost, setMonthlyCost] = useState("");
   const [totpEnabled, setTotpEnabled] = useState(false);
@@ -66,6 +69,28 @@ export function AccountSettingsPage() {
       setMessage("保存失败。请确认密钥加密服务已配置。");
     } finally {
       setPending(false);
+    }
+  };
+
+  const validateCredential = async (id: string) => {
+    setValidatingCredentialId(id);
+    setCredentialMessage("正在验证连接…");
+    try {
+      const validated = await validateProviderCredential(id);
+      setCredentials((current) => current.map((item) => item.id === id ? validated : item));
+      setCredentialMessage("连接验证成功，当前密钥可以使用。");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) {
+        setCredentialMessage("连接验证失败：供应商拒绝了这枚密钥，请检查 API Key 是否正确。");
+      } else if (error instanceof ApiError && error.status === 503) {
+        setCredentialMessage("连接验证暂时不可用，可能是供应商或服务端网络问题，请稍后重试。");
+      } else if (error instanceof ApiError && error.status === 401) {
+        setCredentialMessage("登录状态已过期，请重新登录后再验证。");
+      } else {
+        setCredentialMessage("连接验证失败，请稍后重试。");
+      }
+    } finally {
+      setValidatingCredentialId(null);
     }
   };
 
@@ -150,14 +175,25 @@ export function AccountSettingsPage() {
               <div>
                 <p className="font-medium">{item.provider === "deepseek" ? "DeepSeek" : "阿里百炼"} · {item.purpose === "generation" ? "内容生成" : "语义检索"}</p>
                 <p className="text-xs text-muted-foreground">•••• {item.key_last_four} · v{item.version} · {item.status}</p>
+                <p className="text-xs text-muted-foreground">
+                  {item.validated_at ? `已验证 · ${new Date(item.validated_at).toLocaleString("zh-CN")}` : "尚未验证"}
+                </p>
               </div>
               {item.status !== "revoked" ? <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => void validateProviderCredential(item.id).then(refresh)}><RefreshCwIcon />验证</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={validatingCredentialId !== null}
+                  onClick={() => void validateCredential(item.id)}
+                >
+                  <RefreshCwIcon />{validatingCredentialId === item.id ? "验证中…" : "验证"}
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => void revokeProviderCredential(item.id).then(refresh)}><Trash2Icon />撤销</Button>
               </div> : null}
             </div>
           ))}
         </div>
+        {credentialMessage ? <p className="mt-3 text-sm text-muted-foreground" role="status" aria-live="polite">{credentialMessage}</p> : null}
       </section>
 
       {usage ? <section className="rounded-xl border bg-card p-5">
