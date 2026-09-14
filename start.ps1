@@ -1,4 +1,4 @@
-# EduFlow-Agent 一键启动脚本 (Windows PowerShell)
+﻿# EduFlow-Agent 一键启动脚本 (Windows PowerShell)
 # 用法: .\start.ps1 [-Infra] [-Backend] [-Frontend] [-Video] [-All]
 param(
     [switch]$Infra,
