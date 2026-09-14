@@ -93,68 +93,175 @@ def _parse_edge_texts(value: Any) -> list[dict[str, Any]]:
     return edges
 
 
-def _canonical_graph_payload(graph: Any, *, label: Any = None) -> dict[str, Any] | None:
-    """Return an executable graph payload when the source explicitly declares one."""
+def _canonical_edge(value: Any) -> dict[str, Any] | None:
+    """Convert supported edge encodings to the canonical edge object."""
+    if isinstance(value, dict):
+        source = value.get("source", value.get("from", value.get("u")))
+        target = value.get("target", value.get("to", value.get("v")))
+        weight = value.get("weight", 1)
+    elif isinstance(value, (list, tuple)):
+        if len(value) < 2:
+            return None
+        source, target = value[0], value[1]
+        weight = value[2] if len(value) > 2 else 1
+    else:
+        return _parse_edge_text(value)
+    if source is None or target is None:
+        return None
+    parsed_weight = _numeric_weight(weight)
+    source_text = _text(source).strip()
+    target_text = _text(target).strip()
+    if parsed_weight is None or not source_text or not target_text:
+        return None
+    return {"source": source_text, "target": target_text, "weight": parsed_weight}
+
+
+def _canonical_node(value: Any) -> tuple[dict[str, Any], dict[str, str]] | None:
+    if isinstance(value, dict):
+        node_id = value.get(
+            "id",
+            value.get("node_id", value.get("key", value.get("name", value.get("label")))),
+        )
+        label = value.get("label", value.get("name", node_id))
+        record = deepcopy(value)
+    else:
+        node_id, label, record = value, value, {}
+    if node_id is None:
+        return None
+    node_id_text = _text(node_id).strip()
+    label_text = _text(label, node_id_text).strip() or node_id_text
+    if not node_id_text:
+        return None
+    record["id"] = node_id_text
+    record["label"] = label_text
+    aliases = {
+        node_id_text: node_id_text,
+        label_text: node_id_text,
+        node_id_text.casefold(): node_id_text,
+        label_text.casefold(): node_id_text,
+    }
+    return record, aliases
+
+
+def _canonical_graph_payload(
+    graph: Any,
+    *,
+    label: Any = None,
+    extra_nodes: list[Any] | None = None,
+    extra_edges: list[Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return an executable graph payload and resolve label-to-id references."""
     if not isinstance(graph, dict):
         return None
-    raw_nodes = graph.get("nodes") or graph.get("vertices")
-    raw_edges = graph.get("edges") or graph.get("graph_edges")
-    if isinstance(raw_edges, str):
+    raw_nodes = graph.get("nodes")
+    if not raw_nodes:
+        raw_nodes = graph.get("vertices")
+    raw_edges = graph.get("edges")
+    if not raw_edges:
+        raw_edges = graph.get("graph_edges")
+    if isinstance(raw_edges, str) or isinstance(raw_edges, dict):
         raw_edges = [raw_edges]
     edges: list[dict[str, Any]] = []
-    if isinstance(raw_edges, list):
-        for raw_edge in raw_edges:
-            if isinstance(raw_edge, dict):
-                source = raw_edge.get("source", raw_edge.get("from"))
-                target = raw_edge.get("target", raw_edge.get("to"))
-                weight = _numeric_weight(raw_edge.get("weight", 1))
-                if source is not None and target is not None and weight is not None:
-                    edges.append({"source": _text(source), "target": _text(target), "weight": weight})
-            elif (edge := _parse_edge_text(raw_edge)) is not None:
-                edges.append(edge)
+    for raw_edge in raw_edges if isinstance(raw_edges, list) else []:
+        if (edge := _canonical_edge(raw_edge)) is not None:
+            edges.append(edge)
+    for raw_edge in extra_edges or []:
+        if (edge := _canonical_edge(raw_edge)) is not None:
+            edges.append(edge)
     if not edges and isinstance(label, str):
         edges = _parse_edge_texts(label)
     if not edges:
         return None
+
     nodes: list[dict[str, Any]] = []
     seen: set[str] = set()
+    aliases: dict[str, str] = {}
+
+    def add_node(raw_node: Any) -> None:
+        parsed = _canonical_node(raw_node)
+        if parsed is None:
+            return
+        node, node_aliases = parsed
+        if node["id"] not in seen:
+            nodes.append(node)
+            seen.add(node["id"])
+        aliases.update(node_aliases)
+
     for raw_node in raw_nodes if isinstance(raw_nodes, list) else []:
-        node_id = raw_node.get("id", raw_node.get("label")) if isinstance(raw_node, dict) else raw_node
-        if node_id is not None and _text(node_id) not in seen:
-            node_id_text = _text(node_id)
-            nodes.append({"id": node_id_text, "label": node_id_text})
-            seen.add(node_id_text)
+        add_node(raw_node)
+    for raw_node in extra_nodes or []:
+        add_node(raw_node)
+    unique_edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, int | float]] = set()
     for edge in edges:
+        edge["source"] = aliases.get(edge["source"], aliases.get(edge["source"].casefold(), edge["source"]))
+        edge["target"] = aliases.get(edge["target"], aliases.get(edge["target"].casefold(), edge["target"]))
+        edge_key = (edge["source"], edge["target"], edge["weight"])
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        unique_edges.append(edge)
         for endpoint in (edge["source"], edge["target"]):
             if endpoint not in seen:
                 nodes.append({"id": endpoint, "label": endpoint})
                 seen.add(endpoint)
-    return {"nodes": nodes, "edges": edges, "directed": graph.get("directed", True)}
+    return {"nodes": nodes, "edges": unique_edges, "directed": graph.get("directed", True)}
+
+
+def _secondary_graph_visual(visual: dict[str, Any]) -> bool:
+    role = _text(visual.get("graph_role", visual.get("role", "primary"))).casefold()
+    identity = " ".join(_text(visual.get(key)) for key in ("id", "label", "title")).casefold()
+    return role in {"secondary", "derived", "counterexample", "negative_cycle"} or any(
+        marker in identity
+        for marker in ("负环示例", "反例", "counterexample", "negative cycle example")
+    )
 
 
 def _inject_explicit_graphs(item: dict[str, Any], *, repairs: list[str]) -> None:
-    """Expose graph state in one canonical visual for renderers and graders."""
+    """Expose graph state and dispersed node/edge visuals as one primary graph."""
     visuals = item.get("visual_objects", [])
     if not isinstance(visuals, list):
         return
     snapshot = item.get("state_snapshot")
     state_graph = snapshot.get("graph") if isinstance(snapshot, dict) else None
     payload = _canonical_graph_payload(state_graph)
-    if payload is None:
-        for visual in visuals:
-            if not isinstance(visual, dict) or visual.get("type") != "graph":
-                continue
-            identity = " ".join(_text(visual.get(key)) for key in ("id", "label", "title"))
-            lowered = identity.casefold()
-            if any(marker in lowered for marker in ("负环示例", "被松弛", "改为", "negative cycle example")):
-                continue
-            # Only explicit graph labels are parsed; prose without edge syntax
-            # remains a card/graph with no executable topology.
-            candidate = _canonical_graph_payload(visual, label=identity)
-            if candidate is not None:
-                payload = candidate
-                visual.setdefault("graph_role", "primary")
-                break
+
+    for visual in visuals:
+        if not isinstance(visual, dict) or visual.get("type") != "graph" or _secondary_graph_visual(visual):
+            continue
+        identity = " ".join(_text(visual.get(key)) for key in ("id", "label", "title"))
+        candidate = _canonical_graph_payload(visual, label=identity)
+        if candidate is None:
+            continue
+        if payload is None:
+            payload = candidate
+        else:
+            payload = _canonical_graph_payload(
+                payload,
+                extra_nodes=candidate["nodes"],
+                extra_edges=candidate["edges"],
+            )
+        if visual.get("graph_role") is None and visual.get("role") is None:
+            visual["graph_role"] = "primary"
+
+    extra_nodes = [
+        visual for visual in visuals
+        if isinstance(visual, dict) and visual.get("type") == "node"
+    ]
+    extra_edges = [
+        visual for visual in visuals
+        if isinstance(visual, dict)
+        and visual.get("type") == "edge"
+        and not _secondary_graph_visual(visual)
+    ]
+    if payload is not None and (extra_nodes or extra_edges):
+        payload = _canonical_graph_payload(
+            payload,
+            extra_nodes=extra_nodes,
+            extra_edges=extra_edges,
+        )
+    elif payload is None and extra_edges:
+        payload = _canonical_graph_payload({"edges": extra_edges}, extra_nodes=extra_nodes)
     if payload is None:
         return
 
@@ -179,6 +286,104 @@ def _inject_explicit_graphs(item: dict[str, Any], *, repairs: list[str]) -> None
     after = (primary.get("nodes"), primary.get("edges"), primary.get("directed"))
     if before != after:
         repairs.append("graph_edges_to_canonical_objects")
+
+
+def _map_snapshot_vertices(snapshot: Any, item: dict[str, Any], *, repairs: list[str]) -> Any:
+    """Map state labels to graph IDs after the primary graph is synthesized."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    visuals = item.get("visual_objects", [])
+    graph = next(
+        (
+            visual for visual in visuals
+            if isinstance(visual, dict)
+            and visual.get("type") == "graph"
+            and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+        ),
+        None,
+    )
+    if not isinstance(graph, dict):
+        return snapshot
+    aliases: dict[str, str] = {}
+    for node in graph.get("nodes", []):
+        parsed = _canonical_node(node)
+        if parsed is not None:
+            _, node_aliases = parsed
+            aliases.update(node_aliases)
+    if not aliases:
+        return snapshot
+
+    def map_vertex(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return aliases.get(value, aliases.get(value.casefold(), value))
+
+    result = deepcopy(snapshot)
+    for key in ("dist", "predecessor"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            result[key] = {map_vertex(name): map_vertex(vertex) for name, vertex in value.items()}
+    for key in ("visited", "processed"):
+        if isinstance(result.get(key), list):
+            result[key] = [map_vertex(vertex) for vertex in result[key]]
+    if isinstance(result.get("current"), str):
+        result["current"] = map_vertex(result["current"])
+    if isinstance(result.get("queue"), list):
+        for entry in result["queue"]:
+            if isinstance(entry, dict):
+                for key in ("vertex", "node", "id"):
+                    if isinstance(entry.get(key), str):
+                        entry[key] = map_vertex(entry[key])
+    for key in ("edge_scan", "events"):
+        values = result.get(key)
+        if not isinstance(values, list):
+            continue
+        for entry in values:
+            if not isinstance(entry, dict):
+                continue
+            for field in ("source", "target", "from", "to", "vertex", "node"):
+                if isinstance(entry.get(field), str):
+                    entry[field] = map_vertex(entry[field])
+    if result != snapshot:
+        repairs.append("graph_label_to_node_id")
+    return result
+
+
+def _map_visual_edge_vertices(item: dict[str, Any], *, repairs: list[str]) -> None:
+    """Keep legacy standalone edge visuals consistent with primary graph IDs."""
+    visuals = item.get("visual_objects", [])
+    if not isinstance(visuals, list):
+        return
+    graph = next(
+        (
+            visual for visual in visuals
+            if isinstance(visual, dict)
+            and visual.get("type") == "graph"
+            and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+        ),
+        None,
+    )
+    if not isinstance(graph, dict):
+        return
+    aliases: dict[str, str] = {}
+    for node in graph.get("nodes", []):
+        parsed = _canonical_node(node)
+        if parsed is not None:
+            _, node_aliases = parsed
+            aliases.update(node_aliases)
+    for visual in visuals:
+        if not isinstance(visual, dict) or visual.get("type") != "edge":
+            continue
+        changed = False
+        for field in ("source", "target"):
+            value = visual.get(field)
+            if isinstance(value, str):
+                mapped = aliases.get(value, aliases.get(value.casefold(), value))
+                if mapped != value:
+                    visual[field] = mapped
+                    changed = True
+        if changed:
+            repairs.append("graph_edge_label_to_node_id")
 
 
 def _normalise_queue_sentinels(snapshot: Any) -> Any:
@@ -555,8 +760,16 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
         # the canonical graph fields so renderers and reference checks inspect
         # the actual topology instead of an empty shell.
         data = item.get("data") if isinstance(item.get("data"), dict) else {}
-        raw_nodes = item.get("nodes") or item.get("vertices") or data.get("nodes") or data.get("vertices")
-        raw_edges = item.get("edges") or item.get("graph_edges") or data.get("edges") or data.get("graph_edges")
+        raw_nodes = item.get("nodes")
+        if not raw_nodes:
+            raw_nodes = item.get("vertices")
+        if not raw_nodes:
+            raw_nodes = data.get("nodes") or data.get("vertices")
+        raw_edges = item.get("edges")
+        if not raw_edges:
+            raw_edges = item.get("graph_edges")
+        if not raw_edges:
+            raw_edges = data.get("edges") or data.get("graph_edges")
         if isinstance(raw_nodes, list):
             nodes = []
             seen_nodes: set[str] = set()
@@ -576,21 +789,8 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
         if isinstance(raw_edges, list):
             edges = []
             for edge in raw_edges:
-                if not isinstance(edge, dict):
-                    parsed = _parse_edge_text(edge)
-                    if parsed is not None:
-                        edges.append(parsed)
-                    continue
-                source = edge.get("source", edge.get("from"))
-                target = edge.get("target", edge.get("to"))
-                if source is None or target is None:
-                    continue
-                canonical_edge = dict(edge)
-                canonical_edge["source"] = _text(source)
-                canonical_edge["target"] = _text(target)
-                canonical_edge.pop("from", None)
-                canonical_edge.pop("to", None)
-                edges.append(canonical_edge)
+                if (canonical_edge := _canonical_edge(edge)) is not None:
+                    edges.append(canonical_edge)
             item["edges"] = edges
     elif object_type == "mindmap" and not isinstance(item.get("root"), dict):
         item["root"] = {"label": _text(item.get("root"), item.get("label", ""))}
@@ -698,6 +898,13 @@ def _normalise_frame(
         if (normalised := _normalise_visual_object(value, index)) is not None
     ]
     _inject_explicit_graphs(item, repairs=repairs if repairs is not None else [])
+    if "state_snapshot" in item:
+        item["state_snapshot"] = _map_snapshot_vertices(
+            item["state_snapshot"],
+            item,
+            repairs=repairs if repairs is not None else [],
+        )
+    _map_visual_edge_vertices(item, repairs=repairs if repairs is not None else [])
     for field, normaliser in (
         ("animations", _normalise_animation),
         ("interaction_hooks", _normalise_hook),
@@ -740,6 +947,27 @@ def normalize_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
         for value in (frames if isinstance(frames, list) else [])
         if (normalised := _normalise_frame(value, algorithm=algorithm, repairs=repairs)) is not None
     ]
+    # A graph is often declared only on the first frame while later state
+    # snapshots continue to use human-readable labels. Reuse the canonical
+    # primary graph aliases across the whole frame sequence.
+    primary_graphs = [
+        visual
+        for frame in result["frames"]
+        if isinstance(frame, dict)
+        for visual in frame.get("visual_objects", [])
+        if isinstance(visual, dict)
+        and visual.get("type") == "graph"
+        and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+    ]
+    if primary_graphs:
+        alias_item = {"visual_objects": [primary_graphs[0]]}
+        for frame in result["frames"]:
+            if isinstance(frame, dict) and "state_snapshot" in frame:
+                frame["state_snapshot"] = _map_snapshot_vertices(
+                    frame["state_snapshot"],
+                    alias_item,
+                    repairs=repairs,
+                )
     if repairs:
         result["normalization_report"] = {
             "applied": True,

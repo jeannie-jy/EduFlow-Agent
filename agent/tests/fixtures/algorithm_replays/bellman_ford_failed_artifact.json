@@ -1,0 +1,73 @@
+{
+  "project_id": "replay-bellman-label-edge-fragments",
+  "topic": "Bellman-Ford 负权边：逐轮松弛并检查负环",
+  "frames": [
+    {
+      "frame_id": "f_001",
+      "title": "初始化",
+      "narration": "Bellman-Ford 可以处理负权边；先初始化源点 s，后续按轮次松弛。",
+      "visual_objects": [
+        {"type": "node", "id": "node-s", "label": "s"},
+        {"type": "node", "id": "node-a", "label": "a"},
+        {"type": "node", "id": "node-b", "label": "b"},
+        {"type": "edge", "id": "edge-sa", "source": "s", "target": "a", "weight": 4},
+        {"type": "edge", "id": "edge-ab", "source": "a", "target": "b", "weight": -2},
+        {
+          "type": "graph",
+          "id": "bellman-graph-fragment",
+          "nodes": [
+            {"id": "node-s", "label": "s"},
+            {"id": "node-a", "label": "a"},
+            {"id": "node-b", "label": "b"}
+          ],
+          "edges": [["s", "a", 4], ["a", "b", -2]]
+        }
+      ],
+      "state_snapshot": {
+        "algorithm": "bellman_ford",
+        "round": 0,
+        "dist": {"s": 0, "a": "∞", "b": "∞"},
+        "queue": [
+          {"from": "s", "to": "a", "weight": 4},
+          {"from": "a", "to": "b", "weight": -2}
+        ]
+      }
+    },
+    {
+      "frame_id": "f_002",
+      "title": "第 1 轮松弛",
+      "narration": "第 1 轮按边顺序松弛：s→a 得到 4，再用负权边 a→b 得到 2。",
+      "state_snapshot": {
+        "algorithm": "bellman_ford",
+        "round": 1,
+        "dist": {"s": 0, "a": 4, "b": 2},
+        "events": [
+          {"operation": "relax", "source": "s", "target": "a", "weight": 4},
+          {"operation": "relax", "source": "a", "target": "b", "weight": -2}
+        ]
+      }
+    },
+    {
+      "frame_id": "f_003",
+      "title": "第 2 轮：无变化",
+      "narration": "第 2 轮没有新的松弛，距离保持稳定；继续检查但本例没有负环。",
+      "state_snapshot": {
+        "algorithm": "bellman_ford",
+        "round": 2,
+        "dist": {"s": 0, "a": 4, "b": 2},
+        "events": []
+      }
+    },
+    {
+      "frame_id": "f_004",
+      "title": "总结：检测结果",
+      "narration": "完成逐轮松弛后，最短距离为 s=0、a=4、b=2，未发现负环。",
+      "state_snapshot": {
+        "algorithm": "bellman_ford",
+        "phase": "summary",
+        "dist": {"s": 0, "a": 4, "b": 2},
+        "events": [{"operation": "complete"}]
+      }
+    }
+  ]
+}

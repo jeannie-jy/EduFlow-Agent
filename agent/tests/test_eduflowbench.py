@@ -637,3 +637,32 @@ async def test_online_runner_preserves_candidate_cost_when_judge_fails():
     assert result["judge_error"] == "TimeoutError"
     assert result["issues"][-1] == "judge failed: TimeoutError: judge timeout"
     assert report["summary"]["total_cost_usd"] == 0.01
+
+
+@pytest.mark.asyncio
+async def test_online_runner_repeats_cases_and_reports_flaky_rate(tmp_path):
+    calls = 0
+
+    async def flaky_generator(_case):
+        nonlocal calls
+        calls += 1
+        artifact = _artifact()
+        if calls == 2:
+            artifact["frames"][-1]["state_snapshot"]["array"] = [3, 2, 1]
+        return {"artifact": artifact, "cost_usd": 0.01}
+
+    report = await run_online_cases(
+        [_case()],
+        flaky_generator,
+        artifacts_dir=tmp_path,
+        repetitions=3,
+    )
+
+    assert [result["passed"] for result in report["results"]] == [True, False, True]
+    assert report["summary"]["attempt_count"] == 3
+    assert report["summary"]["repetition_count"] == 3
+    assert report["summary"]["flaky_case_count"] == 1
+    assert report["summary"]["flaky_rate"] == 1.0
+    assert _report_exit_code(report) == 1
+    assert _report_exit_code(report, fail_on_flaky=True) == 1
+    assert len(list(tmp_path.glob("*.json"))) == 6

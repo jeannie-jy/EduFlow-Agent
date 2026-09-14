@@ -28,6 +28,7 @@ from .design_parameters import (
 )
 from .normalize_dsl import normalize_dsl
 from .algorithm_trace_compiler import compile_algorithm_trace
+from .sorting_trace_compiler import compile_sorting_trace
 
 __all__ = [
     # validate_dsl
@@ -42,4 +43,5 @@ __all__ = [
     # normalize_dsl
     "normalize_dsl",
     "compile_algorithm_trace",
+    "compile_sorting_trace",
 ]

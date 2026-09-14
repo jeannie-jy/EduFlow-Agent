@@ -30,6 +30,7 @@ from tools.algorithm_simulator import (
     simulate_dfs,
     simulate_dijkstra,
 )
+from tools.sorting_trace_compiler import compile_sorting_trace
 
 
 _ALGORITHM_MARKERS = {
@@ -402,6 +403,12 @@ def _merge_expected(snapshot: dict[str, Any], expected: dict[str, Any]) -> dict[
     }
     result = dict(preserved)
     result.update(deepcopy(expected))
+    # ``edge_scan`` is Bellman-Ford presentation metadata, not a simulator
+    # state field. AlgorithmState.model_dump() supplies an empty default, so
+    # keep an explicitly declared scan sequence when the deterministic state
+    # has no replacement for it.
+    if isinstance(snapshot.get("edge_scan"), list) and not expected.get("edge_scan"):
+        result["edge_scan"] = deepcopy(snapshot["edge_scan"])
     return result
 
 
@@ -452,11 +459,17 @@ def _event_issues(snapshot: dict[str, Any], graph: dict[str, Any], *, algorithm:
     return issues
 
 
-def compile_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
-    """Compile migrated algorithm frames and attach an auditable report."""
+def compile_algorithm_trace(
+    dsl: dict[str, Any], *, algorithm_input: Any = None, compile_sorting: bool = True
+) -> dict[str, Any]:
+    """Compile migrated algorithm frames and attach auditable reports."""
     if not isinstance(dsl, dict) or not isinstance(dsl.get("frames"), list):
         return dsl
-    result = deepcopy(dsl)
+    result = (
+        compile_sorting_trace(dsl, algorithm_input=algorithm_input)
+        if compile_sorting
+        else deepcopy(dsl)
+    )
     frames = result["frames"]
     algorithm = _algorithm(result.get("topic"), frames)
     if algorithm not in {"dijkstra", "bellman_ford", "bfs", "dfs"}:

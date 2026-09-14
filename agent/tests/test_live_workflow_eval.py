@@ -90,6 +90,10 @@ def test_manual_quality_workflow_uses_production_adapter_and_auditable_outputs()
     assert "workflow_dispatch:" in workflow
     assert "evals.generators.live_workflow:generate_workflow_case" in workflow
     assert "EDUFLOW_ALLOW_ONLINE_EVAL=1" in workflow
+    assert "python -m scripts.seed_embeddings" in workflow
+    assert "python -m scripts.retrieval_health" in workflow
+    assert "--repetitions" in workflow
+    assert "--fail-on-flaky" in workflow
     assert "--dataset evals/datasets/eduflowbench_v1.jsonl" in workflow
     assert "embedding_endpoint:" in workflow
     assert "embedding_model:" in workflow

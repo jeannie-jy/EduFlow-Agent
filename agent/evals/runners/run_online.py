@@ -10,6 +10,7 @@ import json
 import math
 import os
 import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,18 +42,21 @@ async def run_online_cases(
     run_metadata: dict[str, Any] | None = None,
     budget_usd: float | None = None,
     judge: Judge | None = None,
+    repetitions: int = 1,
 ) -> dict[str, Any]:
     """Generate and grade cases. The injected generator owns provider credentials."""
 
     if budget_usd is not None and budget_usd <= 0:
         raise ValueError("budget_usd must be greater than zero")
+    if repetitions <= 0:
+        raise ValueError("repetitions must be greater than zero")
     # A shared monetary budget cannot be enforced safely while multiple unknown-cost
     # cases start concurrently. Budgeted release runs therefore serialize case starts.
     semaphore = asyncio.Semaphore(1 if budget_usd is not None else max(1, concurrency))
     spent_cost_usd = 0.0
     budget_exhausted = False
 
-    async def execute(case: EvalCase) -> dict[str, Any]:
+    async def execute(case: EvalCase, repeat_index: int) -> dict[str, Any]:
         nonlocal budget_exhausted, spent_cost_usd
         queued_at = time.perf_counter()
         execution_started: float | None = None
@@ -64,6 +68,7 @@ async def run_online_cases(
                     finished = time.perf_counter()
                     return {
                         "case_id": case.case_id,
+                        "repeat_index": repeat_index,
                         "passed": False,
                         "metrics": {},
                         "issues": ["generation skipped: run cost budget exhausted"],
@@ -90,6 +95,7 @@ async def run_online_cases(
                     if case.tools is not None
                     else await grade_artifact(case, artifact)
                 )
+                result["repeat_index"] = repeat_index
                 candidate_cost = generated.get("cost_usd")
                 total_case_cost = (
                     max(float(candidate_cost), 0.0)
@@ -153,20 +159,28 @@ async def run_online_cases(
                     result["generator_metadata"] = metadata
                 if artifacts_dir:
                     artifacts_dir.mkdir(parents=True, exist_ok=True)
-                    (artifacts_dir / f"{case.case_id}.json").write_text(
+                    artifact_stem = (
+                        case.case_id
+                        if repetitions == 1
+                        else f"{case.case_id}.repeat-{repeat_index:02d}"
+                    )
+                    (artifacts_dir / f"{artifact_stem}.json").write_text(
                         json.dumps(artifact, ensure_ascii=False, indent=2) + "\n",
                         encoding="utf-8",
                     )
                     metadata = result.get("generator_metadata", {})
-                    (artifacts_dir / f"{case.case_id}.audit.json").write_text(
+                    audit_payload = {
+                        "case_id": case.case_id,
+                        "raw_coder_output": metadata.get("raw_coder_output", {}),
+                        "normalization_report": metadata.get("normalization_report", {}),
+                        "normalized_artifact": artifact,
+                        "final_decision": result.get("final_decision", {}),
+                    }
+                    if repetitions > 1:
+                        audit_payload["repeat_index"] = repeat_index
+                    (artifacts_dir / f"{artifact_stem}.audit.json").write_text(
                         json.dumps(
-                            {
-                                "case_id": case.case_id,
-                                "raw_coder_output": metadata.get("raw_coder_output", {}),
-                                "normalization_report": metadata.get("normalization_report", {}),
-                                "normalized_artifact": artifact,
-                                "final_decision": result.get("final_decision", {}),
-                            },
+                            audit_payload,
                             ensure_ascii=False,
                             indent=2,
                         )
@@ -194,6 +208,7 @@ async def run_online_cases(
             ) if execution_started is not None else 0.0
             return {
                 "case_id": case.case_id,
+                "repeat_index": repeat_index,
                 "passed": False,
                 "metrics": {},
                 "issues": [f"generation failed: {type(exc).__name__}: {exc}"],
@@ -208,8 +223,38 @@ async def run_online_cases(
                 ),
             }
 
-    results = await asyncio.gather(*(execute(case) for case in cases))
+    results = await asyncio.gather(
+        *(
+            execute(case, repeat_index)
+            for case in cases
+            for repeat_index in range(1, repetitions + 1)
+        )
+    )
     summary = _aggregate(results, len(cases))
+    outcomes_by_case: defaultdict[str, list[bool]] = defaultdict(list)
+    for result in results:
+        outcomes_by_case[str(result.get("case_id"))].append(bool(result.get("passed")))
+    flaky_case_ids = sorted(
+        case_id
+        for case_id, outcomes in outcomes_by_case.items()
+        if len(set(outcomes)) > 1
+    )
+    stable_pass_case_count = sum(
+        bool(outcomes) and all(outcomes)
+        for outcomes in outcomes_by_case.values()
+    )
+    summary.update({
+        "repetition_count": repetitions,
+        "attempt_count": len(results),
+        "evaluated_case_count": len(outcomes_by_case),
+        "missing_case_count": max(0, len(cases) - len(outcomes_by_case)),
+        "stable_pass_case_count": stable_pass_case_count,
+        "stable_pass_rate": round(stable_pass_case_count / len(cases), 4) if cases else 0.0,
+        "flaky_case_count": len(flaky_case_ids),
+        "flaky_case_ids": flaky_case_ids,
+        "flaky_rate": round(len(flaky_case_ids) / len(cases), 4) if cases else 0.0,
+    })
+    summary["missing_artifacts"] = summary["missing_case_count"]
     # `latency_ms` is retained as a compatibility alias, but percentile metrics
     # deliberately use processing time after semaphore acquisition.  In budgeted
     # runs the semaphore serializes cases, so timing before acquisition would
@@ -309,6 +354,26 @@ async def run_online_cases(
         summary["algorithm_trace_compiled_frames"] = compiled_frames
         summary["algorithm_trace_event_frames"] = event_frames
         summary["algorithm_trace_compilation_issue_count"] = compilation_issues
+    sorting_reports = [
+        item.get("generator_metadata", {}).get("sorting_trace_compilation")
+        for item in results
+        if isinstance(item.get("generator_metadata"), dict)
+    ]
+    sorting_reports = [
+        report for report in sorting_reports if isinstance(report, dict) and report
+    ]
+    if sorting_reports:
+        summary["sorting_trace_compilation_case_count"] = len(sorting_reports)
+        summary["sorting_trace_compiled_frames"] = sum(
+            int(report.get("frames_compiled", 0))
+            for report in sorting_reports
+            if isinstance(report.get("frames_compiled", 0), (int, float))
+        )
+        summary["sorting_trace_compilation_issue_count"] = sum(
+            len(report.get("issues", []))
+            for report in sorting_reports
+            if isinstance(report.get("issues"), list)
+        )
     return {
         "schema_version": "1.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -328,10 +393,11 @@ def _load_generator(spec: str) -> Generator:
     return generator
 
 
-def _report_exit_code(report: dict[str, Any]) -> int:
+def _report_exit_code(report: dict[str, Any], *, fail_on_flaky: bool = False) -> int:
     passed = report["summary"]["passed_cases"] == len(report["results"])
     within_budget = not report["summary"].get("budget_exceeded", False)
-    return 0 if passed and within_budget else 1
+    flaky_ok = not fail_on_flaky or report["summary"].get("flaky_rate", 0.0) == 0
+    return 0 if passed and within_budget and flaky_ok else 1
 
 
 def _sha256_file(path: Path) -> str:
@@ -366,6 +432,17 @@ def main() -> int:
     )
     parser.add_argument("--judge-generator", help="Async judge as module:function")
     parser.add_argument("--judge-model")
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="repeat every selected case N times for stability/flaky-rate measurement",
+    )
+    parser.add_argument(
+        "--fail-on-flaky",
+        action="store_true",
+        help="return a failing exit code when any repeated case has mixed outcomes",
+    )
     args = parser.parse_args()
 
     if os.getenv("EDUFLOW_ALLOW_ONLINE_EVAL") != "1":
@@ -374,6 +451,8 @@ def main() -> int:
         parser.error("--judge-generator and --judge-model must be provided together")
     if args.judge_model and args.judge_model == args.model:
         parser.error("judge model must differ from candidate model")
+    if args.repetitions <= 0:
+        parser.error("--repetitions must be greater than zero")
 
     all_cases = load_cases(args.dataset)
     if args.offset < 0:
@@ -411,15 +490,17 @@ def main() -> int:
             "temperature_policy": "eval_deterministic",
             "algorithm_trace_schema": "algorithm-trace-v1",
             "normalization_enabled": True,
+            "repetitions": args.repetitions,
         },
         budget_usd=args.budget_usd,
         judge=_load_generator(args.judge_generator) if args.judge_generator else None,
+        repetitions=args.repetitions,
     ))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    return _report_exit_code(report)
+    return _report_exit_code(report, fail_on_flaky=args.fail_on_flaky)
 
 
 if __name__ == "__main__":

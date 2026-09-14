@@ -48,6 +48,16 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
     artifact = state.get("dsl")
     if not isinstance(artifact, dict):
         raise TypeError("production workflow returned no DSL artifact")
+    # The benchmark oracle is authoritative input data. Re-run only the
+    # deterministic sorting compiler here so the model never becomes the
+    # source of truth for intermediate or final array states.
+    if case.oracle is not None and case.oracle.kind == "sorted_array":
+        from tools.algorithm_trace_compiler import compile_algorithm_trace
+
+        artifact = compile_algorithm_trace(
+            artifact,
+            algorithm_input=case.oracle.input,
+        )
     # The production graph intentionally has deterministic fallbacks for user
     # experience.  An online benchmark must not count those fallbacks as a
     # successful model run when the provider is unavailable (for example HTTP
@@ -74,6 +84,7 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
             "normalization_report": artifact.get("normalization_report") or {},
             "quality_report": state.get("quality_report") or {},
             "algorithm_trace_compilation": artifact.get("algorithm_trace_compilation") or {},
+            "sorting_trace_compilation": artifact.get("sorting_trace_compilation") or {},
             "candidate_latency_ms": round((time.perf_counter() - started) * 1000, 2),
             # Keep evidence provenance outside the artifact file as auditable
             # runner metadata while the DSL itself still carries the bounded

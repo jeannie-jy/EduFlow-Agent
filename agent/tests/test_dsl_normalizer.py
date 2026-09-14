@@ -202,3 +202,51 @@ def test_topic_inference_does_not_mark_concept_only_comparison_frame_as_trace():
 
     assert "schema_version" not in normalized["frames"][0]["state_snapshot"]
     assert "algorithm" not in normalized["frames"][0]["state_snapshot"]
+
+
+def test_normalize_graph_fragments_support_pair_edges_and_label_to_id_mapping():
+    source = {
+        "project_id": "graph-fragment-test",
+        "topic": "BFS 广度优先搜索",
+        "frames": [{
+            "frame_id": "f_001",
+            "title": "从 A 开始",
+            "visual_objects": [
+                {"type": "node", "id": "n-a", "label": "A"},
+                {"type": "node", "id": "n-b", "label": "B"},
+                {"type": "edge", "id": "e-ab", "source": "A", "target": "B"},
+                {
+                    "type": "graph",
+                    "id": "graph-fragment",
+                    "nodes": [
+                        {"id": "n-a", "label": "A"},
+                        {"id": "n-b", "label": "B"},
+                        {"id": "n-c", "label": "C"},
+                    ],
+                    "edges": [["A", "B"], {"from": "B", "to": "C"}],
+                },
+            ],
+            "state_snapshot": {
+                "visited": ["A"],
+                "queue": ["B"],
+                "predecessor": {"A": None, "B": "A"},
+            },
+        }],
+    }
+
+    normalized = normalize_dsl(source)
+    frame = normalized["frames"][0]
+    graph = next(item for item in frame["visual_objects"] if item["type"] == "graph")
+
+    assert graph["id"] == "graph-fragment"
+    assert {node["id"] for node in graph["nodes"]} == {"n-a", "n-b", "n-c"}
+    assert {(
+        edge["source"], edge["target"], edge["weight"]
+    ) for edge in graph["edges"]} == {
+        ("n-a", "n-b", 1),
+        ("n-b", "n-c", 1),
+    }
+    assert frame["state_snapshot"]["visited"] == ["n-a"]
+    assert frame["state_snapshot"]["queue"] == [{"vertex": "n-b", "priority": None}]
+    assert frame["state_snapshot"]["predecessor"] == {"n-a": None, "n-b": "n-a"}
+    RenderScript.model_validate(normalized)
