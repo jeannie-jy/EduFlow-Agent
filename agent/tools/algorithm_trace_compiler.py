@@ -32,7 +32,6 @@ from tools.algorithm_simulator import (
 )
 from tools.sorting_trace_compiler import compile_sorting_trace
 
-
 _ALGORITHM_MARKERS = {
     "dijkstra": ("dijkstra",),
     "bellman_ford": ("bellman-ford", "bellman ford", "bellmanford"),
@@ -105,10 +104,7 @@ def _graph_edges(graph: dict[str, Any]) -> list[dict[str, Any]]:
 def _canonical_graph(graph: dict[str, Any]) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = []
     for node in _graph_nodes(graph):
-        if isinstance(node, dict):
-            vertex = node.get("id", node.get("label"))
-        else:
-            vertex = node
+        vertex = node.get("id", node.get("label")) if isinstance(node, dict) else node
         if vertex is not None and str(vertex) not in {item["id"] for item in nodes}:
             nodes.append({"id": str(vertex)})
     edges: list[dict[str, Any]] = []

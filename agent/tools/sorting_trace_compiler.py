@@ -14,7 +14,6 @@ from copy import deepcopy
 from numbers import Real
 from typing import Any
 
-
 _SORT_MARKERS = {
     "insertion_sort": ("insertion sort", "插入排序"),
     "bubble_sort": ("bubble sort", "冒泡排序"),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -95,17 +95,16 @@ async def test_stream_id_cannot_be_reused_for_another_project(test_db):
     async def source():
         yield {"event": "done", "data": "{}"}
 
-    with patch("db.database.async_session_factory", factory):
-        with pytest.raises(PermissionError):
-            _ = [
-                event
-                async for event in durable_sse_stream(
-                    source(),
-                    stream_id=str(stream_id),
-                    project_id=str(second_project),
-                    kind="generation",
-                )
-            ]
+    with patch("db.database.async_session_factory", factory), pytest.raises(PermissionError):
+        _ = [
+            event
+            async for event in durable_sse_stream(
+                source(),
+                stream_id=str(stream_id),
+                project_id=str(second_project),
+                kind="generation",
+            )
+        ]
 
 
 @pytest.mark.asyncio
@@ -114,7 +113,7 @@ async def test_active_stream_discovery_returns_latest_safe_replay_url(test_db):
 
     project_id = uuid.uuid4()
     older_id, latest_id = uuid.uuid4(), uuid.uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     test_db.add(Project(id=project_id, title="Discover stream"))
     test_db.add_all(
         [

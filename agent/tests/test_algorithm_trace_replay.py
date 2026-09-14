@@ -10,7 +10,6 @@ from tools.algorithm_trace_compiler import compile_algorithm_trace
 from tools.normalize_dsl import normalize_dsl
 from tools.validate_dsl import stabilize_algorithm_trace
 
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "algorithm_replays"
 
 

@@ -7,8 +7,9 @@ Revises: 0008_export_retry_backoff
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0009_background_jobs"
 down_revision: str | None = "0008_export_retry_backoff"

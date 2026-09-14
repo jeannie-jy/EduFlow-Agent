@@ -6,9 +6,8 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -37,7 +36,7 @@ async def _ensure_stream(stream_id: uuid.UUID, project_id: uuid.UUID, kind: str)
     from db.models import SSEStream
 
     async with async_session_factory() as session:
-        retention_cutoff = datetime.now(timezone.utc) - timedelta(
+        retention_cutoff = datetime.now(UTC) - timedelta(
             hours=get_settings().sse_event_retention_hours
         )
         await session.execute(
@@ -84,7 +83,7 @@ async def _claim(stream_id: uuid.UUID, producer_id: str) -> bool:
     from db.models import SSEStream
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         result = await session.execute(
             update(SSEStream)
@@ -119,7 +118,7 @@ async def _renew(stream_id: uuid.UUID, producer_id: str) -> bool:
                 SSEStream.status == "active",
                 SSEStream.producer_id == producer_id,
             )
-            .values(lease_expires_at=datetime.now(timezone.utc) + timedelta(
+            .values(lease_expires_at=datetime.now(UTC) + timedelta(
                 seconds=settings.sse_stream_lease_seconds
             ))
         )
@@ -181,7 +180,7 @@ async def _append(
         stream.last_event_id = event_id
         if event_name in STREAM_END_EVENTS:
             stream.status = "completed"
-            stream.completed_at = datetime.now(timezone.utc)
+            stream.completed_at = datetime.now(UTC)
             stream.producer_id = None
             stream.lease_expires_at = None
         await session.commit()

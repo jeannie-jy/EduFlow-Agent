@@ -9,7 +9,7 @@ import re
 import secrets
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -79,7 +79,7 @@ def _challenge_signature(payload: str) -> str:
 
 def _issue_registration_challenge() -> dict[str, object]:
     settings = get_settings()
-    expires = int(datetime.now(timezone.utc).timestamp()) + 600
+    expires = int(datetime.now(UTC).timestamp()) + 600
     payload = f"{secrets.token_urlsafe(18)}.{expires}.{settings.auth_registration_challenge_difficulty}"
     encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     signature = _challenge_signature(payload) if settings.auth_registration_challenge_secret else "dev"
@@ -102,7 +102,7 @@ def _validate_registration_challenge(challenge: str | None, solution: str | None
         raise HTTPException(status_code=422, detail="Invalid registration challenge") from exc
     if not settings.auth_registration_challenge_secret or not hmac.compare_digest(signature, _challenge_signature(payload)):
         raise HTTPException(status_code=422, detail="Invalid registration challenge")
-    if expires < int(datetime.now(timezone.utc).timestamp()) or difficulty != settings.auth_registration_challenge_difficulty:
+    if expires < int(datetime.now(UTC).timestamp()) or difficulty != settings.auth_registration_challenge_difficulty:
         raise HTTPException(status_code=422, detail="Expired registration challenge")
     if len(solution) > 100 or not hashlib.sha256(f"{nonce}{solution}".encode()).hexdigest().startswith("0" * difficulty):
         raise HTTPException(status_code=422, detail="Registration challenge failed")
@@ -139,7 +139,7 @@ async def _issue_session(user: User, response: Response, session: AsyncSession) 
     settings = get_settings()
     token = new_session_token()
     csrf_token = new_session_token()
-    expires = datetime.now(timezone.utc) + timedelta(days=settings.auth_session_days)
+    expires = datetime.now(UTC) + timedelta(days=settings.auth_session_days)
     session.add(
         AuthSession(
             id=uuid.uuid4(),
@@ -206,7 +206,7 @@ async def get_current_user(
         .join(AuthSession, AuthSession.user_id == User.id)
         .where(
             AuthSession.token_hash == hash_session_token(token),
-            AuthSession.expires_at > datetime.now(timezone.utc),
+            AuthSession.expires_at > datetime.now(UTC),
             User.is_active.is_(True),
         )
     )
@@ -332,7 +332,7 @@ async def register(
         role="student",
         is_active=True,
         email_verified_at=(
-            None if settings.auth_require_email_verification else datetime.now(timezone.utc)
+            None if settings.auth_require_email_verification else datetime.now(UTC)
         ),
     )
     session.add(user)
@@ -488,7 +488,7 @@ async def verify_email(
 ) -> dict[str, str]:
     from db.models import AuthOneTimeToken
     from services.account_email import hash_one_time_token
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token = await session.scalar(select(AuthOneTimeToken).where(
         AuthOneTimeToken.token_hash == hash_one_time_token(body.token),
         AuthOneTimeToken.purpose == "verify_email",
@@ -538,7 +538,7 @@ async def reset_password(
         raise HTTPException(status_code=422, detail="Password must contain letters and numbers")
     from db.models import AuthOneTimeToken
     from services.account_email import hash_one_time_token
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token = await session.scalar(select(AuthOneTimeToken).where(
         AuthOneTimeToken.token_hash == hash_one_time_token(body.token),
         AuthOneTimeToken.purpose == "reset_password",

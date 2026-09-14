@@ -14,7 +14,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -110,7 +110,7 @@ async def upload_material(
         media_type=ALLOWED_EXTENSIONS[suffix],
         size_bytes=len(contents),
         status="uploaded",
-        expires_at=datetime.now(timezone.utc)
+        expires_at=datetime.now(UTC)
         + timedelta(days=settings.material_retention_days),
     )
     session.add(material)

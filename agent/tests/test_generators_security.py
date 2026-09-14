@@ -10,11 +10,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 
 # ============================================================================
 # 注入向量库
@@ -67,10 +67,8 @@ def _ensure_registered():
         "generators.frames_generator",
         "generators.video_generator",
     ):
-        try:
+        with contextlib.suppress(Exception):
             importlib.reload(__import__(mod_name, fromlist=[""]))
-        except Exception:
-            pass
 
 
 @pytest.fixture(autouse=True)
@@ -266,8 +264,9 @@ class TestOutputValidationSecurity:
 
     def test_all_validators_handle_massive_output(self):
         """各生成器的 validate 处理超大输出时不 OOM 或超时。"""
-        from generators.registry import get_generator
         import time
+
+        from generators.registry import get_generator
 
         gen_frames = get_generator("frames")
         massive = {
@@ -409,7 +408,7 @@ class TestRegistrySecurity:
 
     def test_cannot_register_non_generator(self):
         """非 ModuleGenerator 对象注册到 get_* 查询时不会出错。"""
-        from generators.registry import register_generator, list_generators
+        from generators.registry import register_generator
 
         # 注册一个不完全的对象
         class BadObj:
@@ -438,7 +437,11 @@ class TestRegistrySecurity:
     def test_concurrent_registration_is_safe(self):
         """并发注册同一 module_id 不导致数据损坏。"""
         import threading
-        from generators.registry import register_generator, get_generator, clear_registry
+
+        from generators.registry import (
+            clear_registry,
+            register_generator,
+        )
 
         clear_registry()
 
@@ -464,10 +467,8 @@ class TestRegistrySecurity:
         # 前两个 import 已自动注册，这里仅测试并发安全性
         def register(n):
             for i in range(10):
-                try:
+                with contextlib.suppress(Exception):
                     register_generator(ThreadGen(n * 100 + i))
-                except Exception:
-                    pass
 
         threads = [threading.Thread(target=register, args=(t,)) for t in range(4)]
         for t in threads:

@@ -12,10 +12,11 @@ import hashlib
 import hmac
 import os
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterator, Literal
+from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -287,7 +288,7 @@ async def resolve_user_credentials(
         if row is None:
             return None
         endpoint, model = _endpoint_model(row.provider, row.purpose)
-        row.last_used_at = datetime.now(timezone.utc)
+        row.last_used_at = datetime.now(UTC)
         return CredentialContext(
             credential_id=row.id,
             version=row.version,

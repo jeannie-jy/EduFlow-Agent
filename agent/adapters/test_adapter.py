@@ -19,8 +19,13 @@ from pathlib import Path
 # 确保可以 import adapters
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from adapters.manim_adapter import convert_dsl_to_manim, _HAS_LATEX, _find_ffmpeg, _has_cjk
-from adapters.manim_validator import validate_script, has_errors
+from adapters.manim_adapter import (
+    _HAS_LATEX,
+    _find_ffmpeg,
+    _has_cjk,
+    convert_dsl_to_manim,
+)
+from adapters.manim_validator import has_errors, validate_script
 
 # ═══════════════════════════════════════════════════════════════
 # Test DSLs
@@ -231,7 +236,7 @@ def test_render(dsl: dict | None = None, timeout: int = 120) -> str | None:
     mp4_files = [m for m in mp4_files if "partial_movie_files" not in str(m)]
 
     if not mp4_files:
-        print(f"  [FAIL] 渲染完成但未找到 MP4")
+        print("  [FAIL] 渲染完成但未找到 MP4")
         shutil.rmtree(tmpdir, ignore_errors=True)
         return None
 
@@ -255,7 +260,7 @@ def check_dsl_file(dsl_path: str) -> int:
     print(f"检测: {dsl_path}")
 
     try:
-        with open(dsl_path, "r", encoding="utf-8") as f:
+        with open(dsl_path, encoding="utf-8") as f:
             dsl = json.load(f)
     except (json.JSONDecodeError, FileNotFoundError) as e:
         print(f"[FATAL] 无法读取 DSL: {e}")
@@ -269,7 +274,7 @@ def check_dsl_file(dsl_path: str) -> int:
 
     issues = validate_script(main_py)
     if not issues:
-        print(f"  [OK] 校验通过，无问题")
+        print("  [OK] 校验通过，无问题")
         return 0
 
     errors = [i for i in issues if i["severity"] == "error"]
@@ -373,7 +378,7 @@ if __name__ == "__main__":
 
     # ── 渲染测试 ──
     if do_render:
-        print(f"\n--- Manim 渲染测试 ---")
+        print("\n--- Manim 渲染测试 ---")
         mp4 = test_render()
         if mp4 is None:
             print("\n[FAIL] 渲染测试失败")
@@ -381,9 +386,9 @@ if __name__ == "__main__":
         else:
             print(f"\n[OK] 渲染测试通过: {mp4}")
             # 保留产物供检查
-            print(f"  (产物保留，可手动检查)")
+            print("  (产物保留，可手动检查)")
         # 也要测 SAMPLE_DSL 渲染（包含更多类型）
-        print(f"\n--- SAMPLE_DSL 渲染测试 ---")
+        print("\n--- SAMPLE_DSL 渲染测试 ---")
         mp4_2 = test_render(SAMPLE_DSL)
         if mp4_2 is None:
             print("\n[FAIL] SAMPLE_DSL 渲染失败")

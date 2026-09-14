@@ -7,6 +7,7 @@ Revises: 0009_background_jobs
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0010_user_roles"

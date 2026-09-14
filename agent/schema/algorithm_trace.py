@@ -11,7 +11,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 AlgorithmName = Literal["dijkstra", "bellman_ford", "bfs", "dfs", "generic"]
 AlgorithmPhase = Literal[
     "intro",
@@ -157,10 +156,10 @@ def validate_algorithm_snapshot(snapshot: Any) -> list[str]:
 
 __all__ = [
     "AlgorithmEvent",
-    "EdgeScanEntry",
     "AlgorithmName",
     "AlgorithmPhase",
     "AlgorithmState",
+    "EdgeScanEntry",
     "QueueEntry",
     "is_algorithm_snapshot",
     "validate_algorithm_snapshot",

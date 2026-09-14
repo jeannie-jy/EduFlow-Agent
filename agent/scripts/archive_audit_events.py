@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -39,7 +39,7 @@ async def async_main() -> int:
         max_events = args.max_events or settings.audit_archive_max_events
         if retention_days < 7 or max_events < 1 or max_events > 100000:
             raise ValueError("retention-days must be >=7 and max-events must be 1..100000")
-        before = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        before = datetime.now(UTC) - timedelta(days=retention_days)
         async with async_session_factory() as session:
             if not args.apply:
                 count = int(await session.scalar(

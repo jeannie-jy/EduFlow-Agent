@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -67,7 +67,7 @@ async def save_version(
         version=max_ver + 1,
         dsl_snapshot=deepcopy(compacted_dsl),
         change_summary=change_summary
-        or f"Auto-saved at {datetime.now(timezone.utc).isoformat()}",
+        or f"Auto-saved at {datetime.now(UTC).isoformat()}",
     )
     session.add(version)
     await session.flush()

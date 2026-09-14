@@ -11,8 +11,8 @@ import logging
 import re
 from typing import Any
 
-from agents.prompts import MANIM_CODER_SYSTEM_PROMPT
 from adapters.manim_adapter import generate_render_config, generate_subtitles_srt
+from agents.prompts import MANIM_CODER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -472,7 +472,7 @@ async def convert_dsl_to_manim_llm(
     Raises:
         ManimCodeValidationError: LLM 调用或校验失败（携带失败脚本供调试）
     """
-    from adapters.manim_validator import validate_script, has_errors
+    from adapters.manim_validator import has_errors, validate_script
 
     user_message = _build_user_message(dsl, teaching_plan)
 

@@ -14,14 +14,13 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ============================================================================
 # Setup
 # ============================================================================
 
 
 def _ensure_quiz_and_comparison():
-    from generators.registry import register_generator, has_generator
+    from generators.registry import has_generator, register_generator
     if not has_generator("quiz"):
         from generators.quiz_generator import QuizGenerator
         register_generator(QuizGenerator())
@@ -175,7 +174,8 @@ class TestOutputValidationSecurity:
     def test_comparison_handles_deeply_nested_dict(self, gen_cmp):
         """含深度嵌套对象的畸形算法数据。"""
         def make_deep(n):
-            if n == 0: return "leaf"
+            if n == 0:
+                return "leaf"
             return {"nested": make_deep(n - 1)}
         output = {
             "topic": "T",

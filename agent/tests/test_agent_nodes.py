@@ -7,17 +7,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tests.conftest import (
     AgentStateFactory,
-    DSLFactory,
-    MockLLMResponse,
-    create_mock_llm_response,
 )
-
 
 # ============================================================================
 # Planner Node
@@ -72,7 +68,6 @@ class TestPlannerNode:
     async def test_planning_with_materials(self):
         """带材料输入时应将材料内容包含在上下文中。"""
         from agents.nodes import planner_node
-        from agents.prompts import PLANNER_SYSTEM_PROMPT
 
         plan_output = {
             "objectives": ["理解图算法"],
@@ -238,6 +233,7 @@ class TestPlannerNode:
     async def test_output_schema_has_required_fields(self):
         """Planner 的输出 schema 应包含所有必需字段。"""
         import inspect
+
         from agents.nodes import planner_node
 
         source = inspect.getsource(planner_node)
@@ -252,6 +248,7 @@ class TestPlannerNode:
     def test_planner_limits_are_explicit_in_source(self):
         """Planner schema must bound arrays so one request cannot grow unbounded."""
         import inspect
+
         from agents.nodes import planner_node
 
         source = inspect.getsource(planner_node)
@@ -361,6 +358,7 @@ class TestKnowledgeNode:
     def test_knowledge_limits_are_explicit_in_source(self):
         """Knowledge graph arrays must have bounded cardinality."""
         import inspect
+
         from agents.nodes import knowledge_node
 
         source = inspect.getsource(knowledge_node)

@@ -12,7 +12,7 @@ import os
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +137,7 @@ async def run_online_cases(
                                 judge_cost = max(float(judged["cost_usd"]), 0.0)
                                 total_case_cost += judge_cost
                                 spent_cost_usd += judge_cost
-                        except Exception as exc:  # noqa: BLE001 - preserve candidate accounting
+                        except Exception as exc:
                             result["passed"] = False
                             result.setdefault("issues", []).append(
                                 f"judge failed: {type(exc).__name__}: {exc}"
@@ -201,7 +201,7 @@ async def run_online_cases(
                     (finished - queued_at) * 1000, 2
                 )
                 return result
-        except Exception as exc:  # noqa: BLE001 - isolate each external case failure
+        except Exception as exc:
             finished = time.perf_counter()
             processing_latency_ms = round(
                 (finished - execution_started) * 1000, 2
@@ -376,7 +376,7 @@ async def run_online_cases(
         )
     return {
         "schema_version": "1.0",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "run": {"git_sha": _git_sha(), "mode": "online", **(run_metadata or {})},
         "summary": summary,
         "results": results,

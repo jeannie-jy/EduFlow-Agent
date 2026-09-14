@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -91,7 +91,7 @@ def _lexical_search_terms(query: str) -> list[str]:
     # by length can discard the exact ``依赖``/``倒置`` anchors while retaining
     # longer question fragments that do not occur in the document.
     long_terms = sorted((term for term in eligible if len(term) >= 3), key=lambda item: (-len(item), item))[:12]
-    short_terms = sorted((term for term in eligible if len(term) == 2))[:12]
+    short_terms = sorted(term for term in eligible if len(term) == 2)[:12]
     return long_terms + short_terms
 
 

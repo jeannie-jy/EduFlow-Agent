@@ -5,13 +5,22 @@ from __future__ import annotations
 import hashlib
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from db.models import ExportJobModel, Material, Project, UsageBucket, UsageLedger, UserQuotaPolicy, WorkflowRun
+from db.models import (
+    ExportJobModel,
+    Material,
+    Project,
+    UsageBucket,
+    UsageLedger,
+    UserQuotaPolicy,
+    WorkflowRun,
+)
+
 
 @contextmanager
 def user_llm_limits_scope(limits: tuple[int, float]):
@@ -27,7 +36,7 @@ async def resolve_user_llm_limits(session: AsyncSession, user_id: uuid.UUID) -> 
     monthly_cap = overrides.get("monthly_reference_cost_usd")
     max_cost = float(settings.llm_request_max_cost_usd)
     if monthly_cap is not None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         used = float(await session.scalar(select(func.coalesce(func.sum(WorkflowRun.estimated_cost_usd), 0.0)).join(
             Project, Project.id == WorkflowRun.project_id
@@ -44,7 +53,7 @@ async def ensure_monthly_reference_cost_capacity(session: AsyncSession, *, user_
     cap = (policy.limits or {}).get("monthly_reference_cost_usd") if policy else None
     if cap is None:
         return
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     used = float(await session.scalar(select(func.coalesce(func.sum(WorkflowRun.estimated_cost_usd), 0.0)).join(
         Project, Project.id == WorkflowRun.project_id
@@ -146,7 +155,7 @@ async def consume_quota(
     if existing is not None:
         return False
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     starts = _period_starts(now)
     for period, limit in _limits(resource, policy.limits if policy else None).items():
         bucket = await session.scalar(
@@ -203,7 +212,7 @@ async def reserve_quota(
     if existing is not None:
         return False
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     starts = _period_starts(now)
     for period, limit in _limits(resource, policy.limits if policy else None).items():
         bucket = await session.scalar(
@@ -376,7 +385,7 @@ async def ensure_artifact_capacity(
 
 
 async def usage_snapshot(session: AsyncSession, user_id: uuid.UUID) -> dict[str, object]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     starts = _period_starts(now)
     rows = list((await session.scalars(select(UsageBucket).where(
         UsageBucket.user_id == user_id,

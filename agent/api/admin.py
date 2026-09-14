@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -124,7 +124,7 @@ async def list_users(
             select(AuthSession.user_id, func.count(AuthSession.id))
             .where(
                 AuthSession.user_id.in_([user.id for user in users]),
-                AuthSession.expires_at > datetime.now(timezone.utc),
+                AuthSession.expires_at > datetime.now(UTC),
             )
             .group_by(AuthSession.user_id)
         )
@@ -201,7 +201,7 @@ async def _session_count(session: AsyncSession, user_id: uuid.UUID) -> int:
         await session.scalar(
             select(func.count(AuthSession.id)).where(
                 AuthSession.user_id == user_id,
-                AuthSession.expires_at > datetime.now(timezone.utc),
+                AuthSession.expires_at > datetime.now(UTC),
             )
         )
         or 0

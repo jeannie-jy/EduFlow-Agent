@@ -7,8 +7,9 @@ Revises: 0004_auth_sessions
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0005_material_ownership"
 down_revision: str | None = "0004_auth_sessions"

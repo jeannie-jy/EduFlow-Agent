@@ -5,9 +5,9 @@
 
 from fastapi import APIRouter, Depends
 
+from .account import router as account_router
 from .admin import router as admin_router
 from .audit import router as audit_router
-from .account import router as account_router
 from .auth import require_project_owner
 from .auth import router as auth_router
 from .export import router as export_router

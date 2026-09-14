@@ -276,10 +276,7 @@ async def call_llm(
     if choice.message.tool_calls:
         for tc in choice.message.tool_calls:
             parsed = _extract_and_parse_json(tc.function.arguments)
-            if parsed is not None:
-                arguments = parsed
-            else:
-                arguments = {"raw": tc.function.arguments}
+            arguments = parsed if parsed is not None else {"raw": tc.function.arguments}
             tool_calls.append({
                 "id": tc.id,
                 "name": tc.function.name,
@@ -409,11 +406,15 @@ async def call_llm_structured(
             response, used_fallback = await execute_llm_call_with_fallback(
                 _primary_endpoint(settings),
                 "structured",
-                lambda: client.chat.completions.create(**primary_kwargs),
+                lambda primary_kwargs=primary_kwargs: client.chat.completions.create(
+                    **primary_kwargs
+                ),
                 fallback_provider=settings.llm_backup_endpoint if backup_client else None,
                 fallback_call=(
-                    lambda: backup_client.chat.completions.create(**backup_kwargs)
-                    if backup_client
+                    lambda backup_client=backup_client, backup_kwargs=backup_kwargs: (
+                        backup_client.chat.completions.create(**backup_kwargs)
+                    )
+                    if backup_client is not None
                     else None
                 ),
             )
@@ -430,11 +431,15 @@ async def call_llm_structured(
             response, used_fallback = await execute_llm_call_with_fallback(
                 _primary_endpoint(settings),
                 "structured.json_object_fallback",
-                lambda: client.chat.completions.create(**primary_kwargs),
+                lambda primary_kwargs=primary_kwargs: client.chat.completions.create(
+                    **primary_kwargs
+                ),
                 fallback_provider=settings.llm_backup_endpoint if backup_client else None,
                 fallback_call=(
-                    lambda: backup_client.chat.completions.create(**backup_kwargs)
-                    if backup_client
+                    lambda backup_client=backup_client, backup_kwargs=backup_kwargs: (
+                        backup_client.chat.completions.create(**backup_kwargs)
+                    )
+                    if backup_client is not None
                     else None
                 ),
             )
@@ -602,9 +607,7 @@ def _looks_truncated(text: str) -> bool:
     if text.endswith("}") or text.endswith("]"):
         return False
     # 以逗号、冒号、引号、字母结尾 → 可能被截断
-    if text[-1] in ',:"' or text[-1].isalpha():
-        return True
-    return False
+    return bool(text[-1] in ',:"' or text[-1].isalpha())
 
 
 def _looks_like_json_object(text: str) -> bool:
@@ -661,10 +664,8 @@ def _fix_truncated_json(text: str) -> str:
     text = text.rstrip()
 
     # 去掉末尾截断的逗号/冒号
-    if text.endswith(","):
-        text = text[:-1]
-    if text.endswith(":"):
-        text = text[:-1]
+    text = text.removesuffix(",")
+    text = text.removesuffix(":")
 
     # 检测字符串是否未闭合（引号计数）
     in_string = False

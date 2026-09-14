@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_GATES = {
     "pass_rate": {"direction": "higher", "max_regression": 0.02, "severity": "error"},
     "dsl_schema_pass": {"direction": "higher", "max_regression": 0.0, "severity": "error"},

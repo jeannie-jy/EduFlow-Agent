@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from api.auth import (
     LoginRequest,
@@ -119,9 +119,8 @@ async def test_missing_cookie_is_rejected_when_auth_is_required():
     with patch(
         "api.auth.get_settings",
         return_value=MagicMock(auth_required=True),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await get_current_user(None, MagicMock())
+    ), pytest.raises(HTTPException) as exc:
+        await get_current_user(None, MagicMock())
     assert exc.value.status_code == 401
 
 

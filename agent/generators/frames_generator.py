@@ -12,8 +12,8 @@ import json
 import logging
 from typing import Any
 
-from tools.normalize_dsl import normalize_dsl
 from tools.algorithm_trace_compiler import compile_algorithm_trace
+from tools.normalize_dsl import normalize_dsl
 
 from .base import BaseGenerator
 from .registry import register_generator

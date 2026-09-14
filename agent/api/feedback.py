@@ -18,6 +18,7 @@ from db.database import get_session
 from db.models import User
 from schema.project import FeedbackRequest
 from services.audit import record_audit
+
 from .auth import get_current_user
 from .deps import ensure_project_access, parse_project_id
 
@@ -33,7 +34,8 @@ async def list_feedback(
     current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """查询项目的反馈列表。"""
-    from db.models import Feedback, Project as ProjectModel
+    from db.models import Feedback
+    from db.models import Project as ProjectModel
 
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
@@ -78,7 +80,8 @@ async def submit_feedback(
     - correction: 纠错，关联到具体帧，触发局部重生成
     - suggestion: 建议，记录但不自动触发修订
     """
-    from db.models import BackgroundJob, Feedback, Project as ProjectModel
+    from db.models import BackgroundJob, Feedback
+    from db.models import Project as ProjectModel
 
     pid = parse_project_id(project_id)
     project = await session.get(ProjectModel, pid)
@@ -126,8 +129,8 @@ async def submit_feedback(
     if should_reflect and project.dsl_snapshot:
         credential_ref = None
         if current_user is not None:
-            from db.models import ProviderCredential
             from config import get_settings
+            from db.models import ProviderCredential
             credential = await session.scalar(
                 select(ProviderCredential)
                 .where(

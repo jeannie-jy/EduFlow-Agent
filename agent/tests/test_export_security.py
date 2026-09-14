@@ -86,9 +86,8 @@ async def test_api_rejects_worker_mode_to_keep_execution_roles_separate():
     with patch(
         "api.export.get_settings",
         return_value=MagicMock(manim_execution_mode="worker"),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await create_export_job(str(uuid.uuid4()), ExportManimRequest(), session)
+    ), pytest.raises(HTTPException) as exc:
+        await create_export_job(str(uuid.uuid4()), ExportManimRequest(), session)
 
     assert exc.value.status_code == 503
     assert session.get.call_count == 0

@@ -9,7 +9,6 @@ from tools.algorithm_simulator import (
     simulate_dijkstra,
 )
 
-
 GRAPH = {
     "vertices": ["s", "a", "b", "c"],
     "edges": [

@@ -7,8 +7,9 @@ Revises: 0013_tool_call_traces
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0014_material_parse_jobs"
 down_revision: str | None = "0013_tool_call_traces"

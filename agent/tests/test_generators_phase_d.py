@@ -8,7 +8,7 @@ import pytest
 
 
 def _ensure_registered():
-    from generators.registry import register_generator, has_generator
+    from generators.registry import has_generator, register_generator
     if not has_generator("misconception"):
         from generators.misconception_generator import MisconceptionGenerator
         register_generator(MisconceptionGenerator())

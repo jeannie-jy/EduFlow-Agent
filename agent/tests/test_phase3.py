@@ -344,7 +344,7 @@ class TestVersionInputValidation:
         """恢复版本时 project_id 不匹配应拒绝。"""
         # 逻辑已在 restore_version 中实现，此测试验证设计
         # v is None or str(v.project_id) != project_id → 404
-        pass  # 逻辑覆盖，需要 mock 测试
+        # 逻辑覆盖，需要 mock 测试
 
 
 # ============================================================================

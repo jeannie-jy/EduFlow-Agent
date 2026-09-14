@@ -241,7 +241,6 @@ async def dispatch_modules(
                 from api.versions import save_version
                 from db.database import async_session_factory
                 from db.models import Project as ProjectModel
-
                 from services.project_persistence import (
                     merge_dsl_snapshot,
                     persist_frames_to_table,

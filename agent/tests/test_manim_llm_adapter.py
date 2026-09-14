@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock
 
+import pytest
+
 from adapters.manim_llm_adapter import (
-    ManimCodeValidationError,
     _CODE_TEXT_STYLE_KWARGS,
+    ManimCodeValidationError,
     _fix_code_indexing,
     _fix_code_object_access,
     _format_issues_with_context,
@@ -313,21 +314,21 @@ class TestStripCodeTextStyleKwargs:
         src = 'Code(code_string="a", font_size=24, language="python")'
         out = _strip_code_text_style_kwargs(src)
         assert "font_size" not in out
-        assert 'Code(code_string="a", language="python")' == out
+        assert out == 'Code(code_string="a", language="python")'
 
     def test_code_variable_rhs_stripped(self):
         """变量 RHS（真实失败模式 font_size=font_size）同样剥离。"""
         src = 'Code(code_string="a", font_size=font_size, language="python")'
         out = _strip_code_text_style_kwargs(src)
         assert "font_size" not in out
-        assert 'Code(code_string="a", language="python")' == out
+        assert out == 'Code(code_string="a", language="python")'
 
     def test_code_first_position_expression_rhs(self):
         """首位参数 + 表达式 RHS（font_size=FONT_SIZE - 4）也能干净移除。"""
         src = 'Code(font_size=FONT_SIZE - 4, language="python")'
         out = _strip_code_text_style_kwargs(src)
         assert "font_size" not in out
-        assert 'Code(language="python")' == out
+        assert out == 'Code(language="python")'
 
     def test_code_multiline_real_pattern(self):
         """真实导出脚本的多行 Code 调用（font_size 为最后一个参数）。"""

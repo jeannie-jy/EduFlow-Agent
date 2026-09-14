@@ -8,7 +8,6 @@ from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = "0022_knowledge_source_keys"
 down_revision: str | None = "0021_embedding_dimension"
 branch_labels: str | Sequence[str] | None = None

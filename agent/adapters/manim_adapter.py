@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -174,7 +174,7 @@ class ManimScriptGenerator:
             '"""Auto-generated Manim script by EduFlow-Agent."""',
             f"# Project: {self.project_id}",
             f"# Topic: {self.topic}",
-            f"# Generated: {datetime.now(timezone.utc).isoformat()}",
+            f"# Generated: {datetime.now(UTC).isoformat()}",
             f"# Frames: {len(self.frames)}",
             "",
             "from manim import *",
@@ -481,7 +481,7 @@ def generate_render_config(
         "pixel_height": q["pixel_height"],
         "pixel_width": q["pixel_width"],
         "include_subtitles": include_subtitles,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
     }
 
 

@@ -156,7 +156,7 @@ def _should_reflect(state: AgentState) -> Literal["reflection", "__end__"]:
 # ── Graph 构建 ──────────────────────────────────────────────
 
 
-def build_graph(checkpointer=None) -> "CompiledStateGraph":
+def build_graph(checkpointer=None) -> CompiledStateGraph:
     """构建 LangGraph StateGraph。
 
     流程:
@@ -233,7 +233,7 @@ def build_graph(checkpointer=None) -> "CompiledStateGraph":
 
 
 # 全局编译好的 graph 实例
-_graph: "CompiledStateGraph | None" = None
+_graph: CompiledStateGraph | None = None
 
 # Postgres checkpointer 的 AsyncExitStack（进程生命周期内持有连接，不退出）
 _checkpointer_stack = None
@@ -257,7 +257,7 @@ def _postgres_db_url() -> str:
     return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
-async def get_graph_async() -> "CompiledStateGraph":
+async def get_graph_async() -> CompiledStateGraph:
     """异步获取全局 Agent 编排图（在请求上下文中 await）。
 
     首次调用时初始化 Postgres checkpointer（跨请求/重启持久化 interrupt 状态）；
@@ -317,7 +317,7 @@ async def get_graph_async() -> "CompiledStateGraph":
     return get_graph()
 
 
-def get_graph() -> "CompiledStateGraph":
+def get_graph() -> CompiledStateGraph:
     """同步获取全局 Agent 编排图（无事件循环场景 / 测试）。
 
     使用已初始化的 checkpointer；未初始化时用 MemorySaver（同步可用）。

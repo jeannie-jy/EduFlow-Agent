@@ -11,11 +11,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 from unittest.mock import patch
 
 import pytest
-
 
 # ============================================================================
 # Helpers
@@ -29,10 +29,8 @@ def _ensure_registered():
         "generators.frames_generator",
         "generators.video_generator",
     ):
-        try:
+        with contextlib.suppress(Exception):
             importlib.reload(__import__(mod_name, fromlist=[""]))
-        except Exception:
-            pass
 
 
 @pytest.fixture(autouse=True)
@@ -262,7 +260,12 @@ class TestRegistryConcurrency:
         """并发 list 和 register 不导致竞态。"""
         import threading
         import time
-        from generators.registry import register_generator, list_generators, clear_registry
+
+        from generators.registry import (
+            clear_registry,
+            list_generators,
+            register_generator,
+        )
 
         clear_registry()
 

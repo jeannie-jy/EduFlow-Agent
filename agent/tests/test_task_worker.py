@@ -7,7 +7,7 @@ import hashlib
 import json
 import uuid
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -102,7 +102,7 @@ async def test_material_parse_endpoint_only_enqueues_durable_job():
         media_type="text/markdown",
         size_bytes=10,
         status="uploaded",
-        expires_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(UTC),
     )
     session = MagicMock()
     session.get = AsyncMock(return_value=material)
@@ -165,7 +165,7 @@ async def test_material_worker_parses_and_commits_only_while_holding_lease():
         status="running",
         worker_id=TASK_WORKER_ID,
         attempt_count=1,
-        lease_expires_at=datetime.now(timezone.utc),
+        lease_expires_at=datetime.now(UTC),
         completed_at=None,
     )
     write_material = SimpleNamespace(parsed_result=None, status="parse_queued")
@@ -387,7 +387,7 @@ async def test_claim_records_durable_attempt_and_lease():
     assert claimed["attempt_no"] == 1
     assert job.status == "running"
     assert job.worker_id == TASK_WORKER_ID
-    assert job.lease_expires_at > datetime.now(timezone.utc)
+    assert job.lease_expires_at > datetime.now(UTC)
     session.add.assert_called_once()
     session.commit.assert_awaited_once()
 
@@ -403,7 +403,7 @@ async def test_transient_task_failure_enters_retry_wait_with_backoff():
         worker_id=TASK_WORKER_ID,
         attempt_count=1,
         error_class=None,
-        lease_expires_at=datetime.now(timezone.utc),
+        lease_expires_at=datetime.now(UTC),
         completed_at=None,
         next_attempt_at=None,
     )
@@ -426,7 +426,7 @@ async def test_transient_task_failure_enters_retry_wait_with_backoff():
     assert queued.status == "queued"
     assert queued.completed_at is None
     assert (
-        9 <= (queued.next_attempt_at - datetime.now(timezone.utc)).total_seconds() <= 10
+        9 <= (queued.next_attempt_at - datetime.now(UTC)).total_seconds() <= 10
     )
     session.commit.assert_awaited_once()
 
@@ -481,7 +481,7 @@ async def test_background_job_cancel_is_idempotent_and_clears_lease():
         kind="feedback_reflection",
         status="running",
         worker_id="worker",
-        lease_expires_at=datetime.now(timezone.utc),
+        lease_expires_at=datetime.now(UTC),
         next_attempt_at=None,
         completed_at=None,
     )

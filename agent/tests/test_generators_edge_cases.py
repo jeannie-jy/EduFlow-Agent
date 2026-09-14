@@ -10,11 +10,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
-
 
 # ============================================================================
 # Helpers
@@ -29,10 +29,8 @@ def _ensure_registered():
         "generators.frames_generator",
         "generators.video_generator",
     ):
-        try:
+        with contextlib.suppress(Exception):
             importlib.reload(__import__(mod_name, fromlist=[""]))
-        except Exception:
-            pass
 
 
 @pytest.fixture(autouse=True)

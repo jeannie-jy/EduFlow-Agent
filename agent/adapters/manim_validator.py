@@ -527,15 +527,18 @@ def _check_undefined_names(script: str) -> list[dict]:
         local |= _collect_direct_bindings(fn_node)
 
         for n in _iter_direct(fn_node):
-            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
-                if not is_known(n.id, local):
-                    issues.append({
+            if (
+                isinstance(n, ast.Name)
+                and isinstance(n.ctx, ast.Load)
+                and not is_known(n.id, local)
+            ):
+                issues.append({
                         "rule": "undefined-name",
                         "severity": "error",
                         "line": getattr(n, "lineno", None),
                         "name": n.id,
                         "detail": f"未定义变量 '{n.id}'（函数 {fn_node.name}）",
-                    })
+                })
 
         for child in fn_node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):

@@ -8,14 +8,14 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from config import get_settings
 from evals.graders.retrieval import grade_retrieval
 from evals.models import EvalCase, load_cases
 from evals.runners.run_offline import _git_sha
-from config import get_settings
 from services.retrieval import retrieve_knowledge_context
 
 
@@ -106,7 +106,7 @@ async def evaluate(cases: list[EvalCase], *, concurrency: int = 1) -> dict[str, 
     settings = get_settings()
     return {
         "schema_version": "1.0",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "run": {
             "git_sha": _git_sha(),
             "mode": "online_retrieval",

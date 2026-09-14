@@ -11,12 +11,12 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from alembic import command
 from config import get_settings
 
 BASELINE_COLUMNS: dict[str, set[str]] = {

@@ -8,7 +8,7 @@ import pytest
 
 
 def _ensure_registered():
-    from generators.registry import register_generator, has_generator
+    from generators.registry import has_generator, register_generator
     for mod_id, cls_name in [
         ("misconception", "MisconceptionGenerator"), ("pathway", "PathwayGenerator"), ("sandbox", "SandboxGenerator"),
     ]:
@@ -167,8 +167,9 @@ class TestDOSProtection:
 
 class TestPhaseDConcurrency:
     async def test_concurrent_pathway_and_misconception(self, mock_llm):
-        from generators.registry import get_generator
         import asyncio
+
+        from generators.registry import get_generator
 
         mock_llm.side_effect = [
             {"items": [{"id": "m1", "concept": "C", "misconception": "W", "correction": "R" * 20}]},
@@ -195,8 +196,9 @@ class TestPhaseDConcurrency:
         assert "nodes" in p_result
 
     async def test_concurrent_sandbox_instances(self, mock_llm):
-        from generators.registry import get_generator
         import asyncio
+
+        from generators.registry import get_generator
 
         counter = [0]
         def llm(**kw):

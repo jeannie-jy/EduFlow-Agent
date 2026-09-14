@@ -1,6 +1,6 @@
 """极简 Manim 测试场景 — 用于验证渲染管线，5 秒内可渲染完成。"""
 
-from manim import *
+from manim import BLUE, DOWN, WHITE, FadeIn, FadeOut, Scene, Text, Write
 
 
 class TestPreview(Scene):

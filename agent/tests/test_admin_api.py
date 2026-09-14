@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -55,7 +55,7 @@ async def _session(test_db, user: User, token: str, *, expired: bool = False) ->
             id=uuid.uuid4(),
             user_id=user.id,
             token_hash=hash_session_token(token),
-            expires_at=datetime.now(timezone.utc)
+            expires_at=datetime.now(UTC)
             + (timedelta(days=-1) if expired else timedelta(days=1)),
         )
     )

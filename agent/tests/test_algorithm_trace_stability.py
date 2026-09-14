@@ -6,7 +6,10 @@ from evals.graders.deterministic import grade_artifact
 from evals.models import EvalCase, EvalExpectation
 from tools.algorithm_trace_compiler import compile_algorithm_trace
 from tools.normalize_dsl import normalize_dsl
-from tools.validate_dsl import check_algorithm_invariants, stabilize_algorithm_trace, validate_dsl_schema
+from tools.validate_dsl import (
+    stabilize_algorithm_trace,
+    validate_dsl_schema,
+)
 
 
 def _case(case_id: str, topic: str) -> EvalCase:

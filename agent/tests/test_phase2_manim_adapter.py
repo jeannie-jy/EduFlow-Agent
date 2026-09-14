@@ -8,13 +8,13 @@ from __future__ import annotations
 import pytest
 
 from adapters.manim_adapter import (
+    ANIMATION_MAP,
+    MOBJECT_MAP,
     ManimScriptGenerator,
+    _ms_to_srt_time,
     convert_dsl_to_manim,
     generate_render_config,
     generate_subtitles_srt,
-    _ms_to_srt_time,
-    MOBJECT_MAP,
-    ANIMATION_MAP,
 )
 
 # ============================================================================
@@ -157,7 +157,7 @@ class TestManimScriptGenerator:
         gen = ManimScriptGenerator(dsl)
         script = gen.generate()
         # 类名不应包含 &、/、@ 等
-        class_line = [l for l in script.split("\n") if "class EduFlow_" in l][0]
+        class_line = next(line for line in script.split("\n") if "class EduFlow_" in line)
         assert "&" not in class_line
         assert "@" not in class_line
         assert "/" not in class_line

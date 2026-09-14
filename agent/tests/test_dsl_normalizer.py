@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
-from schema.dsl import RenderScript
 from schema.algorithm_trace import AlgorithmState
+from schema.dsl import RenderScript
 from tools.normalize_dsl import normalize_dsl
 from tools.validate_dsl import validate_dsl_schema
 

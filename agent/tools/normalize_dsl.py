@@ -50,7 +50,7 @@ def _numeric_weight(value: Any) -> int | float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if not number == number or number in {float("inf"), float("-inf")}:
+    if number != number or number in {float("inf"), float("-inf")}:
         return None
     return int(number) if number.is_integer() else number
 
@@ -159,7 +159,7 @@ def _canonical_graph_payload(
     raw_edges = graph.get("edges")
     if not raw_edges:
         raw_edges = graph.get("graph_edges")
-    if isinstance(raw_edges, str) or isinstance(raw_edges, dict):
+    if isinstance(raw_edges, (str, dict)):
         raw_edges = [raw_edges]
     edges: list[dict[str, Any]] = []
     for raw_edge in raw_edges if isinstance(raw_edges, list) else []:

@@ -204,9 +204,8 @@ def _has_balanced_delimiters(source: str) -> bool:
             quote = char
         elif char in "([{":
             stack.append(char)
-        elif char in ")]}":
-            if not stack or stack.pop() != pairs[char]:
-                return False
+        elif char in ")]}" and (not stack or stack.pop() != pairs[char]):
+            return False
         index += 1
     return not stack and not quote and not block_comment
 

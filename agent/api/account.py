@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -40,7 +40,7 @@ class UsageLimitRequest(BaseModel):
     monthly_reference_cost_usd: float | None = Field(default=None, ge=0.01, le=10_000)
 
     @model_validator(mode="after")
-    def require_change(self) -> "UsageLimitRequest":
+    def require_change(self) -> UsageLimitRequest:
         if self.task_max_tokens is None and self.monthly_reference_cost_usd is None:
             raise ValueError("At least one usage limit is required")
         return self
@@ -186,7 +186,7 @@ async def validate_provider_credential(
         if client is not None:
             await client.close()
     row.status = "active"
-    row.validated_at = datetime.now(timezone.utc)
+    row.validated_at = datetime.now(UTC)
     record_audit(
         session, action="credential.validate", resource_type="provider_credential",
         resource_id=str(row.id), actor_id=user.id,
@@ -366,7 +366,7 @@ async def confirm_totp(
     if not verify_code(secret, body.code):
         raise HTTPException(status_code=422, detail="Invalid TOTP code")
     row.enabled = True
-    row.confirmed_at = datetime.now(timezone.utc)
+    row.confirmed_at = datetime.now(UTC)
     record_audit(session, action="mfa.totp.enabled", resource_type="user", resource_id=str(user.id), actor_id=user.id)
     return {"enabled": True, "confirmed_at": row.confirmed_at}
 
@@ -444,7 +444,7 @@ async def export_account_data(
         select(AuditEvent).where(AuditEvent.actor_id == user.id).order_by(AuditEvent.created_at)
     )).all())
     return {
-        "exported_at": datetime.now(timezone.utc),
+        "exported_at": datetime.now(UTC),
         "profile": {"id": str(user.id), "email": user.email, "nickname": user.nickname, "role": user.role, "created_at": user.created_at},
         "projects": [{"id": str(row.id), "title": row.title, "status": row.status, "dsl": row.dsl_snapshot, "created_at": row.created_at, "updated_at": row.updated_at} for row in projects],
         "materials": [{"id": str(row.id), "filename": row.original_filename, "media_type": row.media_type, "size_bytes": row.size_bytes, "status": row.status, "created_at": row.created_at} for row in materials],
@@ -474,11 +474,11 @@ async def request_account_deletion(
     if existing is None:
         existing = AccountDeletionRequest(
             id=uuid.uuid4(), user_id=user.id,
-            execute_after=datetime.now(timezone.utc) + timedelta(days=7),
+            execute_after=datetime.now(UTC) + timedelta(days=7),
         )
         session.add(existing)
     await session.execute(update(AuthSession).where(AuthSession.user_id == user.id).values(
-        expires_at=datetime.now(timezone.utc)
+        expires_at=datetime.now(UTC)
     ))
     record_audit(
         session, action="account.deletion_requested", resource_type="user",
@@ -494,6 +494,7 @@ async def cancel_account_deletion(
     current_user: User | None = Depends(get_current_user),
 ) -> None:
     from sqlalchemy import delete
+
     from db.models import AccountDeletionRequest
     user = _user(current_user)
     await session.execute(delete(AccountDeletionRequest).where(

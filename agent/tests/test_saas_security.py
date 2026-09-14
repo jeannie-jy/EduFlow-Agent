@@ -10,7 +10,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import Settings, validate_runtime_settings
-from db.models import ProviderCredential, UsageBucket, UsageLedger, User, UserQuotaPolicy
+from db.models import (
+    ProviderCredential,
+    UsageBucket,
+    UsageLedger,
+    User,
+    UserQuotaPolicy,
+)
 from services.provider_credentials import (
     CredentialUnavailableError,
     decrypt_api_key,
@@ -88,17 +94,18 @@ def test_production_configuration_fails_closed():
 
 def test_totp_accepts_current_code_and_rejects_invalid_code():
     secret = new_secret()
-    import services.totp as totp
+    from services import totp
     with patch.object(totp.time, "time", return_value=1_700_000_000):
-        counter = int(1_700_000_000 // 30)
+        counter = 1_700_000_000 // 30
         code = totp._code(secret, counter)
         assert verify_code(secret, code, now=1_700_000_000)
         assert not verify_code(secret, "000000", now=1_700_000_000)
 
 
 def test_registration_pow_challenge_is_signed_and_bounded():
-    import hashlib
     import base64 as b64
+    import hashlib
+
     from api.auth import _issue_registration_challenge, _validate_registration_challenge
     settings = _settings(
         auth_registration_challenge_required=True,

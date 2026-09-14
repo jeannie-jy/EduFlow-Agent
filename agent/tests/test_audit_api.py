@@ -1,7 +1,7 @@
 """Tests for bounded, administrator-only audit inspection."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -54,7 +54,7 @@ def test_audit_details_are_bounded_and_redacted():
 async def test_admin_audit_query_uses_cursor_and_returns_sanitized_page():
     from api.audit import list_audit_events
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rows = [
         SimpleNamespace(
             id=event_id,

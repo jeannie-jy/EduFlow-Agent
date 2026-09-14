@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
 
@@ -27,9 +27,9 @@ async def _purge_runtime_state(project_ids: list[str], export_job_ids: list[str]
             for job_id in export_job_ids:
                 try:
                     await asyncio.to_thread(client.delete, f"manim:job:{job_id}")
-                except Exception as exc:  # noqa: BLE001 - external Redis client errors vary
+                except Exception as exc:
                     failures.append(("redis", exc))
-    except Exception as exc:  # noqa: BLE001 - optional Redis initialization errors vary
+    except Exception as exc:
         failures.append(("redis", exc))
 
     # LangGraph's Postgres saver owns checkpoint tables outside our ORM.  Use
@@ -45,9 +45,9 @@ async def _purge_runtime_state(project_ids: list[str], export_job_ids: list[str]
             for thread_id in [*project_ids, *feedback_job_ids]:
                 try:
                     await delete_thread(thread_id)
-                except Exception as exc:  # noqa: BLE001 - checkpointer backends vary
+                except Exception as exc:
                     failures.append(("checkpoint", exc))
-    except Exception as exc:  # noqa: BLE001 - optional graph backends vary
+    except Exception as exc:
         failures.append(("checkpoint", exc))
 
     if failures:
@@ -79,7 +79,7 @@ async def process_due_deletions() -> int:
     async with async_session_factory() as session:
         requests = list((await session.scalars(
             select(AccountDeletionRequest)
-            .where(AccountDeletionRequest.execute_after <= datetime.now(timezone.utc))
+            .where(AccountDeletionRequest.execute_after <= datetime.now(UTC))
             .with_for_update(skip_locked=True)
         )).all())
         store = get_artifact_store()

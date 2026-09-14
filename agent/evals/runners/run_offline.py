@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,7 @@ async def run_dataset(
         results.append(result)
     return {
         "schema_version": "1.0",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "run": {
             "git_sha": _git_sha(),
             "workflow_version": os.getenv("EDUFLOW_WORKFLOW_VERSION", "legacy-v1"),

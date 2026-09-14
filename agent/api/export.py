@@ -8,6 +8,7 @@ GET    /api/export/{job_id}/download/{filename} 下载产物
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -17,7 +18,7 @@ import subprocess
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -331,7 +332,7 @@ async def cancel_export_job(
     _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """Idempotently cancel a queued/running export without leaking its owner."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from db.models import ExportJobAttempt
 
@@ -348,7 +349,7 @@ async def cancel_export_job(
         job.status = "cancelled"
         job.worker_id = None
         job.lease_expires_at = None
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         await session.execute(
             update(ExportJobAttempt)
             .where(
@@ -440,10 +441,8 @@ def _do_export_sync(
     finally:
         credentials = None
         if engine is not None:
-            try:
+            with contextlib.suppress(Exception):
                 loop.run_until_complete(engine.dispose())
-            except Exception:
-                pass
         loop.close()
 
 
@@ -991,7 +990,7 @@ def _run_subprocess_group(
                     "Render workspace exceeded its configured quota"
                 )
             break
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             if quota_root is not None and _workspace_exceeds_limit(
                 quota_root,
                 max_bytes=max_workspace_bytes,
@@ -1001,7 +1000,7 @@ def _run_subprocess_group(
                 process.communicate()
                 raise ExportWorkspaceLimitError(
                     "Render workspace exceeded its configured quota"
-                )
+                ) from exc
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
@@ -1057,8 +1056,7 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
             continue
         concat_list = export_dir / "_concat_list.txt"
         with open(concat_list, "w", encoding="utf-8") as f:
-            for mp4 in mp4s:
-                f.write(f"file '{mp4}'\n")
+            f.writelines(f"file '{mp4}'\n" for mp4 in mp4s)
 
         output = export_dir / "output.mp4"
         try:
@@ -1156,7 +1154,7 @@ async def _update_db_export_status(
         jid = uuid.UUID(job_id)
 
         async def apply_status(session) -> bool:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             job = await session.get(ExportJobModel, jid)
             if job is None or (job.status == "cancelled" and status != "cancelled"):
@@ -1186,7 +1184,7 @@ async def _update_db_export_status(
             if progress is not None:
                 job.progress_pct = progress
             if status in {"completed", "failed", "cancelled"}:
-                job.completed_at = datetime.now(timezone.utc)
+                job.completed_at = datetime.now(UTC)
                 job.next_attempt_at = None
                 if status == "failed":
                     job.failure_retryable = retryable_failure
@@ -1448,7 +1446,7 @@ async def download_artifact(
         if not any(resolved.is_relative_to(base) for base in allowed_bases):
             raise HTTPException(status_code=403, detail="Access denied")
     except (ValueError, OSError):
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail="Access denied") from None
 
     media_type_map = {
         ".mp4": "video/mp4",

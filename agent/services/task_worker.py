@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -12,7 +13,7 @@ import signal
 import socket
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +70,7 @@ async def claim_background_job() -> dict[str, Any] | None:
     from db.models import BackgroundJob, BackgroundJobAttempt
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         terminal_ids = select(BackgroundJob.id).where(
             BackgroundJob.status == "running",
@@ -198,7 +199,7 @@ async def renew_background_lease(job_id: str) -> bool:
     from db.models import BackgroundJob, BackgroundJobAttempt
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         result = await session.execute(
             update(BackgroundJob)
@@ -316,10 +317,9 @@ async def _execute_feedback_reflection(job: dict[str, Any]) -> None:
     }
     graph = await get_graph_async()
     graph_config = {"configurable": {"thread_id": f"feedback:{job['job_id']}"}}
-    from services.workflow_trace import invoke_graph_traced
-
     from services.provider_credentials import credential_scope
     from services.quota import user_llm_limits_scope
+    from services.workflow_trace import invoke_graph_traced
     with credential_scope(*credentials):
         if llm_limits is None:
             with _workflow_llm_budget():
@@ -328,17 +328,16 @@ async def _execute_feedback_reflection(job: dict[str, Any]) -> None:
                     project_id=str(project_id), entrypoint="reflection",
                 )
         else:
-            with user_llm_limits_scope(llm_limits):
-                with _workflow_llm_budget():
-                    result = await invoke_graph_traced(
-                        graph, state, graph_config,
-                        project_id=str(project_id), entrypoint="reflection",
-                    )
+            with user_llm_limits_scope(llm_limits), _workflow_llm_budget():
+                result = await invoke_graph_traced(
+                    graph, state, graph_config,
+                    project_id=str(project_id), entrypoint="reflection",
+                )
     # Do not retain decrypted provider material while persisting the result.
     credentials = None
     revised_dsl = result.get("dsl") or dsl
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         queued_job = await session.get(BackgroundJob, uuid.UUID(job["job_id"]))
         project = await session.get(Project, project_id)
@@ -411,7 +410,7 @@ async def _execute_material_parse(job: dict[str, Any]) -> None:
     else:
         parsed = await parse_material_record(material)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         queued_job = await session.get(BackgroundJob, uuid.UUID(job["job_id"]))
         material = await session.get(Material, material_id)
@@ -505,7 +504,7 @@ async def _mark_task_failure(
     from db.models import BackgroundJob, BackgroundJobAttempt
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         queued_job = await session.get(BackgroundJob, uuid.UUID(job["job_id"]))
         if (
@@ -617,12 +616,10 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             raise
         except Exception:
             logger.exception("background task worker iteration failed")
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(
                 stop.wait(), timeout=settings.task_worker_poll_seconds
             )
-        except TimeoutError:
-            pass
 
 
 def main() -> None:
@@ -633,10 +630,8 @@ def main() -> None:
         for signame in ("SIGINT", "SIGTERM"):
             sig = getattr(signal, signame, None)
             if sig is not None:
-                try:
+                with contextlib.suppress(NotImplementedError):
                     loop.add_signal_handler(sig, stop.set)
-                except NotImplementedError:
-                    pass
         await run_worker(stop)
 
     asyncio.run(serve())

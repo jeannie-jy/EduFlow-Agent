@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,9 +63,8 @@ async def test_worker_refuses_to_run_in_api_queue_mode():
     with patch(
         "services.export_worker.get_settings",
         return_value=MagicMock(manim_execution_mode="queue"),
-    ):
-        with pytest.raises(RuntimeError, match="requires MANIM_EXECUTION_MODE=worker"):
-            await run_worker()
+    ), pytest.raises(RuntimeError, match="requires MANIM_EXECUTION_MODE=worker"):
+        await run_worker()
 
 
 @pytest.mark.asyncio
@@ -98,7 +97,7 @@ async def test_claim_marks_job_rendering_and_assigns_lease():
         export_worker_max_attempts=3,
         manim_timeout_seconds=600,
     )
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     with (
         patch("services.export_worker.get_settings", return_value=settings),
         patch("db.database.async_session_factory", return_value=context),
@@ -225,7 +224,7 @@ async def test_failed_export_is_requeued_with_backoff_before_max_attempts():
         id=job_id,
         status="failed",
         attempt_count=1,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(UTC),
     )
     session = MagicMock()
     session.get = AsyncMock(return_value=job)
@@ -254,7 +253,7 @@ async def test_failed_export_is_requeued_with_backoff_before_max_attempts():
     assert job.status == "queued"
     assert job.error_log is None
     assert job.completed_at is None
-    assert 6 <= (job.next_attempt_at - datetime.now(timezone.utc)).total_seconds() <= 7
+    assert 6 <= (job.next_attempt_at - datetime.now(UTC)).total_seconds() <= 7
     session.commit.assert_awaited_once()
     redis_update.assert_called_once()
 

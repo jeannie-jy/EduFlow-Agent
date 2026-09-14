@@ -7,13 +7,14 @@ container. API processes only enqueue jobs and never execute generated Python.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import random
 import signal
 import socket
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, or_, select, update
@@ -30,7 +31,7 @@ async def claim_export_job() -> dict[str, Any] | None:
     from services.project_persistence import load_canonical_project_dsl
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         # A worker that repeatedly dies eventually leaves a terminal, inspectable
         # record instead of an immortal ``rendering`` row.
@@ -212,7 +213,7 @@ async def renew_export_lease(job_id: str) -> bool:
     from db.models import ExportJobAttempt, ExportJobModel
 
     settings = get_settings()
-    lease_until = datetime.now(timezone.utc) + timedelta(
+    lease_until = datetime.now(UTC) + timedelta(
         seconds=settings.manim_timeout_seconds + 120
     )
     async with async_session_factory() as session:
@@ -232,7 +233,7 @@ async def renew_export_lease(job_id: str) -> bool:
                 ExportJobAttempt.status == "rendering",
                 ExportJobAttempt.worker_id == WORKER_ID,
             )
-            .values(heartbeat_at=datetime.now(timezone.utc))
+            .values(heartbeat_at=datetime.now(UTC))
         )
         await session.commit()
         return bool(result.rowcount)
@@ -317,8 +318,8 @@ async def run_claimed_export(job: dict[str, Any]) -> None:
         raise
     except Exception as exc:
         from api.export import _update_db_export_status
-        from services.redaction import public_failure_message
         from services.provider_credentials import CredentialReferenceUnavailableError
+        from services.redaction import public_failure_message
 
         attempt_no = int(job.get("attempt_no", 1))
         # A revoked/rotated credential is a permanent queued-job failure; do
@@ -362,7 +363,7 @@ async def schedule_export_retry(job_id: str, attempt_no: int) -> bool:
     settings = get_settings()
     if attempt_no >= settings.export_worker_max_attempts:
         return False
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         job = await session.get(ExportJobModel, uuid.UUID(job_id))
         if (
@@ -418,20 +419,16 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         try:
             job = await claim_export_job()
             if job is None:
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=settings.export_worker_poll_seconds)
-                except TimeoutError:
-                    pass
                 continue
             await run_claimed_export(job)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("export worker iteration failed")
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=settings.export_worker_poll_seconds)
-            except TimeoutError:
-                pass
 
 
 def main() -> None:
@@ -442,10 +439,8 @@ def main() -> None:
         for signame in ("SIGINT", "SIGTERM"):
             sig = getattr(signal, signame, None)
             if sig is not None:
-                try:
+                with contextlib.suppress(NotImplementedError):
                     loop.add_signal_handler(sig, stop.set)
-                except NotImplementedError:
-                    pass
         await run_worker(stop)
 
     asyncio.run(serve())

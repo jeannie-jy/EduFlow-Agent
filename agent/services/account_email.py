@@ -7,7 +7,7 @@ import hashlib
 import secrets
 import smtplib
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 from sqlalchemy import update
@@ -24,7 +24,7 @@ def hash_one_time_token(token: str) -> str:
 async def create_one_time_token(
     session: AsyncSession, user: User, purpose: str,
 ) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await session.execute(update(AuthOneTimeToken).where(
         AuthOneTimeToken.user_id == user.id,
         AuthOneTimeToken.purpose == purpose,

@@ -1,7 +1,7 @@
 """RAG integration tests for the Knowledge -> Coder main path."""
 
-from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -67,9 +67,8 @@ async def test_embedding_dimension_mismatch_is_not_hidden_by_keyword_fallback():
     with patch(
         "services.knowledge_service.generate_embedding",
         new=AsyncMock(side_effect=EmbeddingDimensionError("dimension mismatch")),
-    ):
-        with pytest.raises(EmbeddingDimensionError, match="dimension mismatch"):
-            await search_knowledge_pgvector("Dijkstra", session=session)
+    ), pytest.raises(EmbeddingDimensionError, match="dimension mismatch"):
+        await search_knowledge_pgvector("Dijkstra", session=session)
 
     session.execute.assert_not_awaited()
 

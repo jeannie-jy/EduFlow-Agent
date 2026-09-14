@@ -6,16 +6,15 @@ import argparse
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from config import get_settings
+from evals.generators.live_workflow import generate_workflow_case
 from evals.graders.retrieval import grade_retrieval
 from evals.models import EvalCase, load_cases
-from evals.runners.run_online import run_online_cases
 from evals.runners.run_offline import _git_sha
-from evals.generators.live_workflow import generate_workflow_case
+from evals.runners.run_online import run_online_cases
 
 
 def _source_ids_from_artifact(artifact: dict[str, Any]) -> list[str]:

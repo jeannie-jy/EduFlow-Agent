@@ -108,12 +108,12 @@ async def run_regenerate_stream(
     actor_role: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Enter the canonical graph at Coder for a scoped regeneration."""
+    from sqlalchemy import select
+
     from api.deps import parse_project_id
     from db.database import async_session_factory
     from db.models import Frame as FrameModel
     from db.models import Project as ProjectModel
-    from sqlalchemy import select
-
     from services.regeneration import (
         normalize_regeneration_scope,
         resolve_target_frame_ids,
@@ -473,7 +473,6 @@ def _thread_config(project_id: str) -> dict[str, Any]:
 
 def _workflow_llm_budget():
     from config import get_settings
-
     from services.telemetry import current_llm_budget_limits, llm_budget_scope
 
     settings = get_settings()
@@ -603,7 +602,6 @@ async def _persist_dsl_result(
         from api.versions import save_version
         from db.database import async_session_factory
         from db.models import Project as ProjectModel
-
         from services.project_persistence import (
             merge_dsl_snapshot,
             persist_frames_to_table,
@@ -650,7 +648,6 @@ async def _persist_module_result(
         from api.versions import save_version
         from db.database import async_session_factory
         from db.models import Project as ProjectModel
-
         from services.project_persistence import (
             merge_dsl_snapshot,
             persist_frames_to_table,

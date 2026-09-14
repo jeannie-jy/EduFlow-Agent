@@ -828,12 +828,9 @@ def _sanitize_eval_forbidden_claims(
         if not isinstance(claim, str) or not claim.strip():
             continue
         normalized = re.sub(r"\s+", "", claim)
-        if normalized == "所有节点必然可达":
-            replacement = "并非所有节点都可达"
-        else:
-            # Keep the text readable while ensuring the exact forbidden phrase
-            # cannot be emitted as an assertion.
-            replacement = "该说法不成立"
+        # Keep the text readable while ensuring the exact forbidden phrase
+        # cannot be emitted as an assertion.
+        replacement = "并非所有节点都可达" if normalized == "所有节点必然可达" else "该说法不成立"
         replacements.append((re.compile(re.escape(claim), flags=re.IGNORECASE), replacement))
 
     def rewrite(value: Any) -> Any:

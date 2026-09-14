@@ -10,6 +10,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from services.generate_service import (
     _finalize_done,
     _phase_pct,
@@ -643,7 +644,7 @@ class TestHITLInterruptResume:
 
         assert any(e["event"] == "waiting_approval" for e in events)
         assert not any(e["event"] == "done" for e in events)
-        wa = [e for e in events if e["event"] == "waiting_approval"][0]
+        wa = next(e for e in events if e["event"] == "waiting_approval")
         assert "teaching_plan" in wa["data"]
 
     @pytest.mark.asyncio

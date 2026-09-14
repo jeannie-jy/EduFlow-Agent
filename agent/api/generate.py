@@ -18,8 +18,12 @@ import uuid
 from typing import Annotated
 from urllib.parse import urlencode
 
-from db.database import get_session
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+
+from db.database import get_session
 from generators.registry import get_generator, list_generators
 from schema.project import (
     ApprovePlanRequest,
@@ -39,9 +43,6 @@ from services.generate_service import (
     run_regenerate_stream,
     with_sse_metadata,
 )
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sse_starlette.sse import EventSourceResponse
 
 from .auth import get_current_user, require_editor
 from .deps import ensure_project_access, parse_project_id
@@ -185,7 +186,8 @@ async def _ensure_generation_stream_admission(
             raise HTTPException(status_code=422, detail="A stream id is required")
         return
 
-    from db.models import Project as ProjectModel, UsageLedger
+    from db.models import Project as ProjectModel
+    from db.models import UsageLedger
     from services.quota import (
         QuotaExceededError,
         acquire_quota_lock,
@@ -271,9 +273,10 @@ async def _estimate_module_cost(
     session: AsyncSession, project_id: str, requested_count: int
 ) -> ModuleCostEstimateResponse:
     """Estimate from recent successful, non-zero module-node traces."""
+    from sqlalchemy import select
+
     from config import get_settings
     from db.models import WorkflowNodeRun, WorkflowRun
-    from sqlalchemy import select
 
     rows = (
         await session.execute(
@@ -382,8 +385,9 @@ async def get_active_stream(
     current_user: Annotated[object | None, Depends(get_current_user)] = None,
 ) -> dict[str, object | None]:
     """Discover the latest replayable project stream without leaking its payload."""
-    from db.models import Project, SSEStream
     from sqlalchemy import select
+
+    from db.models import Project, SSEStream
 
     parsed_project_id = parse_project_id(project_id)
     project = await session.get(Project, parsed_project_id)
@@ -521,8 +525,9 @@ async def start_generation(
         # Return the original stream for a client retry instead of re-running
         # admission checks or consuming another unit.  The stream keeps the
         # credential version captured by the first request.
-        from db.models import UsageLedger
         from sqlalchemy import select
+
+        from db.models import UsageLedger
         existing = await session.scalar(select(UsageLedger).where(
             UsageLedger.user_id == current_user.id,
             UsageLedger.resource == "generation",
@@ -542,9 +547,9 @@ async def start_generation(
         from services.quota import (
             QuotaExceededError,
             acquire_quota_lock,
-            reserve_quota,
             ensure_monthly_reference_cost_capacity,
             quota_limit,
+            reserve_quota,
         )
         await acquire_quota_lock(session, user_id=current_user.id, resource="generation")
         try:
@@ -675,8 +680,9 @@ async def generation_stream(
         )
         material_ids = []
     if material_ids:
-        from db.models import Material
         from sqlalchemy import select
+
+        from db.models import Material
 
         parsed_ids = []
         for material_id in material_ids:
@@ -881,6 +887,7 @@ async def regenerate_frames(
         raise HTTPException(status_code=428, detail="A generation provider credential is required")
     if current_user is not None:
         from sqlalchemy import func
+
         from services.quota import (
             QuotaExceededError,
             acquire_quota_lock,
@@ -1222,7 +1229,14 @@ async def start_module_generation(
         raise HTTPException(status_code=428, detail="A generation provider credential is required")
     if current_user is not None:
         from sqlalchemy import func
-        from services.quota import QuotaExceededError, acquire_quota_lock, ensure_monthly_reference_cost_capacity, quota_limit, reserve_quota
+
+        from services.quota import (
+            QuotaExceededError,
+            acquire_quota_lock,
+            ensure_monthly_reference_cost_capacity,
+            quota_limit,
+            reserve_quota,
+        )
         try:
             await acquire_quota_lock(session, user_id=current_user.id, resource="generation")
             active_count = int(await session.scalar(

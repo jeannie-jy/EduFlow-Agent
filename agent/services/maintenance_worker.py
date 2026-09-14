@@ -8,6 +8,7 @@ perform external object-store/checkpoint cleanup in addition to SQL deletes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 
@@ -21,10 +22,8 @@ def main() -> None:
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGINT, signal.SIGTERM):
-            try:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.add_signal_handler(signum, stop.set)
-            except (NotImplementedError, RuntimeError):
-                pass
         task = asyncio.create_task(run_material_retention(stop))
         try:
             await stop.wait()

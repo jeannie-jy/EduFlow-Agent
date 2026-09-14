@@ -8,16 +8,16 @@ FastAPI 应用，负责：
 
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
 import secrets
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from db.database import get_readonly_session
@@ -61,16 +61,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 注册模块生成器（Phase A: 模块化生成器架构）
     try:
-        import generators.mindmap_generator   # noqa: F401 — 触发 register_generator
-        import generators.card_generator      # noqa: F401
-        import generators.frames_generator    # noqa: F401
-        import generators.video_generator     # noqa: F401
-        import generators.quiz_generator      # noqa: F401
-        import generators.comparison_generator  # noqa: F401
-        import generators.misconception_generator  # noqa: F401
-        import generators.pathway_generator  # noqa: F401
-        import generators.sandbox_generator  # noqa: F401
-        import generators.interactive_demo_generator  # noqa: F401
+        import generators.card_generator
+        import generators.comparison_generator
+        import generators.frames_generator
+        import generators.interactive_demo_generator
+        import generators.mindmap_generator
+        import generators.misconception_generator
+        import generators.pathway_generator
+        import generators.quiz_generator
+        import generators.sandbox_generator
+        import generators.video_generator  # noqa: F401
         from generators.registry import list_generators
         logger.info("已注册 %d 个模块生成器", len(list_generators()))
     except Exception as exc:
@@ -96,10 +96,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     retention_stop.set()
     if retention_task is not None:
         retention_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await retention_task
-        except asyncio.CancelledError:
-            pass
 
     # 关闭 Agent checkpointer 连接
     try:
@@ -264,6 +262,9 @@ async def prometheus_metrics(
     session: AsyncSession = Depends(get_readonly_session),
     _metrics_access: None = Depends(require_metrics_access),
 ) -> str:
-    from services.operational_metrics import operational_metrics_snapshot, prometheus_text
+    from services.operational_metrics import (
+        operational_metrics_snapshot,
+        prometheus_text,
+    )
 
     return prometheus_text(await operational_metrics_snapshot(session))

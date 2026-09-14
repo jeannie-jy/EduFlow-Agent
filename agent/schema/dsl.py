@@ -19,10 +19,9 @@ except ImportError:  # Python 3.10 and earlier
 
         def __str__(self) -> str:
             return str(self.value)
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ============================================================================
 # 枚举类型
@@ -288,11 +287,7 @@ class MindmapObject(VisualObjectBase):
 
 # discriminated union
 VisualObject = Annotated[
-    Union[
-        NodeObject, EdgeObject, ArrayObject, LinkedListObject, TreeObject,
-        GraphObject, TableObject, CodeBlockObject, MemoryBlockObject,
-        ProcessObject, TimelineObject, FormulaObject, CardObject, MindmapObject,
-    ],
+    NodeObject | EdgeObject | ArrayObject | LinkedListObject | TreeObject | GraphObject | TableObject | CodeBlockObject | MemoryBlockObject | ProcessObject | TimelineObject | FormulaObject | CardObject | MindmapObject,
     Field(discriminator="type"),
 ]
 
@@ -386,13 +381,7 @@ class UnlockAnimation(AnimationBase):
 
 # discriminated union
 Animation = Annotated[
-    Union[
-        AppearAnimation, DisappearAnimation, HighlightAnimation,
-        TransformAnimation, MoveAnimation, UpdateValueAnimation,
-        CompareAnimation, SwapAnimation, RelaxEdgeAnimation,
-        EnqueueAnimation, DequeueAnimation, SplitAnimation, MergeAnimation,
-        ScheduleAnimation, LockAnimation, UnlockAnimation,
-    ],
+    AppearAnimation | DisappearAnimation | HighlightAnimation | TransformAnimation | MoveAnimation | UpdateValueAnimation | CompareAnimation | SwapAnimation | RelaxEdgeAnimation | EnqueueAnimation | DequeueAnimation | SplitAnimation | MergeAnimation | ScheduleAnimation | LockAnimation | UnlockAnimation,
     Field(discriminator="type"),
 ]
 

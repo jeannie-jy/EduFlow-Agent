@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 
 # ── 注册表 ──────────────────────────────────────────────────────
 
-_registry: dict[str, "ModuleGenerator"] = {}
+_registry: dict[str, ModuleGenerator] = {}
 
 
-def register_generator(gen: "ModuleGenerator") -> None:
+def register_generator(gen: ModuleGenerator) -> None:
     """注册模块生成器。重复注册同一 module_id 会覆盖旧值。
 
     Args:
@@ -25,7 +25,7 @@ def register_generator(gen: "ModuleGenerator") -> None:
     _registry[gen.module_id] = gen
 
 
-def get_generator(module_id: str) -> "ModuleGenerator | None":
+def get_generator(module_id: str) -> ModuleGenerator | None:
     """获取已注册的模块生成器。
 
     Args:
@@ -37,12 +37,12 @@ def get_generator(module_id: str) -> "ModuleGenerator | None":
     return _registry.get(module_id)
 
 
-def list_generators() -> list["ModuleGenerator"]:
+def list_generators() -> list[ModuleGenerator]:
     """列出所有已注册的模块生成器。"""
     return list(_registry.values())
 
 
-def get_generators_by_category(category: str) -> list["ModuleGenerator"]:
+def get_generators_by_category(category: str) -> list[ModuleGenerator]:
     """按分类获取模块生成器。
 
     Args:

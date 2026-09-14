@@ -119,7 +119,7 @@ def register_error_handlers(app) -> None:
         """
         field_errors: dict[str, list[str]] = {}
         for error in exc.errors():
-            loc = ".".join(str(l) for l in error["loc"])
+            loc = ".".join(str(part) for part in error["loc"])
             msg = error.get("msg", "Unknown error")
             field_errors.setdefault(loc, []).append(msg)
 

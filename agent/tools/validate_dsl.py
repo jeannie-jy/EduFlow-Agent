@@ -711,10 +711,7 @@ def _repair_bellman_text(value: str, states: list[dict[str, float]]) -> str:
         return value
     repaired = value
     for round_index, expected in enumerate(states):
-        if round_index == 0:
-            round_pattern = r"初始"
-        else:
-            round_pattern = rf"第\s*{round_index}\s*轮"
+        round_pattern = r"初始" if round_index == 0 else rf"第\s*{round_index}\s*轮"
         match = re.search(round_pattern, repaired)
         if not match:
             continue
@@ -1336,8 +1333,8 @@ async def check_algorithm_invariants(
 
 async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     """使用 Pydantic 校验 DSL 结构完整性。"""
-    from schema.dsl import RenderScript
     from schema.algorithm_trace import validate_algorithm_snapshot
+    from schema.dsl import RenderScript
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -1345,7 +1342,7 @@ async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     try:
         RenderScript.model_validate(dsl)
         valid = True
-    except Exception as exc:  # noqa: BLE001 - validator must return structured errors
+    except Exception as exc:
         valid = False
         errors.append(str(exc))
 

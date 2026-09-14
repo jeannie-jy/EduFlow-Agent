@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import uuid
 import logging
+import uuid
 
 from fastapi import HTTPException
 
@@ -23,7 +23,7 @@ def parse_project_id(project_id: str) -> uuid.UUID:
                     "message": f"无效的项目 ID 格式: {project_id}",
                 }
             },
-        )
+        ) from None
 
 
 def safe_project_uuid(project_id: str) -> uuid.UUID | None:

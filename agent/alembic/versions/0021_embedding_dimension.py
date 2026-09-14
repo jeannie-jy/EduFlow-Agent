@@ -8,7 +8,6 @@ from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = "0021_embedding_dimension"
 down_revision: str | None = "0020_compact_frame_artifact_refs"
 branch_labels: str | Sequence[str] | None = None

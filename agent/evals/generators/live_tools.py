@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from evals.models import EvalCase
@@ -73,7 +73,7 @@ async def _bootstrap_fixture() -> tuple[uuid.UUID, uuid.UUID]:
                             ),
                             "topics": ["MVCC", "transaction snapshot", "isolation level"],
                         },
-                        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+                        expires_at=datetime.now(UTC) + timedelta(days=1),
                     )
                 )
             await session.flush()
