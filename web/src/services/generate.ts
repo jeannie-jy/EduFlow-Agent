@@ -16,6 +16,7 @@ import { connectSSE, type SSEOptions } from "./sse";
 export interface GenerateRequest {
   action?: "full" | "plan_only" | "modules";
   modules?: string[];
+  constraints?: Record<string, unknown>;
 }
 
 export interface GenerateResponse {
@@ -104,9 +105,15 @@ function clearActiveStream(projectId: string, url: string) {
 // 方法
 // ============================================================================
 
-export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full", modules?: string[]) {
+export function startGeneration(
+  projectId: string,
+  action: GenerateRequest["action"] = "full",
+  modules?: string[],
+  constraints?: Record<string, unknown>,
+) {
   const body: GenerateRequest = { action };
   if (modules !== undefined) body.modules = modules;
+  if (constraints !== undefined) body.constraints = constraints;
   return api.post<GenerateResponse>(`/projects/${projectId}/generate`, body);
 }
 

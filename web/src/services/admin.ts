@@ -25,6 +25,37 @@ export interface AdminUserFilters {
   limit?: number;
 }
 
+export interface AdminQuota {
+  user_id: string;
+  limits: Record<string, number>;
+  is_suspended: boolean;
+  usage: {
+    resources: Record<string, Record<string, { used: number; limit: number }>>;
+    limits: Record<string, { used: number; limit: number }>;
+    model_usage_month: {
+      input_tokens: number;
+      output_tokens: number;
+      estimated_cost_usd: number;
+      notice: string;
+    };
+  };
+}
+
+export type AdminQuotaChange = Partial<{
+  generation_day: number;
+  generation_month: number;
+  video_day: number;
+  video_month: number;
+  projects: number;
+  material_bytes: number;
+  artifact_bytes: number;
+  generation_concurrent: number;
+  video_concurrent: number;
+  task_max_tokens: number;
+  monthly_reference_cost_usd: number;
+  is_suspended: boolean;
+}>;
+
 export function listAdminUsers(filters: AdminUserFilters = {}): Promise<AdminUserPage> {
   const params: Record<string, string> = {};
   if (filters.cursor) params.cursor = filters.cursor;
@@ -44,4 +75,12 @@ export function updateAdminUser(
 
 export function revokeAdminUserSessions(userId: string): Promise<{ revoked: number }> {
   return api.delete<{ revoked: number }>(`/admin/users/${userId}/sessions`);
+}
+
+export function getAdminUserQuota(userId: string): Promise<AdminQuota> {
+  return api.get<AdminQuota>(`/admin/users/${userId}/quota`);
+}
+
+export function updateAdminUserQuota(userId: string, change: AdminQuotaChange): Promise<AdminQuota> {
+  return api.put<AdminQuota>(`/admin/users/${userId}/quota`, change).then(async () => getAdminUserQuota(userId));
 }

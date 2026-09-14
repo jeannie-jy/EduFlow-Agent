@@ -3,6 +3,7 @@ import {
   CirclePlayIcon,
   LayoutTemplateIcon,
   PlusIcon,
+  KeyRoundIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -27,6 +28,7 @@ import {
 const navigationItems = [
   { label: "我的推演", to: "/app", icon: CirclePlayIcon, end: true },
   { label: "模板库", to: "/app/templates", icon: LayoutTemplateIcon, end: false },
+  { label: "模型接入", to: "/app/settings", icon: KeyRoundIcon, end: false },
 ] as const;
 
 export function AppSidebar() {

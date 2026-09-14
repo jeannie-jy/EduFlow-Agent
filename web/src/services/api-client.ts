@@ -71,6 +71,13 @@ async function request<T>(
   if (body !== undefined && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
+  if (method === "POST") {
+    headers["Idempotency-Key"] = crypto.randomUUID();
+  }
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    const csrf = document.cookie.split("; ").find((item) => item.startsWith("eduflow_csrf="));
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice("eduflow_csrf=".length));
+  }
 
   try {
     const res = await fetch(url, {
@@ -139,8 +146,8 @@ export const api = {
     return request<T>("PATCH", path, body, { timeoutMs });
   },
 
-  delete<T>(path: string, timeoutMs?: number) {
-    return request<T>("DELETE", path, undefined, { timeoutMs });
+  delete<T>(path: string, body?: unknown, timeoutMs?: number) {
+    return request<T>("DELETE", path, body, { timeoutMs });
   },
 
   /**
@@ -160,6 +167,8 @@ export const api = {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
+    const csrf = document.cookie.split("; ").find((item) => item.startsWith("eduflow_csrf="));
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice("eduflow_csrf=".length));
 
     const res = await fetch(url, {
       method: "POST",

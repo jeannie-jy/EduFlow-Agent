@@ -54,6 +54,26 @@ export const appRoutes: RouteObject[] = [
     path: "/register",
     lazy: lazyComponent(() => import("@/features/auth/RegisterPage"), "RegisterPage"),
   },
+  {
+    path: "/verify-email",
+    lazy: lazyComponent(() => import("@/features/auth/AccountRecoveryPages"), "VerifyEmailPage"),
+  },
+  {
+    path: "/forgot-password",
+    lazy: lazyComponent(() => import("@/features/auth/AccountRecoveryPages"), "ForgotPasswordPage"),
+  },
+  {
+    path: "/reset-password",
+    lazy: lazyComponent(() => import("@/features/auth/AccountRecoveryPages"), "ResetPasswordPage"),
+  },
+  {
+    path: "/privacy",
+    lazy: lazyComponent(() => import("@/pages/LegalPages"), "PrivacyPage"),
+  },
+  {
+    path: "/terms",
+    lazy: lazyComponent(() => import("@/pages/LegalPages"), "TermsPage"),
+  },
 
   // 应用路由（包裹 AppShell）
   {
@@ -68,6 +88,10 @@ export const appRoutes: RouteObject[] = [
       {
         path: "templates",
         lazy: lazyComponent(() => import("@/pages/TemplateBrowser"), "TemplateBrowser"),
+      },
+      {
+        path: "settings",
+        lazy: lazyComponent(() => import("@/pages/AccountSettingsPage"), "AccountSettingsPage"),
       },
       {
         element: <AdminRoute />,

@@ -40,6 +40,7 @@ import {
   NetworkError,
   ApiError,
 } from "@/services";
+import { recordModelProcessingConsent } from "@/services/account";
 import { ModuleSelector } from "@/features/modules/ModuleSelector";
 import { ModuleProgress, type ModuleProgressItem } from "@/features/modules/ModuleProgress";
 import { ModuleResultsPanel } from "@/features/modules/ModuleResultsPanel";
@@ -214,6 +215,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const [teachingPlan, setTeachingPlan] = useState<Record<string, unknown> | null>(null);
   const [qualityReport, setQualityReport] = useState<Record<string, unknown> | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [allowMaterialModelProcessing, setAllowMaterialModelProcessing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
   const resumeAttemptedRef = useRef(false);
@@ -381,6 +383,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           input_content: topic.trim(),
           audience: "undergraduate_cs",
           difficulty: "intermediate",
+          constraints: { allow_material_model_processing: allowMaterialModelProcessing },
         });
         effectiveProjectId = res.id;
         realIdRef.current = res.id;
@@ -396,7 +399,21 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     onStepChange("plan");
 
     try {
-      const generation = await startGeneration(effectiveProjectId, "modules", selected);
+      if (allowMaterialModelProcessing) {
+        try {
+          await recordModelProcessingConsent();
+        } catch (err) {
+          // Anonymous local-development mode predates the account consent
+          // endpoint; production auth-required deployments still fail closed.
+          if (!(err instanceof ApiError && err.status === 401)) throw err;
+        }
+      }
+      const generation = await startGeneration(
+        effectiveProjectId,
+        "modules",
+        selected,
+        { allow_material_model_processing: allowMaterialModelProcessing },
+      );
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
@@ -442,7 +459,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "生成启动失败");
     }
-  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout]);
+  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing]);
 
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
@@ -577,6 +594,20 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
               defaultSelected={selectedModules}
             />
           </div>
+          <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4"
+              checked={allowMaterialModelProcessing}
+              onChange={(event) => setAllowMaterialModelProcessing(event.target.checked)}
+            />
+            <span>
+              <span className="font-medium">允许将本项目选入的课件片段发送给模型</span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                仅在你明确勾选时处理材料；数据会发送到你配置的 DeepSeek/阿里百炼账户，并记录本次同意。
+              </span>
+            </span>
+          </label>
         </div>
       )}
 

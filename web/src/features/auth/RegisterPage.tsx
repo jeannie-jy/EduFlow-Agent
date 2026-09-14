@@ -35,7 +35,7 @@ export function RegisterPage() {
     try {
       const user = await register({ nickname, email, password });
       setAuthState({ id: user.id, isAuthenticated: true, nickname: user.nickname, email: user.email, role: user.role });
-      navigate("/app");
+      navigate(user.email_verified ? "/app" : "/verify-email");
     } catch {
       setErrors({ email: "注册失败，该邮箱可能已被使用" });
     } finally {
@@ -120,7 +120,7 @@ export function RegisterPage() {
             onChange={(e) => setAcceptedTerms(e.target.checked)}
           />
           <Label htmlFor="terms" className="text-sm text-slate-500 cursor-pointer">
-            我已阅读并同意 EduFlow 服务条款和隐私政策
+            我已阅读并同意 <Link to="/terms" className="text-indigo-600">服务条款</Link>和<Link to="/privacy" className="text-indigo-600">隐私政策</Link>
           </Label>
         </div>
         {errors.acceptedTerms && <p className="text-xs text-red-500">{errors.acceptedTerms}</p>}

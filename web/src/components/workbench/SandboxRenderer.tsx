@@ -13,7 +13,7 @@
  * - 转译错误在宿主侧捕获并显示友好错误面板，运行时错误由 iframe 内 window.onerror 捕获
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import tailwindPreflight from "../../../node_modules/tailwindcss/preflight.css?raw";
 
 // 本地 React 18 UMD（react 包的 exports 未暴露 ./umd/*，用相对路径绕过）
@@ -377,6 +377,18 @@ export function SandboxRenderer({
     () => (compiled === null || utilityCss === null ? "" : buildHtml(compiled, utilityCss, experienceKind)),
     [compiled, utilityCss, experienceKind],
   );
+  const frameRef = useRef<HTMLIFrameElement>(null);
+
+  const loadSandbox = () => {
+    if (!srcDoc) return;
+    frameRef.current?.contentWindow?.postMessage(
+      { type: "eduflow:sandbox-document", html: srcDoc },
+      // A sandbox without allow-same-origin has an opaque target origin. The
+      // target is still the exact iframe WindowProxy and the bootstrap checks
+      // both event.source and the parent URL origin before accepting the data.
+      "*",
+    );
+  };
 
   if (!code) {
     return (
@@ -405,7 +417,10 @@ export function SandboxRenderer({
 
   return (
     <iframe
-      srcDoc={srcDoc}
+      ref={frameRef}
+      key={srcDoc}
+      src="/sandbox.html"
+      onLoad={loadSandbox}
       sandbox="allow-scripts"
       className="w-full min-h-[760px] border-0 bg-[var(--background)]"
       title="交互推演"

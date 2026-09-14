@@ -12,6 +12,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<LoginErrors>({});
   const [submitting, setSubmitting] = useState(false);
@@ -24,9 +25,9 @@ export function LoginPage() {
 
     setSubmitting(true);
     try {
-      const user = await login({ email, password });
+      const user = await login({ email, password, totp_code: totpCode || undefined });
       setAuthState({ id: user.id, isAuthenticated: true, nickname: user.nickname, email: user.email, role: user.role });
-      navigate("/app");
+      navigate(user.email_verified ? "/app" : "/verify-email");
     } catch {
       setErrors({ password: "邮箱或密码错误，请重试" });
     } finally {
@@ -51,6 +52,11 @@ export function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
           />
           {errors.email && <p className="text-xs text-red-500">{errors.email}</p>}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="totp-code">管理员验证码（如已启用 MFA）</Label>
+          <Input id="totp-code" inputMode="numeric" autoComplete="one-time-code" placeholder="6 位验证码" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
         </div>
 
         <div className="space-y-2">
@@ -79,6 +85,7 @@ export function LoginPage() {
         <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? "正在进入…" : "登录 EduFlow"}
         </Button>
+        <p className="text-right text-sm"><Link to="/forgot-password" className="text-indigo-600">忘记密码？</Link></p>
       </form>
 
       <p className="mt-6 text-center text-sm text-slate-500">
