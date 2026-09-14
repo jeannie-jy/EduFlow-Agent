@@ -1,0 +1,48 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+    ".pytest-tmp",
+    "tests/fixtures/manim_golden",
+]
+
+[tool.ruff.lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "RUF015",
+    "RUF022",
+    "RUF100",
+]
+ignore = [
+    # FastAPI intentionally declares Depends(), Query(), Cookie(), and Header()
+    # in function defaults as part of its dependency-injection API.
+    "B008",
+    # Keep established Enum and generic syntax; these rewrites are stylistic
+    # and can change public type/runtime behavior.
+    "UP042",
+    "UP047",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    # Some negative-path tests intentionally assert any validation exception.
+    "B017",
+    # Nested patch/raises blocks and deliberate exception suppression make test
+    # setup and intent clearer than flattened context-manager lists.
+    "SIM105",
+    "SIM117",
+]
+"schema/__init__.py" = [
+    # This compatibility module intentionally re-exports the DSL surface.
+    "F403",
+    "F405",
+]
+"alembic/env.py" = ["E402"]
+"tests/test_workflow_trace.py" = ["E402"]
