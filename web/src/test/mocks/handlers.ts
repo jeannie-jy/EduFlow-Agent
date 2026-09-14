@@ -10,6 +10,25 @@ import { setupServer } from "msw/node";
 // ============================================================================
 
 export const handlers = [
+  // ── Auth session bootstrap ───────────────────────────────
+  http.get("http://localhost:8000/api/auth/me", () => {
+    const cached = localStorage.getItem("eduflow-auth");
+    if (!cached) {
+      return HttpResponse.json(
+        { error: { code: "UNAUTHORIZED", message: "Authentication required" } },
+        { status: 401 },
+      );
+    }
+    const state = JSON.parse(cached) as { id?: string; nickname: string; email: string; role?: string };
+    return HttpResponse.json({
+      id: state.id ?? "test-user",
+      nickname: state.nickname,
+      email: state.email,
+      role: state.role ?? "teacher",
+      email_verified: true,
+    });
+  }),
+
   // ── Projects ──────────────────────────────────────────────
   http.get("http://localhost:8000/api/projects", () => {
     return HttpResponse.json({
@@ -74,6 +93,11 @@ export const handlers = [
 
   http.delete("http://localhost:8000/api/projects/:id", () => {
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // ── Materials ─────────────────────────────────────────────
+  http.get("http://localhost:8000/api/materials", () => {
+    return HttpResponse.json({ items: [] });
   }),
 
   // ── Generate ──────────────────────────────────────────────

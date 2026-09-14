@@ -450,7 +450,7 @@ async def login(
 
 
 @router.get("/me")
-async def me(user: User | None = Depends(get_current_user)) -> dict[str, str]:
+async def me(user: User | None = Depends(get_current_user)) -> dict[str, object]:
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return _public_user(user)

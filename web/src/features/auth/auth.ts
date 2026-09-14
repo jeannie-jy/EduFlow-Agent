@@ -1,6 +1,6 @@
 /** 认证表单校验与后端会话 API。 */
 
-import { api } from "@/services/api-client";
+import { api, ApiError, NetworkError, TimeoutError } from "@/services/api-client";
 
 export type LoginValues = {
   email: string;
@@ -18,6 +18,50 @@ export type RegistrationValues = {
 
 export type LoginErrors = Partial<Record<keyof LoginValues, string>>;
 export type RegistrationErrors = Partial<Record<keyof RegistrationValues, string>>;
+
+export function getSafeAuthRedirect(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/app";
+  return value;
+}
+
+export function getRegistrationErrorMessage(error: unknown): string {
+  if (error instanceof TimeoutError) {
+    return "注册请求超时，请稍后重试";
+  }
+  if (error instanceof NetworkError) {
+    return "无法连接到服务器，请检查网络或确认后端已启动";
+  }
+  if (!(error instanceof ApiError)) {
+    return "注册失败，请稍后重试";
+  }
+
+  if (error.status === 409) {
+    return "该邮箱已注册，请直接登录或找回密码";
+  }
+  if (error.status === 429) {
+    return "注册尝试过于频繁，请稍后再试";
+  }
+  if (error.status === 403) {
+    return "当前暂未开放新用户注册";
+  }
+  if (error.status === 422) {
+    const message = error.message.toLowerCase();
+    if (message.includes("challenge")) {
+      return "注册验证已失效，请刷新页面后重试";
+    }
+    if (message.includes("terms") || message.includes("privacy") || message.includes("policy")) {
+      return "服务条款或隐私政策已更新，请刷新页面后重新确认";
+    }
+    if (message.includes("password")) {
+      return "密码需至少 8 位，并同时包含字母和数字";
+    }
+    return "注册信息未通过验证，请检查后重试";
+  }
+  if (error.status >= 500) {
+    return "注册服务暂时不可用，请稍后重试";
+  }
+  return "注册失败，请稍后重试";
+}
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPattern = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;

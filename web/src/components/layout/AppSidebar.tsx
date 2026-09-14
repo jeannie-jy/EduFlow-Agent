@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { EduFlowBrand } from "@/components/brand/EduFlowBrand";
-import { getAuthState } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Sidebar,
@@ -34,7 +34,7 @@ const navigationItems = [
 export function AppSidebar() {
   const { state, isMobile, setOpenMobile } = useSidebar();
   const { pathname } = useLocation();
-  const isAdmin = getAuthState()?.role === "admin";
+  const isAdmin = useAuth().state?.role === "admin";
   const visibleItems = isAdmin
     ? [...navigationItems, { label: "用户与权限", to: "/app/admin/users", icon: ShieldCheckIcon, end: false }]
     : navigationItems;

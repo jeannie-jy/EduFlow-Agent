@@ -4,7 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "./AuthShell";
-import { register, validateRegistration, type RegistrationErrors } from "./auth";
+import {
+  getRegistrationErrorMessage,
+  register,
+  validateRegistration,
+  type RegistrationErrors,
+} from "./auth";
 import { setAuthState } from "@/lib/auth";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -36,8 +41,8 @@ export function RegisterPage() {
       const user = await register({ nickname, email, password });
       setAuthState({ id: user.id, isAuthenticated: true, nickname: user.nickname, email: user.email, role: user.role });
       navigate(user.email_verified ? "/app" : "/verify-email");
-    } catch {
-      setErrors({ email: "注册失败，该邮箱可能已被使用" });
+    } catch (error) {
+      setErrors({ email: getRegistrationErrorMessage(error) });
     } finally {
       setSubmitting(false);
     }
@@ -45,8 +50,8 @@ export function RegisterPage() {
 
   return (
     <AuthShell>
-      <h1 className="text-2xl font-bold text-slate-900 mb-2">创建你的学习空间</h1>
-      <p className="text-sm text-slate-500 mb-8">注册 EduFlow，开始交互式学习体验</p>
+      <h1 className="mb-2 text-2xl font-bold text-foreground">创建你的学习空间</h1>
+      <p className="mb-8 text-sm text-muted-foreground">注册 EduFlow，开始交互式学习体验</p>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="space-y-2">
@@ -88,7 +93,7 @@ export function RegisterPage() {
             />
             <button
               type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? "隐藏密码" : "显示密码"}
             >
@@ -115,12 +120,12 @@ export function RegisterPage() {
           <input
             id="terms"
             type="checkbox"
-            className="mt-1 size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            className="mt-1 size-4 rounded border-input text-accent-foreground focus:ring-ring"
             checked={acceptedTerms}
             onChange={(e) => setAcceptedTerms(e.target.checked)}
           />
-          <Label htmlFor="terms" className="text-sm text-slate-500 cursor-pointer">
-            我已阅读并同意 <Link to="/terms" className="text-indigo-600">服务条款</Link>和<Link to="/privacy" className="text-indigo-600">隐私政策</Link>
+          <Label htmlFor="terms" className="cursor-pointer text-sm text-muted-foreground">
+            我已阅读并同意 <Link to="/terms" className="text-accent-foreground transition-colors hover:text-accent-foreground/80">服务条款</Link>和<Link to="/privacy" className="text-accent-foreground transition-colors hover:text-accent-foreground/80">隐私政策</Link>
           </Label>
         </div>
         {errors.acceptedTerms && <p className="text-xs text-red-500">{errors.acceptedTerms}</p>}
@@ -130,9 +135,9 @@ export function RegisterPage() {
         </Button>
       </form>
 
-      <p className="mt-6 text-center text-sm text-slate-500">
+      <p className="mt-6 text-center text-sm text-muted-foreground">
         已有账号？{" "}
-        <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-500">
+        <Link to="/login" className="font-medium text-accent-foreground transition-colors hover:text-accent-foreground/80">
           立即登录
         </Link>
       </p>
