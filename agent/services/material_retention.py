@@ -57,6 +57,10 @@ async def run_material_retention(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             await cleanup_expired_materials()
+            from services.account_deletion import process_due_deletions
+            removed_accounts = await process_due_deletions()
+            if removed_accounts:
+                logger.info("due accounts removed: count=%d", removed_accounts)
         except Exception:
             logger.exception("material retention cleanup failed")
         try:

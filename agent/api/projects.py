@@ -22,7 +22,7 @@ from schema.project import ProjectCreateRequest
 from services.audit import record_audit
 
 from .auth import get_current_user, is_admin, require_editor
-from .deps import parse_project_id
+from .deps import ensure_project_access, parse_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,17 @@ async def create_project(
 ) -> dict:
     """创建推演项目。"""
     from db.models import Project
+
+    if current_user is not None:
+        from services.quota import QuotaExceededError, ensure_project_capacity
+        try:
+            await ensure_project_capacity(session, user_id=current_user.id)
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail={"error": {"code": "QUOTA_EXCEEDED", "message": "Project quota exceeded",
+                        "details": {"resource": exc.resource, "limit": exc.limit}}},
+            ) from exc
 
     project = Project(
         id=uuid.uuid4(),
@@ -146,6 +157,7 @@ async def list_projects(
 async def get_project(
     project_id: str,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """获取项目详情（含最新 DSL）。"""
     from db.models import Frame, Project
@@ -154,6 +166,7 @@ async def get_project(
     project = await session.get(Project, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     # 获取帧数量
     frame_count_result = await session.execute(
@@ -201,6 +214,7 @@ async def delete_project(
     project = await session.get(Project, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     await session.delete(project)
     record_audit(

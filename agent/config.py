@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import base64
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +31,17 @@ class Settings(BaseSettings):
     app_version: str = "0.9.0"  # 版本号唯一来源（/api/health 与 FastAPI version 同源）
     log_level: str = "INFO"
     log_format: str = "text"  # text | json
+    environment: Literal["development", "test", "staging", "production"] = "development"
+    public_origin: str = "http://localhost:5173"
+    enforce_origin_check: bool = False
+    trusted_proxy_ips: str = ""
+    expose_api_docs: bool = True
+    metrics_access_token: str = ""
+    # Only one dedicated maintenance worker should run retention and account
+    # deletion loops in a multi-replica deployment. Local Compose keeps the
+    # historical default for convenience; production sets this false on API
+    # replicas and runs the maintenance service separately.
+    run_maintenance: bool = True
 
     # ── 数据库 ────────────────────────────────────────────
     db_user: str = "agent"
@@ -92,6 +105,21 @@ class Settings(BaseSettings):
     llm_output_cost_per_million: float = Field(default=0.0, ge=0)
     llm_request_max_tokens: int = Field(default=200_000, ge=1, le=10_000_000)
     llm_request_max_cost_usd: float = Field(default=10.0, ge=0.01, le=10_000)
+    byok_required: bool = False
+    credential_kms_backend: Literal["local", "http"] = "local"
+    credential_kek_b64: str = ""
+    credential_kek_version: str = "local-v1"
+    credential_fingerprint_key_b64: str = ""
+    credential_kms_wrap_url: str = ""
+    credential_kms_unwrap_url: str = ""
+    credential_kms_bearer_token: str = ""
+    credential_kms_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+    credential_cache_seconds: int = Field(default=30, ge=0, le=300)
+    deepseek_endpoint: str = "https://api.deepseek.com/v1"
+    deepseek_model: str = "deepseek-chat"
+    dashscope_endpoint: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    dashscope_model: str = "qwen-plus"
+    dashscope_embedding_model: str = "text-embedding-v4"
 
     # ── Embedding ─────────────────────────────────────────
     embedding_endpoint: str = "https://api.openai.com/v1"
@@ -196,6 +224,18 @@ class Settings(BaseSettings):
     auth_required: bool = False
     auth_cookie_secure: bool = False
     auth_session_days: int = Field(default=14, ge=1, le=90)
+    auth_allow_registration: bool = True
+    auth_require_email_verification: bool = False
+    auth_registration_challenge_required: bool = False
+    auth_registration_challenge_secret: str = ""
+    auth_registration_challenge_difficulty: int = Field(default=3, ge=1, le=6)
+    auth_token_minutes: int = Field(default=30, ge=5, le=1440)
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
     auth_login_attempts: int = Field(default=10, ge=1, le=1000)
     auth_login_window_seconds: int = Field(default=300, ge=1, le=86400)
     auth_register_attempts: int = Field(default=5, ge=1, le=1000)
@@ -208,8 +248,97 @@ class Settings(BaseSettings):
     audit_archive_max_events: int = Field(default=10000, ge=1, le=100000)
     audit_archive_hmac_key: str = ""
 
+    # Public beta infrastructure quotas. Provider token charges belong to BYOK users.
+    quota_generation_daily: int = Field(default=5, ge=1, le=10000)
+    quota_generation_monthly: int = Field(default=50, ge=1, le=100000)
+    quota_video_daily: int = Field(default=1, ge=0, le=1000)
+    quota_video_monthly: int = Field(default=5, ge=0, le=10000)
+    quota_projects: int = Field(default=50, ge=1, le=100000)
+    quota_material_bytes: int = Field(default=500 * 1024 * 1024, ge=1)
+    quota_artifact_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
+    quota_generation_concurrent: int = Field(default=1, ge=1, le=100)
+    quota_video_concurrent: int = Field(default=1, ge=1, le=100)
+    video_public_enabled: bool = True
+
+    # OTLP/HTTP tracing. Header value uses the standard comma-separated
+    # key=value format and must be injected by the deployment secret manager.
+    otel_enabled: bool = False
+    otel_service_name: str = "eduflow-agent"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_exporter_otlp_headers: str = ""
+    otel_trace_sample_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
+
 
 @lru_cache
 def get_settings() -> Settings:
     """获取配置单例。"""
     return Settings()
+
+
+def validate_runtime_settings(settings: Settings) -> None:
+    """Fail closed when a staging/production deployment uses unsafe defaults."""
+    if settings.environment not in {"staging", "production"}:
+        return
+    errors: list[str] = []
+    if not settings.auth_required:
+        errors.append("AUTH_REQUIRED must be true")
+    if not settings.auth_cookie_secure:
+        errors.append("AUTH_COOKIE_SECURE must be true")
+    if not settings.enforce_origin_check:
+        errors.append("ENFORCE_ORIGIN_CHECK must be true")
+    if not settings.public_origin.startswith("https://"):
+        errors.append("PUBLIC_ORIGIN must use https")
+    if settings.expose_api_docs:
+        errors.append("EXPOSE_API_DOCS must be false")
+    if not settings.metrics_access_token:
+        errors.append("METRICS_ACCESS_TOKEN must be provided for internal scrapes")
+    if not settings.byok_required:
+        errors.append("BYOK_REQUIRED must be true")
+    if settings.credential_kms_backend != "http":
+        errors.append("CREDENTIAL_KMS_BACKEND must be http")
+    if not settings.credential_kms_wrap_url.startswith("https://"):
+        errors.append("CREDENTIAL_KMS_WRAP_URL must use https")
+    if not settings.credential_kms_unwrap_url.startswith("https://"):
+        errors.append("CREDENTIAL_KMS_UNWRAP_URL must use https")
+    if not settings.credential_kms_bearer_token:
+        errors.append("CREDENTIAL_KMS_BEARER_TOKEN must be provided by the secret manager")
+    if not settings.credential_fingerprint_key_b64:
+        errors.append("CREDENTIAL_FINGERPRINT_KEY_B64 must be provided by the secret manager")
+    else:
+        try:
+            fingerprint_key = base64.b64decode(settings.credential_fingerprint_key_b64, validate=True)
+            if len(fingerprint_key) < 32:
+                errors.append("CREDENTIAL_FINGERPRINT_KEY_B64 must decode to at least 32 bytes")
+        except Exception:
+            errors.append("CREDENTIAL_FINGERPRINT_KEY_B64 must be valid base64")
+    for label, endpoint, expected_host in (
+        ("DEEPSEEK_ENDPOINT", settings.deepseek_endpoint, "api.deepseek.com"),
+        ("DASHSCOPE_ENDPOINT", settings.dashscope_endpoint, "dashscope.aliyuncs.com"),
+    ):
+        parsed = urlsplit(endpoint)
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        if (
+            parsed.scheme != "https"
+            or (parsed.hostname or "").lower() != expected_host
+            or port not in {None, 443}
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            errors.append(f"{label} must be the HTTPS {expected_host} endpoint")
+    if settings.llm_api_key or settings.embedding_api_key or settings.llm_backup_api_key:
+        errors.append("Global LLM/embedding keys must be empty; production uses BYOK only")
+    if not settings.trusted_proxy_ips:
+        errors.append("TRUSTED_PROXY_IPS must name the ingress proxy network")
+    if settings.auth_allow_registration and not settings.auth_require_email_verification:
+        errors.append("AUTH_REQUIRE_EMAIL_VERIFICATION must be true when registration is open")
+    if settings.auth_allow_registration and (not settings.smtp_host or not settings.smtp_from):
+        errors.append("SMTP_HOST and SMTP_FROM are required when registration is open")
+    if settings.auth_allow_registration and settings.auth_registration_challenge_required and not settings.auth_registration_challenge_secret:
+        errors.append("AUTH_REGISTRATION_CHALLENGE_SECRET is required when registration challenges are enabled")
+    if errors:
+        raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))

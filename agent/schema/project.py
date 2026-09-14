@@ -28,7 +28,11 @@ class ProjectCreateRequest(BaseModel):
     """创建项目请求。"""
     title: str = Field(..., min_length=1, max_length=500)
     input_type: str = Field(default="natural_language")
-    input_content: str = ""
+    # Keep the initial prompt bounded. Large source material belongs in the
+    # material upload flow where byte quotas, retention and sandbox parsing
+    # apply; accepting an unbounded JSON string here would be an easy cost and
+    # memory-amplification path for a public API.
+    input_content: str = Field(default="", max_length=50_000)
     audience: AudienceEnum = AudienceEnum.UNDERGRADUATE_CS
     difficulty: DifficultyEnum = DifficultyEnum.INTERMEDIATE
     constraints: dict[str, Any] = Field(default_factory=dict)
@@ -156,7 +160,11 @@ class RecomputeRequest(BaseModel):
 class GenerateRequest(BaseModel):
     """启动生成请求。"""
     action: str = "full"     # full / plan_only / modules
-    modules: list[str] | None = None  # 用户选中的模块列表（前选流程）
+    modules: list[str] | None = Field(default=None, max_length=32)  # 用户选中的模块列表（前选流程）
+    # Explicit per-run data-processing consent.  The API stores this in the
+    # project snapshot and defaults to false, so materials are never silently
+    # forwarded to a model.
+    constraints: dict[str, Any] | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -169,6 +177,7 @@ class ModuleSelectRequest(BaseModel):
     modules: list[str] = Field(
         ...,
         min_length=1,
+        max_length=32,
         description="要生成的模块 ID 列表，如 ['mindmap', 'cards', 'frames']",
     )
 
@@ -207,7 +216,7 @@ class RegenerateRequest(BaseModel):
 
 class RejectPlanRequest(BaseModel):
     """拒绝教学计划请求（含修改意见）。"""
-    feedback: str = Field(default="", description="用户修改意见")
+    feedback: str = Field(default="", max_length=10_000, description="用户修改意见")
 
 
 class ApprovePlanRequest(BaseModel):
@@ -332,7 +341,7 @@ class FeedbackRequest(BaseModel):
     """提交反馈请求。"""
     frame_id: str | None = None
     type: str = "correction"       # rating / correction / suggestion
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=10_000)
     rating: int | None = Field(default=None, ge=1, le=5)
 
 

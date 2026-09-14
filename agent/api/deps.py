@@ -32,3 +32,11 @@ def safe_project_uuid(project_id: str) -> uuid.UUID | None:
         return uuid.UUID(project_id)
     except (ValueError, AttributeError):
         return None
+
+
+def ensure_project_access(project, user) -> None:
+    """Fail closed for authenticated cross-tenant project access."""
+    if user is None or getattr(user, "role", None) == "admin":
+        return
+    if project is None or str(getattr(project, "owner_id", "")) != str(user.id):
+        raise HTTPException(status_code=404, detail="Project not found")

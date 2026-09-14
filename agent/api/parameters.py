@@ -28,7 +28,7 @@ from services.parameter_dependencies import (
 from services.parameter_validation import validate_parameter_changes
 
 from .auth import get_current_user
-from .deps import parse_project_id
+from .deps import ensure_project_access, parse_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,16 @@ router = APIRouter(prefix="/projects", tags=["parameters"])
 async def list_parameters(
     project_id: str,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """获取项目的参数列表。"""
     # 优先从 DSL snapshot 获取
     from db.models import Project as ProjectModel
 
     project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
     if project and project.dsl_snapshot:
         params = deepcopy(project.dsl_snapshot.get("parameters", []))
         if params:
@@ -174,6 +178,7 @@ async def preview_recompute_project(
     project_id: str,
     body: RecomputeRequest,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """Validate changes and preview their deterministic frame impact without writes."""
     from db.models import Project as ProjectModel
@@ -181,6 +186,7 @@ async def preview_recompute_project(
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
     definitions = await _load_definitions(project, project_id, session)
     return _impact_or_422(project, definitions, body.changed_params)
 
@@ -198,6 +204,7 @@ async def recompute_project(
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     changed_params = body.changed_params
 

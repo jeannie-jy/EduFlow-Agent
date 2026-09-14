@@ -1621,7 +1621,10 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     # older prompts without weakening deterministic validation.
     dsl = normalize_dsl(dsl)
     dsl = stabilize_algorithm_trace(dsl)
-    dsl = compile_algorithm_trace(dsl)
+    dsl = compile_algorithm_trace(
+        dsl,
+        compile_sorting=not bool(regeneration_scope),
+    )
     dsl = _sanitize_eval_forbidden_claims(dsl, constraints=constraints)
 
     frame_count = len(dsl["frames"])
@@ -2034,10 +2037,14 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
         new_frames.append(inserted)
         accepted_insertions += 1
 
-    # 重建 DSL
-    new_dsl = normalize_dsl({**dsl, "frames": new_frames})
-    new_dsl = stabilize_algorithm_trace(new_dsl)
-    new_dsl = compile_algorithm_trace(new_dsl)
+    # 重建 DSL。没有接受任何模型修订时保持对象字节级语义不变，避免
+    # “自动修复失败”反而给 artifact 追加状态或报告。
+    if not updated_frames_map and accepted_insertions == 0:
+        new_dsl = dsl
+    else:
+        new_dsl = normalize_dsl({**dsl, "frames": new_frames})
+        new_dsl = stabilize_algorithm_trace(new_dsl)
+        new_dsl = compile_algorithm_trace(new_dsl)
 
     # 更新修订历史
     history = state.get("revision_history", [])

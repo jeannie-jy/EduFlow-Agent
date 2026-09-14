@@ -79,6 +79,18 @@ async def upload_material(
         raise HTTPException(
             status_code=400, detail="文件内容与扩展名不匹配或文件已损坏"
         )
+    if current_user is not None:
+        from services.quota import QuotaExceededError, ensure_material_capacity
+        try:
+            await ensure_material_capacity(
+                session, user_id=current_user.id, incoming_bytes=len(contents)
+            )
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=413,
+                detail={"error": {"code": "QUOTA_EXCEEDED", "message": "Material storage quota exceeded",
+                        "details": {"resource": exc.resource, "limit": exc.limit}}},
+            ) from exc
 
     material_id = uuid.uuid4()
     safe_filename = f"uploaded_{material_id.hex[:8]}{suffix}"

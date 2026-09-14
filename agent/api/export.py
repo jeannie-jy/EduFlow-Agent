@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,9 +32,10 @@ from db.database import get_session
 from db.models import User
 from schema.project import ExportManimRequest
 from services.audit import record_audit
+from services.quota import QuotaExceededError
 
 from .auth import get_current_user, is_admin, require_editor
-from .deps import parse_project_id
+from .deps import ensure_project_access, parse_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,8 @@ async def create_export_job(
 ) -> dict:
     """创建 Manim 视频导出任务。"""
     settings = get_settings()
+    if not settings.video_public_enabled and not is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Video export is not enabled for public accounts")
     if settings.manim_execution_mode != "queue":
         raise HTTPException(
             status_code=503,
@@ -143,8 +146,27 @@ async def create_export_job(
     project = await session.get(Project, pid)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
+    credential_ref = None
+    if current_user is not None and settings.manim_script_mode == "llm":
+        # Capture only the credential reference in the durable job.  The
+        # worker decrypts it just before the provider call; render sandbox
+        # input never contains this value.
+        from db.models import ProviderCredential
 
+        credential = await session.scalar(select(ProviderCredential).where(
+            ProviderCredential.user_id == current_user.id,
+            ProviderCredential.purpose == "generation",
+            ProviderCredential.status == "active",
+        ).order_by(ProviderCredential.version.desc()))
+        if credential is None and settings.byok_required:
+            raise HTTPException(status_code=428, detail="A generation provider credential is required")
+        if credential is not None:
+            credential_ref = {"id": str(credential.id), "version": credential.version}
     normalized_key = idempotency_key.strip() if idempotency_key else None
+    if idempotency_key is not None and not normalized_key:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must not be blank")
+    quota_key = normalized_key or f"export:{uuid.uuid4()}"
     if normalized_key:
         existing = await session.scalar(
             select(ExportJobModel).where(
@@ -159,6 +181,60 @@ async def create_export_job(
                 "status": existing.status,
                 "source_version_id": _source_version_ref(existing),
             }
+
+        # Quota idempotency keys are user-scoped rather than project-scoped.
+        # Reject a key that was already admitted for a different project (or
+        # another resource) instead of letting the unique ledger constraint
+        # turn a harmless client retry into a 500 response.
+        if current_user is not None:
+            from db.models import UsageLedger
+
+            prior_ledger = await session.scalar(select(UsageLedger).where(
+                UsageLedger.user_id == current_user.id,
+                UsageLedger.resource == "video",
+                UsageLedger.idempotency_key == normalized_key,
+            ))
+            if prior_ledger is not None:
+                prior_details = prior_ledger.details if isinstance(prior_ledger.details, dict) else {}
+                if prior_details.get("project_id") not in {None, project_id}:
+                    raise HTTPException(status_code=409, detail="Idempotency key already used for another project")
+                if prior_details.get("job_target") not in {None, "manim_video"}:
+                    raise HTTPException(status_code=409, detail="Idempotency key already used for another export action")
+
+    if current_user is not None:
+        from services.quota import acquire_quota_lock
+        await acquire_quota_lock(session, user_id=current_user.id, resource="video")
+        active_exports = int(await session.scalar(select(func.count(ExportJobModel.id)).where(
+            ExportJobModel.project_id.in_(
+                select(Project.id).where(Project.owner_id == str(current_user.id))
+            ),
+            ExportJobModel.status.in_(("queued", "preparing", "rendering")),
+        )) or 0)
+        from services.quota import quota_limit
+        concurrent_limit = await quota_limit(
+            session, user_id=current_user.id, resource="video_concurrent"
+        )
+        if active_exports >= concurrent_limit:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": "CONCURRENCY_LIMIT", "message": "Another video export is already active",
+                        "details": {"limit": concurrent_limit}}},
+            )
+
+    if current_user is not None:
+        from services.quota import QuotaExceededError, reserve_quota
+        try:
+            await reserve_quota(
+                session, user_id=current_user.id, resource="video",
+                idempotency_key=quota_key,
+                details={"project_id": project_id, "job_target": "manim_video"},
+            )
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail={"error": {"code": "QUOTA_EXCEEDED", "message": "Video quota exceeded",
+                        "details": {"resource": exc.resource, "period": exc.period, "limit": exc.limit}}},
+            ) from exc
 
     from services.project_persistence import load_canonical_project_dsl
 
@@ -193,6 +269,15 @@ async def create_export_job(
             "format": body.format,
             "fps": body.fps,
             "include_subtitles": body.include_subtitles,
+            **({"credential_ref": credential_ref} if credential_ref else {}),
+            **({"quota_ref": {
+                "resource": "video",
+                "idempotency_key": quota_key,
+                # Charge the actor that admitted the job. This keeps admin
+                # impersonation from accidentally settling against the
+                # project owner (or the other way around).
+                "user_id": str(current_user.id),
+            }} if current_user is not None else {}),
         },
     )
     session.add(export_job)
@@ -258,6 +343,7 @@ async def cancel_export_job(
         raise HTTPException(status_code=404, detail="Export job not found")
     if job.status in {"completed", "failed"}:
         raise HTTPException(status_code=409, detail="Export job is already terminal")
+    previous_status = job.status
     if job.status != "cancelled":
         job.status = "cancelled"
         job.worker_id = None
@@ -282,6 +368,26 @@ async def cancel_export_job(
             resource_id=str(jid),
             actor_id=current_user.id if current_user is not None else None,
         )
+        if current_user is not None and isinstance(job.config, dict):
+            quota_ref = job.config.get("quota_ref")
+            quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+            if isinstance(quota_key, str) and quota_key:
+                from services.quota import release_quota, settle_quota
+                quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                try:
+                    admitted_user_id = uuid.UUID(str(quota_user_id or current_user.id))
+                except (TypeError, ValueError):
+                    admitted_user_id = current_user.id
+                if previous_status in {"queued", "preparing"}:
+                    await release_quota(
+                        session, user_id=admitted_user_id, resource="video",
+                        idempotency_key=quota_key,
+                    )
+                else:
+                    await settle_quota(
+                        session, user_id=admitted_user_id, resource="video",
+                        idempotency_key=quota_key,
+                    )
         await session.commit()
     redis_client = await _get_redis()
     if redis_client is not None:
@@ -293,7 +399,14 @@ async def cancel_export_job(
 _pool = ThreadPoolExecutor(max_workers=2)
 
 
-def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> None:
+def _do_export_sync(
+    job_id: str,
+    dsl: dict,
+    config: dict,
+    redis_url: str,
+    credentials=None,
+    llm_limits=None,
+) -> None:
     """同步导出入口（线程池线程中运行）。
 
     线程内创建独立事件循环 + 独立 DB engine：
@@ -312,10 +425,20 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
         from config import get_settings
 
         engine = create_async_engine(get_settings().database_url)
-        loop.run_until_complete(
-            _do_export_async(job_id, dsl, config, redis_url, engine)
-        )
+        from services.provider_credentials import credential_scope
+        with credential_scope(*(credentials or (None, None))):
+            if llm_limits is None:
+                loop.run_until_complete(
+                    _do_export_async(job_id, dsl, config, redis_url, engine)
+                )
+            else:
+                from services.quota import user_llm_limits_scope
+                with user_llm_limits_scope(llm_limits):
+                    loop.run_until_complete(
+                        _do_export_async(job_id, dsl, config, redis_url, engine)
+                    )
     finally:
+        credentials = None
         if engine is not None:
             try:
                 loop.run_until_complete(engine.dispose())
@@ -598,7 +721,13 @@ async def _do_export_async(
             pass
 
 
-async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
+async def _fallback_export(
+    job_id: str,
+    dsl: dict,
+    config: dict,
+    credentials=None,
+    llm_limits=None,
+) -> None:
     """Worker 内导出：在线程中运行同步 Manim 工具链。
 
     Redis 仅用于实时进度追踪（get_export_status 优先读 Redis、回退 DB），
@@ -608,7 +737,8 @@ async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
     settings = get_settings()
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(
-        _pool, _do_export_sync, job_id, dsl, config, settings.redis_url
+        _pool, _do_export_sync, job_id, dsl, config, settings.redis_url, credentials,
+        llm_limits,
     )
 
 
@@ -722,6 +852,17 @@ async def _publish_and_persist_export_artifacts(
             progress=100,
             engine=engine,
         )
+    except QuotaExceededError:
+        await _delete_published_export_artifacts(published)
+        await _update_db_export_status(
+            job_id,
+            "failed",
+            error_log="产物存储配额已用尽，请清理旧成果后重试",
+            retryable_failure=False,
+            error_class="quota_exceeded",
+            engine=engine,
+        )
+        return False, []
     except Exception:
         await _delete_published_export_artifacts(published)
         raise
@@ -1010,7 +1151,7 @@ async def _update_db_export_status(
             跨 loop 使用会抛 InternalClientError）；主事件循环调用时省略。
     """
     try:
-        from db.models import ExportJobAttempt, ExportJobModel
+        from db.models import ExportJobAttempt, ExportJobModel, Project
 
         jid = uuid.UUID(job_id)
 
@@ -1020,6 +1161,21 @@ async def _update_db_export_status(
             job = await session.get(ExportJobModel, jid)
             if job is None or (job.status == "cancelled" and status != "cancelled"):
                 return False
+            previous_status = job.status
+            project = None
+            if status == "completed" and artifacts is not None:
+                project = await session.get(Project, job.project_id)
+                if project is None or not project.owner_id:
+                    return False
+                from services.quota import ensure_artifact_capacity
+                await ensure_artifact_capacity(
+                    session,
+                    user_id=uuid.UUID(project.owner_id),
+                    incoming_bytes=sum(
+                        int(item.get("size_bytes", 0) or 0)
+                        for item in artifacts if isinstance(item, dict)
+                    ),
+                )
             job.status = status
             job.worker_id = None
             job.lease_expires_at = None
@@ -1046,6 +1202,30 @@ async def _update_db_export_status(
                         error_class=error_class if status == "failed" else None,
                     )
                 )
+                quota_ref = (job.config or {}).get("quota_ref") if isinstance(job.config, dict) else None
+                quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+                if isinstance(quota_key, str) and quota_key:
+                    if project is None:
+                        project = await session.get(Project, job.project_id)
+                    if project is not None and project.owner_id:
+                        from services.quota import release_quota, settle_quota
+                        quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                        try:
+                            owner_id = uuid.UUID(str(quota_user_id or project.owner_id))
+                        except (TypeError, ValueError):
+                            owner_id = uuid.UUID(str(project.owner_id))
+                        if status == "cancelled" and previous_status in {"queued", "preparing"}:
+                            await release_quota(
+                                session, user_id=owner_id, resource="video",
+                                idempotency_key=quota_key,
+                            )
+                        elif status == "completed" or status == "cancelled" or (
+                            status == "failed" and not retryable_failure
+                        ):
+                            await settle_quota(
+                                session, user_id=owner_id, resource="video",
+                                idempotency_key=quota_key,
+                            )
             await session.commit()
             return True
 
@@ -1059,6 +1239,8 @@ async def _update_db_export_status(
 
             async with async_session_factory() as session:
                 return await apply_status(session)
+    except QuotaExceededError:
+        raise
     except Exception:
         logger.warning("导出状态 DB 同步失败")
         return False
@@ -1106,6 +1288,7 @@ async def get_export_status(
             }
 
             if status == "completed":
+                from db.models import Project
                 artifacts = data.get("artifacts", [])
                 result["artifacts"] = [
                     {
@@ -1125,6 +1308,22 @@ async def get_export_status(
                         job.status = "completed"
                         job.progress_pct = 100
                         job.artifacts = artifacts
+                        if isinstance(job.config, dict):
+                            quota_ref = job.config.get("quota_ref")
+                            quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+                            if isinstance(quota_key, str) and current_user is not None:
+                                project = await session.get(Project, job.project_id)
+                                if project is not None and project.owner_id:
+                                    from services.quota import settle_quota
+                                    quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                                    try:
+                                        admitted_user_id = uuid.UUID(str(quota_user_id or project.owner_id))
+                                    except (TypeError, ValueError):
+                                        admitted_user_id = uuid.UUID(str(project.owner_id))
+                                    await settle_quota(
+                                        session, user_id=admitted_user_id,
+                                        resource="video", idempotency_key=quota_key,
+                                    )
                         await session.commit()
 
             return result

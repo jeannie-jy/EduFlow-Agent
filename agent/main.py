@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import secrets
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,22 @@ from db.database import get_readonly_session
 logger = logging.getLogger(__name__)
 
 
+async def require_metrics_access(request: Request) -> None:
+    """Keep operational metrics off the public surface in deployed environments."""
+    settings = get_settings()
+    if settings.environment not in {"staging", "production"}:
+        return
+    supplied = request.headers.get("x-metrics-token", "")
+    if not supplied:
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            supplied = authorization[7:].strip()
+    expected = settings.metrics_access_token
+    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+        # Do not advertise an operational endpoint to unauthenticated clients.
+        raise HTTPException(status_code=404, detail="Not found")
+
+
 # ── Lifespan ──────────────────────────────────────────────────
 
 
@@ -31,6 +48,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期：启动时配置日志，关闭时释放资源。"""
     settings = get_settings()
+    from config import validate_runtime_settings
+    validate_runtime_settings(settings)
     _setup_logging(settings)
     logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
@@ -57,20 +76,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("模块生成器注册失败: %s", exc)
 
-    from services.material_retention import run_material_retention
+    if settings.environment in {"staging", "production"}:
+        # Readiness must never advertise a healthy deployment whose durable
+        # interrupt/resume store has silently fallen back to process memory.
+        from agents.graph import get_graph_async
+
+        await get_graph_async()
 
     retention_stop = asyncio.Event()
-    retention_task = asyncio.create_task(run_material_retention(retention_stop))
+    retention_task = None
+    if settings.run_maintenance:
+        from services.material_retention import run_material_retention
+
+        retention_task = asyncio.create_task(run_material_retention(retention_stop))
 
     # DB engine、Redis 与 LLM client 均按首次使用惰性建立连接。
     yield
 
     retention_stop.set()
-    retention_task.cancel()
-    try:
-        await retention_task
-    except asyncio.CancelledError:
-        pass
+    if retention_task is not None:
+        retention_task.cancel()
+        try:
+            await retention_task
+        except asyncio.CancelledError:
+            pass
 
     # 关闭 Agent checkpointer 连接
     try:
@@ -116,25 +145,34 @@ def create_app() -> FastAPI:
         description="面向计算机科学教育的自主 Agent 教学推演系统",
         version=settings.app_version,
         lifespan=lifespan,
+        docs_url="/docs" if settings.expose_api_docs else None,
+        redoc_url="/redoc" if settings.expose_api_docs else None,
+        openapi_url="/openapi.json" if settings.expose_api_docs else None,
     )
 
-    # CORS — MVP 阶段允许本地开发来源
+    from services.otel import configure_otel
+
+    configure_otel(app)
+
+    allowed_origins = [settings.public_origin.rstrip("/")]
+    if settings.environment in {"development", "test"}:
+        allowed_origins.extend([
+            "http://localhost:5173", "http://localhost:3000",
+            "http://127.0.0.1:5173", "http://127.0.0.1:3000",
+        ])
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=list(dict.fromkeys(allowed_origins)),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "Idempotency-Key"],
+        allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-CSRF-Token"],
     )
 
     # 请求日志与 request_id 追踪
     from api.middleware import RequestLoggingMiddleware
     app.add_middleware(RequestLoggingMiddleware)
+    from api.middleware import SecurityMiddleware
+    app.add_middleware(SecurityMiddleware)
 
     # 全局异常处理程序（统一错误响应格式）
     from api.error_handlers import register_error_handlers
@@ -210,6 +248,7 @@ async def readiness_check(response: Response) -> dict[str, object]:
 @app.get("/api/metrics", tags=["system"])
 async def process_metrics(
     session: AsyncSession = Depends(get_readonly_session),
+    _metrics_access: None = Depends(require_metrics_access),
 ) -> dict[str, object]:
     """Process telemetry plus cross-process aggregates from durable state."""
     from services.operational_metrics import operational_metrics_snapshot
@@ -223,6 +262,7 @@ async def process_metrics(
 @app.get("/api/metrics/prometheus", tags=["system"], response_class=PlainTextResponse)
 async def prometheus_metrics(
     session: AsyncSession = Depends(get_readonly_session),
+    _metrics_access: None = Depends(require_metrics_access),
 ) -> str:
     from services.operational_metrics import operational_metrics_snapshot, prometheus_text
 

@@ -54,6 +54,16 @@ async def retrieve_knowledge_context(
 ) -> dict[str, Any]:
     settings = get_settings()
     search_queries = queries or [query]
+    embedding_degraded = False
+    # Test fixtures and lightweight callers may provide only retrieval knobs;
+    # treat the absent deployment flag as the local-development default.
+    if getattr(settings, "byok_required", False):
+        # Credential scoping is request-local. A missing embedding credential
+        # is an intentional quality downgrade, not an invitation to use a
+        # platform-wide key; surface that fact to traces and the UI.
+        from services.provider_credentials import current_embedding_credential
+
+        embedding_degraded = current_embedding_credential() is None
     # For an explicit unknown/private-topic request, generated objectives are
     # not independent evidence. Searching them can turn a semantic near-match
     # (e.g. a generic DP document) into a false positive and defeat abstention.
@@ -101,7 +111,20 @@ async def retrieve_knowledge_context(
                 ]
     except Exception as exc:
         logger.warning("workflow retrieval unavailable; continuing without evidence: %s", exc)
-        return {"status": "unavailable", "query": query, "sources": [], "error_type": type(exc).__name__}
+        return {
+            "status": "unavailable",
+            "query": query,
+            "sources": [],
+            "error_type": type(exc).__name__,
+            **(
+                {
+                    "mode": "keyword",
+                    "quality_notice": "Embedding 未配置，检索已降级为关键词匹配。",
+                }
+                if embedding_degraded
+                else {}
+            ),
+        }
 
     sources = []
     used_chars = 0
@@ -131,4 +154,10 @@ async def retrieve_knowledge_context(
         "context_chars": used_chars,
         "truncated": len(sources) < len(rows),
         "sources": sources,
+        "mode": "keyword" if embedding_degraded else "semantic",
+        **(
+            {"quality_notice": "Embedding 未配置，检索已降级为关键词匹配。"}
+            if embedding_degraded
+            else {}
+        ),
     }

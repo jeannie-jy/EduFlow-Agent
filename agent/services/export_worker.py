@@ -34,39 +34,59 @@ async def claim_export_job() -> dict[str, Any] | None:
     async with async_session_factory() as session:
         # A worker that repeatedly dies eventually leaves a terminal, inspectable
         # record instead of an immortal ``rendering`` row.
-        terminal_expired = select(ExportJobModel.id).where(
-            ExportJobModel.status == "rendering",
-            ExportJobModel.lease_expires_at < now,
-            ExportJobModel.attempt_count >= settings.export_worker_max_attempts,
-        )
-        await session.execute(
-            update(ExportJobAttempt)
-            .where(
-                ExportJobAttempt.job_id.in_(terminal_expired),
-                ExportJobAttempt.status == "rendering",
-            )
-            .values(
-                status="failed",
-                finished_at=now,
-                error_class="lease_expired",
-            )
-        )
-        await session.execute(
-            update(ExportJobModel)
+        # Do this row-by-row instead of a bulk update so the quota reservation
+        # reaches a terminal state even when the worker disappeared after its
+        # last heartbeat.  Otherwise a permanently failed render would keep
+        # consuming the user's daily/monthly video allowance forever.
+        expired_result = await session.execute(
+            select(ExportJobModel)
             .where(
                 ExportJobModel.status == "rendering",
                 ExportJobModel.lease_expires_at < now,
                 ExportJobModel.attempt_count >= settings.export_worker_max_attempts,
             )
-            .values(
-                status="failed",
-                error_log="Export worker lease expired after maximum attempts",
-                worker_id=None,
-                lease_expires_at=None,
-                next_attempt_at=None,
-                completed_at=now,
-            )
+            .with_for_update(skip_locked=True)
         )
+        expired_jobs = list(expired_result.scalars().all())
+        if expired_jobs:
+            from services.quota import settle_quota
+
+            for expired in expired_jobs:
+                await session.execute(
+                    update(ExportJobAttempt)
+                    .where(
+                        ExportJobAttempt.job_id == expired.id,
+                        ExportJobAttempt.status == "rendering",
+                    )
+                    .values(
+                        status="failed",
+                        finished_at=now,
+                        error_class="lease_expired",
+                    )
+                )
+                expired.status = "failed"
+                expired.error_log = "Export worker lease expired after maximum attempts"
+                expired.worker_id = None
+                expired.lease_expires_at = None
+                expired.next_attempt_at = None
+                expired.completed_at = now
+                expired.failure_retryable = False
+                quota_ref = (expired.config or {}).get("quota_ref") if isinstance(expired.config, dict) else None
+                quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+                if isinstance(quota_key, str) and quota_key:
+                    project = await session.get(Project, expired.project_id)
+                    if project is not None and project.owner_id:
+                        quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                        try:
+                            admitted_user_id = uuid.UUID(str(quota_user_id or project.owner_id))
+                        except (TypeError, ValueError):
+                            admitted_user_id = uuid.UUID(str(project.owner_id))
+                        await settle_quota(
+                            session,
+                            user_id=admitted_user_id,
+                            resource="video",
+                            idempotency_key=quota_key,
+                        )
         result = await session.execute(
             select(ExportJobModel)
             .where(
@@ -94,6 +114,8 @@ async def claim_export_job() -> dict[str, Any] | None:
             await session.commit()
             return None
         source_version_id = getattr(job, "source_version_id", None)
+        project = await session.get(Project, job.project_id)
+        owner_id = str(project.owner_id) if project is not None and project.owner_id else None
         if isinstance(source_version_id, uuid.UUID):
             source_version = await session.get(ProjectVersion, source_version_id)
             dsl = (
@@ -104,11 +126,39 @@ async def claim_export_job() -> dict[str, Any] | None:
             )
         else:
             # Compatibility path for jobs created before migration 0017.
-            project = await session.get(Project, job.project_id)
             dsl = await load_canonical_project_dsl(project, session) if project else None
         if dsl is None:
+            # The job can become unrenderable after enqueue (for example when
+            # its project is removed during the deletion cooling-off period).
+            # Release an unstarted reservation; a job that had already been
+            # rendering is charged as an attempted/settled task.
+            quota_ref = (job.config or {}).get("quota_ref") if isinstance(job.config, dict) else None
+            quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+            if isinstance(quota_key, str) and quota_key and owner_id:
+                from services.quota import release_quota, settle_quota
+                quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                try:
+                    admitted_user_id = uuid.UUID(str(quota_user_id or owner_id))
+                except (TypeError, ValueError):
+                    admitted_user_id = uuid.UUID(owner_id)
+
+                if job.status in {"queued", "preparing"}:
+                    await release_quota(
+                        session,
+                        user_id=admitted_user_id,
+                        resource="video",
+                        idempotency_key=quota_key,
+                    )
+                else:
+                    await settle_quota(
+                        session,
+                        user_id=admitted_user_id,
+                        resource="video",
+                        idempotency_key=quota_key,
+                    )
             job.status = "failed"
             job.error_log = "Project or exportable frames no longer exist"
+            job.failure_retryable = False
             await session.commit()
             return None
         if job.status == "rendering":
@@ -143,6 +193,7 @@ async def claim_export_job() -> dict[str, Any] | None:
         await session.commit()
         return {
             "job_id": str(job.id),
+            "owner_id": owner_id,
             "attempt_id": str(attempt_id),
             "attempt_no": job.attempt_count,
             "dsl": dsl,
@@ -209,15 +260,47 @@ async def _maintain_export_lease(
 async def run_claimed_export(job: dict[str, Any]) -> None:
     """Run one claimed job while renewing ownership and honoring cancellation."""
     from api.export import _fallback_export
-
+    settings = get_settings()
+    credentials = None
+    llm_limits = None
     heartbeat_stop = asyncio.Event()
-    render_task = asyncio.create_task(
-        _fallback_export(job["job_id"], job["dsl"], job["config"])
-    )
-    heartbeat_task = asyncio.create_task(
-        _maintain_export_lease(job["job_id"], heartbeat_stop)
-    )
+    render_task = None
+    heartbeat_task = None
     try:
+        # An optional creative Manim director is still a provider call. Resolve
+        # the exact credential version captured at enqueue time inside the
+        # trusted worker; the render sandbox never receives this value.
+        from services.provider_credentials import CredentialReferenceUnavailableError
+        credential_ref = (job.get("config") or {}).get("credential_ref")
+        if credential_ref or (
+            getattr(settings, "byok_required", False)
+            and getattr(settings, "manim_script_mode", "deterministic") == "llm"
+        ):
+            owner_id = job.get("owner_id")
+            if not owner_id:
+                raise CredentialReferenceUnavailableError(
+                    "A user-owned credential is required for LLM video scripting"
+                )
+            from db.database import async_session_factory
+            from services.provider_credentials import resolve_credential_reference
+
+            async with async_session_factory() as session:
+                owner_uuid = uuid.UUID(str(owner_id))
+                credentials = await resolve_credential_reference(
+                    session, owner_uuid, credential_ref
+                )
+                from services.quota import resolve_user_llm_limits
+                llm_limits = await resolve_user_llm_limits(session, owner_uuid)
+                await session.commit()
+
+        render_task = asyncio.create_task(
+            _fallback_export(
+                job["job_id"], job["dsl"], job["config"], credentials, llm_limits
+            )
+        )
+        heartbeat_task = asyncio.create_task(
+            _maintain_export_lease(job["job_id"], heartbeat_stop)
+        )
         done, _ = await asyncio.wait(
             {render_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED
         )
@@ -228,23 +311,37 @@ async def run_claimed_export(job: dict[str, Any]) -> None:
         await render_task
         await schedule_export_retry(job["job_id"], int(job.get("attempt_no", 1)))
     except asyncio.CancelledError:
-        render_task.cancel()
-        await asyncio.gather(render_task, return_exceptions=True)
+        if render_task is not None:
+            render_task.cancel()
+            await asyncio.gather(render_task, return_exceptions=True)
         raise
-    except Exception:
+    except Exception as exc:
         from api.export import _update_db_export_status
         from services.redaction import public_failure_message
+        from services.provider_credentials import CredentialReferenceUnavailableError
 
+        attempt_no = int(job.get("attempt_no", 1))
+        # A revoked/rotated credential is a permanent queued-job failure; do
+        # not retry it three times and do not ever fall back to a platform key.
+        final_failure = (
+            attempt_no >= settings.export_worker_max_attempts
+            or isinstance(exc, CredentialReferenceUnavailableError)
+        )
         await _update_db_export_status(
             job["job_id"],
             "failed",
             error_log=public_failure_message("export"),
+            retryable_failure=not final_failure,
         )
-        await schedule_export_retry(job["job_id"], int(job.get("attempt_no", 1)))
+        await schedule_export_retry(job["job_id"], attempt_no)
         raise
     finally:
         heartbeat_stop.set()
-        await asyncio.gather(heartbeat_task, return_exceptions=True)
+        if heartbeat_task is not None:
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+        # Drop the decrypted tuple as soon as the render attempt is over; the
+        # no-network sandbox never receives it and cannot access KMS.
+        credentials = None
 
 
 def export_retry_delay_seconds(attempt_no: int) -> float:

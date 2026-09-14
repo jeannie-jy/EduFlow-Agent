@@ -261,7 +261,8 @@ async def get_graph_async() -> "CompiledStateGraph":
     """异步获取全局 Agent 编排图（在请求上下文中 await）。
 
     首次调用时初始化 Postgres checkpointer（跨请求/重启持久化 interrupt 状态）；
-    不可用时回落 MemorySaver。之后复用单例。
+    开发/测试环境不可用时回落 MemorySaver；staging/production 必须失败关闭，
+    避免把需要跨重启恢复的工作流静默变成进程内状态。
 
     注意：实际图构建委托给 get_graph()，以便测试对 get_graph 的 patch 生效。
     """
@@ -272,6 +273,7 @@ async def get_graph_async() -> "CompiledStateGraph":
 
     if not _checkpointer_initialized:
         _checkpointer_initialized = True
+        stack = None
         try:
             import asyncio as _asyncio
             from contextlib import AsyncExitStack
@@ -291,9 +293,21 @@ async def get_graph_async() -> "CompiledStateGraph":
             _checkpointer = saver
             _checkpointer_stack = stack  # 进程存活期间保持连接
             logger.info("Postgres checkpointer 已初始化")
-        except ImportError:
+        except ImportError as exc:
+            if get_settings().environment in {"staging", "production"}:
+                _checkpointer_initialized = False
+                raise RuntimeError(
+                    "Persistent Postgres checkpointer is required in deployed environments"
+                ) from exc
             logger.info("langgraph-checkpoint-postgres 未安装，使用内存 checkpointer")
         except Exception as exc:
+            if stack is not None:
+                await stack.aclose()
+            if get_settings().environment in {"staging", "production"}:
+                _checkpointer_initialized = False
+                raise RuntimeError(
+                    "Persistent Postgres checkpointer initialization failed"
+                ) from exc
             logger.warning("Postgres checkpointer 初始化失败（%s），使用内存模式", exc)
 
     if _checkpointer is None:

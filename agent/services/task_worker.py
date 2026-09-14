@@ -30,6 +30,31 @@ class PermanentTaskError(RuntimeError):
     """A task cannot succeed by retrying the same persisted input."""
 
 
+async def _finalize_generation_job_quota(
+    session,
+    *,
+    owner_id: str | None,
+    payload: dict[str, Any] | None,
+    released: bool = False,
+) -> None:
+    """Close a feedback-generation reservation exactly once."""
+    if not owner_id or not isinstance(payload, dict):
+        return
+    quota_ref = payload.get("quota_ref")
+    quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+    if not isinstance(quota_key, str) or not quota_key:
+        return
+    from services.quota import release_quota, settle_quota
+
+    fn = release_quota if released else settle_quota
+    await fn(
+        session,
+        user_id=uuid.UUID(str(owner_id)),
+        resource="generation",
+        idempotency_key=quota_key,
+    )
+
+
 def task_retry_delay_seconds(attempt_no: int) -> float:
     settings = get_settings()
     base = min(
@@ -51,6 +76,28 @@ async def claim_background_job() -> dict[str, Any] | None:
             BackgroundJob.lease_expires_at < now,
             BackgroundJob.attempt_count >= settings.task_worker_max_attempts,
         )
+        # Close reservations for workers that disappeared after their final
+        # lease.  Keep the bulk status update below for efficiency, but load
+        # the small terminal set first so quota accounting remains auditable.
+        # Unit-test fakes provide only the three historical execute results;
+        # the real dependency is always an AsyncSession, so the extra read is
+        # limited to production and does not alter the claim protocol.
+        from sqlalchemy.ext.asyncio import AsyncSession
+        if isinstance(session, AsyncSession):
+            expired_result = await session.execute(
+                select(BackgroundJob).where(
+                    BackgroundJob.status == "running",
+                    BackgroundJob.lease_expires_at < now,
+                    BackgroundJob.attempt_count >= settings.task_worker_max_attempts,
+                ).with_for_update(skip_locked=True)
+            )
+            expired_jobs = list(expired_result.scalars().all())
+            for expired in expired_jobs:
+                await _finalize_generation_job_quota(
+                    session,
+                    owner_id=str(expired.owner_id) if getattr(expired, "owner_id", None) else None,
+                    payload=expired.payload if isinstance(expired.payload, dict) else None,
+                )
         await session.execute(
             update(BackgroundJobAttempt)
             .where(
@@ -204,6 +251,8 @@ async def _execute_feedback_reflection(job: dict[str, Any]) -> None:
         merge_dsl_snapshot,
         persist_frames_to_table,
     )
+    from services.provider_credentials import resolve_credential_reference
+    from services.quota import resolve_user_llm_limits
 
     try:
         feedback_id = uuid.UUID(str(job["payload"].get("feedback_id", "")))
@@ -224,6 +273,19 @@ async def _execute_feedback_reflection(job: dict[str, Any]) -> None:
             "content": feedback.content,
             "rating": feedback.rating,
         }
+        owner_id = job.get("owner_id")
+        credentials = (
+            await resolve_credential_reference(
+                session, uuid.UUID(str(owner_id)), job["payload"].get("credential_ref")
+            )
+            if owner_id
+            else (None, None)
+        )
+        llm_limits = (
+            await resolve_user_llm_limits(session, uuid.UUID(str(owner_id)))
+            if owner_id
+            else None
+        )
 
     existing_frame_ids = {
         str(frame.get("frame_id"))
@@ -256,14 +318,24 @@ async def _execute_feedback_reflection(job: dict[str, Any]) -> None:
     graph_config = {"configurable": {"thread_id": f"feedback:{job['job_id']}"}}
     from services.workflow_trace import invoke_graph_traced
 
-    with _workflow_llm_budget():
-        result = await invoke_graph_traced(
-            graph,
-            state,
-            graph_config,
-            project_id=str(project_id),
-            entrypoint="reflection",
-        )
+    from services.provider_credentials import credential_scope
+    from services.quota import user_llm_limits_scope
+    with credential_scope(*credentials):
+        if llm_limits is None:
+            with _workflow_llm_budget():
+                result = await invoke_graph_traced(
+                    graph, state, graph_config,
+                    project_id=str(project_id), entrypoint="reflection",
+                )
+        else:
+            with user_llm_limits_scope(llm_limits):
+                with _workflow_llm_budget():
+                    result = await invoke_graph_traced(
+                        graph, state, graph_config,
+                        project_id=str(project_id), entrypoint="reflection",
+                    )
+    # Do not retain decrypted provider material while persisting the result.
+    credentials = None
     revised_dsl = result.get("dsl") or dsl
 
     now = datetime.now(timezone.utc)
@@ -298,6 +370,11 @@ async def _execute_feedback_reflection(job: dict[str, Any]) -> None:
         queued_job.worker_id = None
         queued_job.lease_expires_at = None
         queued_job.completed_at = now
+        await _finalize_generation_job_quota(
+            session,
+            owner_id=job.get("owner_id"),
+            payload=job.get("payload"),
+        )
         await session.execute(
             update(BackgroundJobAttempt)
             .where(
@@ -464,6 +541,12 @@ async def _mark_task_failure(
                 material = await session.get(Material, material_id)
                 if material is not None:
                     material.status = "parse_failed"
+        if not should_retry:
+            await _finalize_generation_job_quota(
+                session,
+                owner_id=job.get("owner_id"),
+                payload=job.get("payload"),
+            )
         await session.execute(
             update(BackgroundJobAttempt)
             .where(
@@ -507,7 +590,8 @@ async def run_claimed_background_job(job: dict[str, Any]) -> None:
         await asyncio.gather(processing, return_exceptions=True)
         raise
     except Exception as exc:
-        retryable = not isinstance(exc, PermanentTaskError)
+        from services.provider_credentials import CredentialReferenceUnavailableError
+        retryable = not isinstance(exc, (PermanentTaskError, CredentialReferenceUnavailableError))
         await _mark_task_failure(
             job,
             error_class=type(exc).__name__,

@@ -20,6 +20,11 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from config import get_settings
+from services.provider_credentials import (
+    CredentialUnavailableError,
+    current_embedding_credential,
+    current_generation_credential,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +40,20 @@ class EmbeddingDimensionError(RuntimeError):
 
 def _get_llm_client(provider: str = "primary") -> AsyncOpenAI:
     """获取当前线程的 LLM 客户端（每个线程首次调用时创建）。"""
+    scoped = current_generation_credential() if provider == "primary" else None
+    if scoped is not None:
+        import httpx
+        return AsyncOpenAI(
+            base_url=scoped.endpoint,
+            api_key=scoped.api_key,
+            timeout=httpx.Timeout(get_settings().llm_timeout_seconds, connect=10.0),
+            max_retries=0,
+        )
+    # Public deployments are BYOK-only.  Failing here prevents a missed
+    # credential scope (including a newly added worker path) from silently
+    # charging a platform-wide fallback key.
+    if provider == "primary" and get_settings().byok_required:
+        raise CredentialUnavailableError("A user generation credential is required")
     attribute = "client" if provider == "primary" else "backup_client"
     client = getattr(_llm_client_local, attribute, None)
     if client is None:
@@ -59,6 +78,8 @@ def _get_llm_client(provider: str = "primary") -> AsyncOpenAI:
 
 
 def _backup_available(settings) -> bool:
+    if current_generation_credential() is not None:
+        return False
     return bool(
         getattr(settings, "llm_backup_endpoint", "")
         and getattr(settings, "llm_backup_model", "")
@@ -101,6 +122,9 @@ def _schema_mode_rejected(exc: BaseException) -> bool:
 
 
 def _routed_model(settings, explicit_model: str | None, routing_key: str | None) -> str:
+    scoped = current_generation_credential()
+    if scoped is not None:
+        return scoped.model
     if explicit_model:
         return explicit_model
     route = (routing_key or "").split(":", 1)[0]
@@ -110,6 +134,19 @@ def _routed_model(settings, explicit_model: str | None, routing_key: str | None)
 
 def _get_embedding_client() -> AsyncOpenAI:
     """获取当前线程的 Embedding 客户端。"""
+    scoped = current_embedding_credential()
+    if scoped is not None:
+        return AsyncOpenAI(
+            base_url=scoped.endpoint,
+            api_key=scoped.api_key,
+            timeout=get_settings().llm_timeout_seconds,
+            max_retries=0,
+        )
+    if get_settings().byok_required:
+        # Missing embedding BYOK is an intentional keyword-retrieval
+        # downgrade; the retrieval service catches this typed failure and
+        # surfaces the quality warning without using a global key.
+        raise CredentialUnavailableError("An embedding credential is required for semantic retrieval")
     client = getattr(_embedding_client_local, "client", None)
     if client is None:
         settings = get_settings()
@@ -121,6 +158,18 @@ def _get_embedding_client() -> AsyncOpenAI:
         )
         _embedding_client_local.client = client
     return client
+
+
+def _primary_endpoint(settings) -> str:
+    scoped = current_generation_credential()
+    return scoped.endpoint if scoped is not None else settings.llm_endpoint
+
+
+def _embedding_endpoint_model(settings) -> tuple[str, str]:
+    scoped = current_embedding_credential()
+    if scoped is not None:
+        return scoped.endpoint, scoped.model
+    return settings.embedding_endpoint, settings.embedding_model
 
 
 # ── 向后兼容的别名（弃用）────────────────────────────────────
@@ -203,7 +252,7 @@ async def call_llm(
     backup_client = _get_llm_client("backup") if _backup_available(settings) else None
     backup_kwargs = {key: value for key, value in kwargs.items() if key != "extra_body"}
     response, used_fallback = await execute_llm_call_with_fallback(
-        settings.llm_endpoint,
+        _primary_endpoint(settings),
         "chat",
         lambda: client.chat.completions.create(**kwargs),
         fallback_provider=settings.llm_backup_endpoint if backup_client else None,
@@ -244,7 +293,7 @@ async def call_llm(
         duration_ms=duration_ms,
         prompt_version=prompt_version,
         endpoint=(
-            settings.llm_backup_endpoint if used_fallback else settings.llm_endpoint
+            settings.llm_backup_endpoint if used_fallback else _primary_endpoint(settings)
         ),
     )
     return {
@@ -340,9 +389,9 @@ async def call_llm_structured(
         }
         if json_mode:
             primary_kwargs["response_format"] = _structured_response_format(
-                settings, settings.llm_endpoint, output_schema
+                settings, _primary_endpoint(settings), output_schema
             )
-        if disable_thinking and "deepseek.com" in settings.llm_endpoint.lower():
+        if disable_thinking and "deepseek.com" in _primary_endpoint(settings).lower():
             primary_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
         backup_kwargs = {
@@ -358,7 +407,7 @@ async def call_llm_structured(
 
         try:
             response, used_fallback = await execute_llm_call_with_fallback(
-                settings.llm_endpoint,
+                _primary_endpoint(settings),
                 "structured",
                 lambda: client.chat.completions.create(**primary_kwargs),
                 fallback_provider=settings.llm_backup_endpoint if backup_client else None,
@@ -379,7 +428,7 @@ async def call_llm_structured(
             primary_kwargs["response_format"] = {"type": "json_object"}
             backup_kwargs["response_format"] = {"type": "json_object"}
             response, used_fallback = await execute_llm_call_with_fallback(
-                settings.llm_endpoint,
+                _primary_endpoint(settings),
                 "structured.json_object_fallback",
                 lambda: client.chat.completions.create(**primary_kwargs),
                 fallback_provider=settings.llm_backup_endpoint if backup_client else None,
@@ -407,7 +456,7 @@ async def call_llm_structured(
             duration_ms=(time.perf_counter() - request_started) * 1000,
             prompt_version=prompt_version,
             endpoint=(
-                settings.llm_backup_endpoint if used_fallback else settings.llm_endpoint
+                settings.llm_backup_endpoint if used_fallback else _primary_endpoint(settings)
             ),
         )
 
@@ -721,16 +770,16 @@ def _prompt_fingerprint(prompt: str) -> str:
 
 async def generate_embedding(text: str) -> list[float]:
     """生成文本的向量嵌入。"""
-    client = _get_embedding_client()
-
     settings = get_settings()
+    client = _get_embedding_client()
+    embedding_endpoint, embedding_model = _embedding_endpoint_model(settings)
     from services.llm_gateway import execute_llm_call
 
     response = await execute_llm_call(
-        settings.embedding_endpoint,
+        embedding_endpoint,
         "embedding",
         lambda: client.embeddings.create(
-            model=settings.embedding_model,
+            model=embedding_model,
             input=text,
         ),
     )
@@ -744,7 +793,7 @@ async def generate_embedding(text: str) -> list[float]:
     if actual_dimension != expected_dimension:
         raise EmbeddingDimensionError(
             "Embedding dimension mismatch: "
-            f"model={settings.embedding_model}, "
+            f"model={embedding_model}, "
             f"expected={expected_dimension}, got={actual_dimension}. "
             "Set EMBEDDING_DIMENSION to the provider dimension and migrate "
             "knowledge_base.embedding before seeding."

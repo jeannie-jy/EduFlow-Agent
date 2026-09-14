@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 
 from .admin import router as admin_router
 from .audit import router as audit_router
+from .account import router as account_router
 from .auth import require_project_owner
 from .auth import router as auth_router
 from .export import router as export_router
@@ -39,6 +40,7 @@ protected_router.include_router(versions_router)
 protected_router.include_router(jobs_router)
 protected_router.include_router(traces_router)
 protected_router.include_router(audit_router)
+protected_router.include_router(account_router)
 api_router.include_router(protected_router)
 
 

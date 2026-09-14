@@ -474,12 +474,13 @@ def _thread_config(project_id: str) -> dict[str, Any]:
 def _workflow_llm_budget():
     from config import get_settings
 
-    from services.telemetry import llm_budget_scope
+    from services.telemetry import current_llm_budget_limits, llm_budget_scope
 
     settings = get_settings()
+    limits = current_llm_budget_limits()
     return llm_budget_scope(
-        settings.llm_request_max_tokens,
-        settings.llm_request_max_cost_usd,
+        limits[0] if limits else settings.llm_request_max_tokens,
+        limits[1] if limits else settings.llm_request_max_cost_usd,
     )
 
 

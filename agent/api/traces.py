@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import parse_project_id
 from db.database import get_readonly_session
-from db.models import ToolCallTrace, WorkflowNodeRun, WorkflowRun
+from db.models import ToolCallTrace, User, WorkflowNodeRun, WorkflowRun
+
+from .auth import get_current_user
+from .deps import ensure_project_access
 
 router = APIRouter(prefix="/projects", tags=["traces"])
 
@@ -38,7 +41,13 @@ async def list_workflow_runs(
     project_id: str,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
+    from db.models import Project
+    project = await session.get(Project, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
     rows = await session.scalars(
         select(WorkflowRun)
         .where(WorkflowRun.project_id == parse_project_id(project_id))
@@ -53,7 +62,13 @@ async def get_workflow_run(
     project_id: str,
     run_id: str,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
+    from db.models import Project
+    project = await session.get(Project, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    ensure_project_access(project, current_user)
     try:
         parsed_run_id = uuid.UUID(run_id)
     except ValueError as exc:
