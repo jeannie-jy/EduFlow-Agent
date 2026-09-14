@@ -76,8 +76,8 @@ describe("LandingPage", () => {
     });
     renderPage(<LandingPage />);
 
-    expect(screen.getByRole("link", { name: "打开工作台" })).toHaveAttribute("href", "/app");
-    expect(screen.queryByRole("link", { name: "登录" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "打开工作台" })).toHaveAttribute("href", "/app");
+    expect(screen.getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
     expect(screen.queryByRole("link", { name: "开始创建" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "继续上次项目" })).toHaveAttribute("href", "/app");
     expect(screen.getByRole("link", { name: "体验交互推演" })).toHaveAttribute("href", "/explore/dijkstra");
@@ -85,7 +85,7 @@ describe("LandingPage", () => {
     await user.click(screen.getByRole("button", { name: "打开导航" }));
     const mobileNavigation = screen.getByRole("navigation", { name: "移动主导航" });
     expect(within(mobileNavigation).getByRole("link", { name: "打开工作台" })).toHaveAttribute("href", "/app");
-    expect(within(mobileNavigation).queryByRole("link", { name: "登录" })).not.toBeInTheDocument();
+    expect(within(mobileNavigation).getByRole("link", { name: "登录" })).toHaveAttribute("href", "/login");
     expect(within(mobileNavigation).queryByRole("link", { name: "开始创建" })).not.toBeInTheDocument();
   });
 
