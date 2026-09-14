@@ -30,7 +30,7 @@ const subjectLabels: Record<string, string> = {
   algorithm: "算法",
   data_structure: "数据结构",
   operating_system: "操作系统",
-  network: "网络",
+  computer_network: "网络",
   database: "数据库",
 };
 
