@@ -39,7 +39,12 @@ describe("ProjectWorkspace", () => {
 
     await waitFor(() => {
       expect(screen.getByText("输入教学主题")).toBeInTheDocument();
+      expect(screen.getByText("思维导图")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "上传课件" })).toBeInTheDocument();
     });
+    for (const moduleName of ["思维导图", "知识卡片", "交互推演", "小练习", "对比分析", "教学视频", "常见误区", "学习路径", "代码沙箱"]) {
+      expect(screen.getByText(moduleName)).toBeInTheDocument();
+    }
   });
 
   it("renders results step for a completed project", async () => {

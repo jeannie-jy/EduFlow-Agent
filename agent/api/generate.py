@@ -1111,7 +1111,14 @@ async def list_available_modules(
     """
     from db.models import Project as ProjectModel
 
-    project = await session.get(ProjectModel, parse_project_id(project_id))
+    # ``_new`` is the client-side placeholder used before a project is
+    # persisted. Module metadata is global, so it must still be available in
+    # that state instead of falling through to the frontend's reduced fallback.
+    project = (
+        None
+        if project_id == "_new"
+        else await session.get(ProjectModel, parse_project_id(project_id))
+    )
     # Module metadata is not tenant data and historically remains available
     # while a project is being created. If a project exists, still enforce its
     # ownership; the protected router performs the same check for HTTP calls.

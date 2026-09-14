@@ -49,6 +49,37 @@ MAX_PPTX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 MAX_PPTX_COMPRESSION_RATIO = 200
 
 
+@router.get("")
+async def list_materials(
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+) -> dict:
+    """列出当前用户可选入项目的课件材料，不返回材料正文。"""
+    from sqlalchemy import select
+
+    query = select(Material).order_by(Material.created_at.desc())
+    if current_user is None:
+        # Keep anonymous local-development materials isolated from accounts.
+        query = query.where(Material.owner_id.is_(None))
+    else:
+        query = query.where(Material.owner_id == current_user.id)
+
+    rows = list((await session.scalars(query)).all())
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "filename": row.original_filename,
+                "type": Path(row.stored_filename).suffix.lower().lstrip("."),
+                "size_bytes": row.size_bytes,
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.post("/upload", status_code=201)
 async def upload_material(
     file: UploadFile = File(...),

@@ -21,5 +21,6 @@ export * from "./frames";
 export * from "./parameters";
 export * from "./export";
 export * from "./knowledge";
+export * from "./materials";
 export * from "./versions";
 export * from "./admin";

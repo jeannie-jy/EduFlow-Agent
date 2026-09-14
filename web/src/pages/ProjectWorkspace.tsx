@@ -18,6 +18,9 @@ import {
   AlertTriangle,
   Sparkles,
   RefreshCw,
+  Upload,
+  Loader2,
+  Trash2,
 } from "lucide-react";
 import {
   getProject,
@@ -39,6 +42,12 @@ import {
   type ModuleInfo,
   NetworkError,
   ApiError,
+  listMaterials,
+  uploadMaterial,
+  parseMaterial,
+  getBackgroundJob,
+  deleteMaterial,
+  type MaterialItem,
 } from "@/services";
 import { recordModelProcessingConsent } from "@/services/account";
 import { ModuleSelector } from "@/features/modules/ModuleSelector";
@@ -51,6 +60,22 @@ import { StepIndicator, type StepId } from "@/components/workbench/StepIndicator
 // ============================================================================
 
 type SSEPhase = "idle" | "connecting" | "planning" | "waiting_approval" | "generating" | "validating" | "reviewing" | "done" | "error";
+
+const MATERIAL_PARSE_POLL_INTERVAL_MS = 500;
+const MATERIAL_PARSE_MAX_POLLS = 60;
+
+function materialStatusLabel(status: MaterialItem["status"]): string {
+  if (status === "uploaded") return "待解析";
+  if (status === "parse_queued") return "解析中";
+  if (status === "parsed") return "已解析";
+  return "解析失败";
+}
+
+function formatMaterialSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -216,6 +241,12 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const [qualityReport, setQualityReport] = useState<Record<string, unknown> | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [allowMaterialModelProcessing, setAllowMaterialModelProcessing] = useState(false);
+  const [materials, setMaterials] = useState<MaterialItem[]>([]);
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [materialError, setMaterialError] = useState<string | null>(null);
+  const [uploadingMaterial, setUploadingMaterial] = useState(false);
+  const [removingMaterialId, setRemovingMaterialId] = useState<string | null>(null);
+  const materialInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
   const resumeAttemptedRef = useRef(false);
@@ -239,11 +270,108 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         setAvailableModules([
           { module_id: "mindmap", display_name: "思维导图", description: "知识概念导图", icon: "mindmap", category: "visual", priority: 1, estimated_seconds: 15 },
           { module_id: "cards", display_name: "知识卡片", description: "概念知识卡片", icon: "cards", category: "visual", priority: 2, estimated_seconds: 20 },
+          { module_id: "interactive_demo", display_name: "交互推演", description: "知识互动体验", icon: "play", category: "interactive", priority: 3, estimated_seconds: 40 },
           { module_id: "quiz", display_name: "小练习", description: "自动生成练习题", icon: "quiz", category: "interactive", priority: 4, estimated_seconds: 25 },
           { module_id: "comparison", display_name: "对比分析", description: "按当前主题生成多维度对比", icon: "comparison", category: "visual", priority: 5, estimated_seconds: 30 },
+          { module_id: "video", display_name: "教学视频", description: "生成教学视频", icon: "video", category: "export", priority: 6, estimated_seconds: 120 },
+          { module_id: "misconception", display_name: "常见误区", description: "识别并澄清常见误解", icon: "misconception", category: "visual", priority: 7, estimated_seconds: 30 },
+          { module_id: "pathway", display_name: "学习路径", description: "生成循序渐进的学习路径", icon: "pathway", category: "visual", priority: 8, estimated_seconds: 30 },
+          { module_id: "sandbox", display_name: "代码沙箱", description: "提供可运行的代码实验", icon: "sandbox", category: "interactive", priority: 9, estimated_seconds: 45 },
         ]);
       });
   }, [projectId]);
+
+  // 加载当前账户已有课件，上传入口和历史课件共用同一份列表。
+  useEffect(() => {
+    let cancelled = false;
+    listMaterials()
+      .then((res) => {
+        if (!cancelled) setMaterials(res.items);
+      })
+      .catch(() => {
+        // 课件是可选能力，列表加载失败不应阻塞普通主题生成。
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  // 历史项目重新打开时恢复之前选入的材料 ID。
+  useEffect(() => {
+    if (isNew || !project?.dsl) return;
+    const constraints = project.dsl.constraints;
+    if (!constraints || typeof constraints !== "object") return;
+    const ids = (constraints as { material_ids?: unknown }).material_ids;
+    if (Array.isArray(ids)) {
+      setSelectedMaterialIds(ids.filter((id): id is string => typeof id === "string"));
+    }
+  }, [isNew, project?.dsl]);
+
+  const updateMaterialStatus = useCallback((id: string, status: MaterialItem["status"]) => {
+    setMaterials((current) => current.map((material) => (
+      material.id === id ? { ...material, status } : material
+    )));
+  }, []);
+
+  const handleParseMaterial = useCallback(async (id: string) => {
+    setMaterialError(null);
+    updateMaterialStatus(id, "parse_queued");
+    try {
+      const parse = await parseMaterial(id);
+      if (parse.status === "done" || parse.status === "completed") {
+        updateMaterialStatus(id, "parsed");
+        return true;
+      }
+      if (!parse.job_id) throw new Error("课件解析任务未创建");
+
+      for (let attempt = 0; attempt < MATERIAL_PARSE_MAX_POLLS; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, MATERIAL_PARSE_POLL_INTERVAL_MS));
+        const job = await getBackgroundJob(parse.job_id);
+        if (job.status === "completed") {
+          updateMaterialStatus(id, "parsed");
+          return true;
+        }
+        if (job.status === "failed" || job.status === "cancelled") {
+          throw new Error(job.error_code || "课件解析失败");
+        }
+      }
+      throw new Error("课件解析超时，请稍后重试");
+    } catch (err) {
+      updateMaterialStatus(id, "parse_failed");
+      setMaterialError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "课件解析失败");
+      return false;
+    }
+  }, [updateMaterialStatus]);
+
+  const handleMaterialUpload = useCallback(async (file: File) => {
+    setMaterialError(null);
+    setUploadingMaterial(true);
+    try {
+      const uploaded = await uploadMaterial(file);
+      const material: MaterialItem = { ...uploaded, status: "uploaded" };
+      setMaterials((current) => [material, ...current.filter((item) => item.id !== material.id)]);
+      const parsed = await handleParseMaterial(material.id);
+      if (parsed) {
+        setSelectedMaterialIds((current) => current.includes(material.id) ? current : [...current, material.id]);
+      }
+    } catch (err) {
+      setMaterialError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "课件上传失败");
+    } finally {
+      setUploadingMaterial(false);
+    }
+  }, [handleParseMaterial]);
+
+  const handleRemoveMaterial = useCallback(async (id: string) => {
+    setMaterialError(null);
+    setRemovingMaterialId(id);
+    try {
+      await deleteMaterial(id);
+      setMaterials((current) => current.filter((material) => material.id !== id));
+      setSelectedMaterialIds((current) => current.filter((materialId) => materialId !== id));
+    } catch (err) {
+      setMaterialError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "课件删除失败");
+    } finally {
+      setRemovingMaterialId(null);
+    }
+  }, []);
 
   // 连接超时检测：LLM 调用可能较慢，60 秒内无进展 → 报错
   const resetTimeout = useCallback(() => {
@@ -367,6 +495,15 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
 
   const handleStart = useCallback(async (selected: string[]) => {
     if (startedRef.current) return;
+    if (allowMaterialModelProcessing) {
+      const pendingMaterial = selectedMaterialIds.some((id) => (
+        materials.find((material) => material.id === id)?.status !== "parsed"
+      ));
+      if (pendingMaterial) {
+        setErrorMsg("请等待选中的课件解析完成后再生成");
+        return;
+      }
+    }
     startedRef.current = true;
     setSelectedModules(selected);
     setPhase("connecting");
@@ -383,7 +520,10 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           input_content: topic.trim(),
           audience: "undergraduate_cs",
           difficulty: "intermediate",
-          constraints: { allow_material_model_processing: allowMaterialModelProcessing },
+          constraints: {
+            allow_material_model_processing: allowMaterialModelProcessing,
+            material_ids: selectedMaterialIds,
+          },
         });
         effectiveProjectId = res.id;
         realIdRef.current = res.id;
@@ -412,7 +552,10 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         effectiveProjectId,
         "modules",
         selected,
-        { allow_material_model_processing: allowMaterialModelProcessing },
+        {
+          allow_material_model_processing: allowMaterialModelProcessing,
+          material_ids: selectedMaterialIds,
+        },
       );
       abortRef.current?.abort();
       abortRef.current = new AbortController();
@@ -459,7 +602,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "生成启动失败");
     }
-  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing]);
+  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing, selectedMaterialIds, materials]);
 
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
@@ -585,6 +728,106 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
             />
+          </div>
+          <div className="rounded-xl border border-[var(--border)] p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-semibold mb-1">添加课件（可选）</h3>
+                <p className="text-sm text-muted-foreground">
+                  上传 PDF、PPTX、TXT、Markdown 或代码文件，解析后可选入本项目。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-2"
+                disabled={uploadingMaterial}
+                onClick={() => materialInputRef.current?.click()}
+              >
+                {uploadingMaterial ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+                {uploadingMaterial ? "上传中…" : "上传课件"}
+              </Button>
+            </div>
+            <input
+              ref={materialInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.pptx,.txt,.md,.py,.c,.java,.cpp"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) void handleMaterialUpload(file);
+              }}
+            />
+
+            {materialError && (
+              <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
+                {materialError}
+              </p>
+            )}
+
+            {materials.length > 0 ? (
+              <div className="mt-4 space-y-2">
+                {materials.map((material) => {
+                  const selected = selectedMaterialIds.includes(material.id);
+                  const canSelect = material.status === "parsed";
+                  return (
+                    <div key={material.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                      <label className="flex min-w-0 items-center gap-3">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0"
+                          checked={selected}
+                          disabled={!canSelect}
+                          onChange={() => setSelectedMaterialIds((current) => (
+                            current.includes(material.id)
+                              ? current.filter((id) => id !== material.id)
+                              : [...current, material.id]
+                          ))}
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium">{material.filename}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {formatMaterialSize(material.size_bytes)} · {materialStatusLabel(material.status)}
+                          </span>
+                        </span>
+                      </label>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {(material.status === "uploaded" || material.status === "parse_failed") && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={uploadingMaterial}
+                            onClick={() => void handleParseMaterial(material.id)}
+                          >
+                            解析
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`删除 ${material.filename}`}
+                          disabled={removingMaterialId === material.id}
+                          onClick={() => void handleRemoveMaterial(material.id)}
+                        >
+                          {removingMaterialId === material.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-lg border border-dashed border-[var(--border)] px-3 py-3 text-xs text-muted-foreground">
+                尚未添加课件。你也可以直接使用下方的通用知识生成内容。
+              </p>
+            )}
+            <p className="mt-3 text-xs text-muted-foreground">
+              只有勾选下方授权后，选中的课件片段才会发送给模型；未选中的课件不会参与本次生成。
+            </p>
           </div>
           <div className="rounded-xl border border-[var(--border)] p-4">
             <p className="text-sm font-medium text-[var(--foreground)] mb-3">选择产出形式</p>
