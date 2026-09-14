@@ -1,6 +1,6 @@
 # EduFlowBench 在线评测操作手册
 
-本手册用于在代码、数据集和评测配置固定后运行线上质量评测。不要跳过 3 例 Smoke 直接运行 50 例。
+本手册用于在代码、数据集和评测配置固定后运行线上质量评测。不要跳过重复 Smoke 直接运行 10/50 例正式样本。
 
 ## 1. 运行前检查
 
@@ -46,6 +46,7 @@ Actions 表单建议填写：
 | Judge model | 必须不同于候选模型，例如 `qwen3.8-flash` |
 | Maximum reported total run cost | `5.00` |
 | Number of cases to run (`case_limit`) | `3` (`case_limit=3`) |
+| Smoke repetitions (`smoke_repetitions`) | `3`（每个 Smoke case 重复 3 次） |
 
 Smoke 只覆盖：
 
@@ -58,13 +59,15 @@ alg_bellman_ford_negative
 只有以下条件全部满足，才允许扩大样本：
 
 ```text
-passed_cases = 3
+attempt_count = 9
+stable_pass_case_count = 3
+flaky_rate = 0
 algorithm_invariant_pass = 1.0
 dsl_schema_pass = 1.0
 reference_integrity_pass = 1.0
 ```
 
-同时打开生成的 `quality-online-report.json`，核对：
+同时打开生成的 `quality-smoke-report.json`，核对重复统计；再打开正式运行生成的 `quality-online-report.json`，核对：
 
 ```text
 run.git_sha == 当前分支最新提交
@@ -83,6 +86,7 @@ Smoke 通过后，只把 `Number of cases to run` 改为 `10`，其他参数保�
 - `normalization_repair_rate`；
 - `finish_reason=length` 和重试次数；
 - `total_cost_usd`；
+- `stable_pass_rate`、`flaky_rate` 和 `flaky_case_ids`；
 - 各类 `failure_category`。
 
 如果只是校验器或报告逻辑变化，优先使用已有 artifact 离线回放，不要重新付费调用模型。

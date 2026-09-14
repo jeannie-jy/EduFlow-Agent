@@ -15,15 +15,14 @@
 ```powershell
 copy .env.example .env
 # 编辑 .env：替换 DB_PASSWORD、MINIO_USER、MINIO_PASSWORD，
-# 并填入 LLM_API_KEY 和 EMBEDDING_API_KEY
-# HTTPS 部署同时设置 AUTH_COOKIE_SECURE=true
+# 本地开发可选填全局模型 Key；公开部署禁止使用全局 Key 回退
 .\start.ps1
 ```
 
 **Linux / macOS / Git Bash：**
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 API Key
+# 编辑 .env；本地开发可选填全局模型 Key
 chmod +x start.sh
 ./start.sh
 ```
@@ -38,7 +37,7 @@ cd EduFlow-Agent
 # 2. 配置环境变量
 cp .env.example .env
 # 编辑 .env：替换 DB_PASSWORD、MINIO_USER、MINIO_PASSWORD，
-# 并填入 LLM_API_KEY 和 EMBEDDING_API_KEY
+# 本地开发可选填全局模型 Key；公开部署使用服务端 KMS BYOK
 
 # 3. 启动默认服务（视频导出保持关闭）
 docker compose up -d
@@ -46,12 +45,14 @@ docker compose up -d
 # 可选：显式启用视频导出 Worker
 MANIM_EXECUTION_MODE=queue docker compose --profile video up -d
 
-# 可选：启用 Prometheus + Grafana；先修改 GRAFANA_ADMIN_PASSWORD
+# 可选：启用 Prometheus + Grafana；先修改 GRAFANA_ADMIN_PASSWORD。
+# 本地观测默认使用 ops/prometheus/metrics-token.example；生产必须让
+# METRICS_TOKEN_FILE 指向 Secret Manager 挂载的 METRICS_ACCESS_TOKEN 文件。
 docker compose --profile observability up -d
 
 # 4. 验证
 curl http://localhost:8000/api/health
-# → {"status":"ok","version":"0.8.0"}
+# → {"status":"ok","version":"0.9.0"}
 ```
 
 ## 服务架构
@@ -59,11 +60,13 @@ curl http://localhost:8000/api/health
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | `web` | 5173 | Nginx 前端与 `/api` 反向代理 |
-| `agent-api` | 8000 | FastAPI 后端（Agent 编排 + REST API，启动时自动执行数据库迁移） |
+| `migrate` | 无 | 一次性 Alembic 发布 Job，成功后 API 才启动 |
+| `agent-api` | 8000 | FastAPI 后端（Agent 编排 + REST API，不在副本启动时迁移） |
 | `postgres` | 5432 | PostgreSQL 16 + pgvector（向量检索） |
 | `redis` | 6379 | Redis 7（导出状态追踪 + 缓存） |
 | `minio` | 9000, 9001 | MinIO 对象存储（导出产物、上传素材与短期签名下载） |
 | `task-worker` | 无 | 持久化 Agent 任务与材料下载/签名准备器 |
+| `maintenance` | 无 | 单实例素材保留、账户删除冷静期与运行时状态清理 |
 | `material-sandbox` | 无 | 无网络、无服务凭据的材料解析沙箱 |
 | `render-worker` | 无 | 可选数据库 lease 消费者，仅在 `video` profile 启动 |
 | `render-sandbox` | 无 | 可选无网络、无凭据 Manim 执行器，仅在 `video` profile 启动 |
@@ -90,14 +93,30 @@ docker compose restart agent-api  # 重启后端
 
 | 变量 | 必填 | 说明 |
 |------|:---:|------|
-| `LLM_API_KEY` | ✅ | DeepSeek API Key |
-| `EMBEDDING_API_KEY` | ✅ | OpenAI API Key（text-embedding-3-small） |
-| `LLM_ENDPOINT` | — | LLM API 地址（默认 `https://api.deepseek.com/v1`） |
-| `LLM_MODEL` | — | 模型名称（默认 `deepseek-v4-flash`） |
+| `BYOK_REQUIRED` | 生产必填 `true` | 禁止平台全局 Key 回退 |
+| `AUTH_REGISTRATION_CHALLENGE_SECRET` | 生产必填 | 注册工作量证明签名密钥，由 Secret Manager 注入 |
+| `CREDENTIAL_KMS_BACKEND` | 生产必填 `http` | 本地 `local` 模式不会通过生产启动校验 |
+| `CREDENTIAL_KMS_WRAP_URL` / `CREDENTIAL_KMS_UNWRAP_URL` | 生产必填 | 内网 HTTPS KMS Bridge；负责调用所选云 KMS 包装/解包数据密钥 |
+| `CREDENTIAL_KMS_BEARER_TOKEN` | 生产必填 | API/Worker 的最小权限 KMS Bridge 身份，由 Secret Manager 注入 |
+| `CREDENTIAL_FINGERPRINT_KEY_B64` | 生产必填 | 独立 HMAC 密钥，不得与对象存储凭据共同保存 |
+| `CREDENTIAL_KEK_B64` | 仅本地开发 | 本地信封加密 KEK；production/staging 禁止使用 |
+| `CREDENTIAL_KEK_VERSION` | 必填 | KMS Key 版本，用于轮换与审计 |
+| `METRICS_ACCESS_TOKEN` | 生产必填 | Prometheus 内部抓取令牌；公网 `/api/metrics*` 返回 404 |
+| `RUN_MAINTENANCE` | 多副本 API 必须为 `false` | 仅一个 `maintenance` 服务（`python -m services.maintenance_worker`）运行保留与注销循环 |
+| `DEEPSEEK_ENDPOINT` / `DASHSCOPE_ENDPOINT` | — | 服务端固定供应商地址；客户端不可传任意 URL |
+| `LLM_API_KEY` / `EMBEDDING_API_KEY` | 仅本地开发 | 生产设置为空；用户在“模型接入”页面提交 BYOK |
 | `DB_PASSWORD` | ✅ | 数据库密码；Compose 无回退默认值 |
 | `REDIS_URL` | — | Redis 连接（默认 `redis://localhost:6379`） |
 | `MINIO_USER` / `MINIO_PASSWORD` | ✅ | MinIO 凭证；Compose 无回退默认值 |
 | `MINIO_PUBLIC_ENDPOINT` | `localhost:9000` | 浏览器可访问的 MinIO 地址；反向代理或远程部署时必须改为外部地址 |
+
+公开 SaaS 不以本页 Compose 作为最终生产拓扑。生产所需的 TLS/CDN/WAF、托管
+PostgreSQL PITR、对象存储版本控制、KMS、身份拆分、恢复演练和告警契约见
+[`ops/production/README.md`](ops/production/README.md)，环境模板见
+[`ops/production.env.example`](ops/production.env.example)。API 会在 production/staging
+启动时校验 HTTPS、Secure Cookie、Origin、可信代理、隐藏 API 文档、BYOK、KEK 和邮件配置，
+并实际初始化 PostgreSQL LangGraph checkpointer；任一项失败即拒绝启动，生产环境不会
+静默降级到进程内 MemorySaver。
 
 ## 本地开发
 

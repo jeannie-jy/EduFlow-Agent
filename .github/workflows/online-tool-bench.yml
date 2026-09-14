@@ -13,6 +13,21 @@ on:
         required: true
         default: deepseek-chat
         type: string
+      embedding_endpoint:
+        description: OpenAI-compatible embedding endpoint
+        required: true
+        default: https://llm-ffgi4szc2den5n8v.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        type: string
+      embedding_model:
+        description: Embedding model identifier
+        required: true
+        default: text-embedding-v4
+        type: string
+      embedding_dimension:
+        description: Embedding vector dimension used by pgvector
+        required: true
+        default: "1024"
+        type: string
       budget_usd:
         description: Maximum reported run cost in USD
         required: true
@@ -23,6 +38,11 @@ on:
         required: true
         default: "8"
         type: string
+      smoke_repetitions:
+        description: Number of repetitions per smoke case before the formal run
+        required: true
+        default: "3"
+        type: string
 
 concurrency:
   group: online-tool-bench-${{ github.ref }}
@@ -31,7 +51,7 @@ concurrency:
 jobs:
   real-tool-runtime:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     env:
       DB_PASSWORD: ci-online-tool-password
       MINIO_USER: ci-online-tool-minio
@@ -39,6 +59,9 @@ jobs:
       LLM_ENDPOINT: ${{ inputs.llm_endpoint }}
       LLM_MODEL: ${{ inputs.llm_model }}
       LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
+      EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}
+      EMBEDDING_MODEL: ${{ inputs.embedding_model }}
+      EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}
       EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
       LLM_REQUEST_MAX_COST_USD: ${{ inputs.budget_usd }}
       LLM_INPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_INPUT_COST_PER_MILLION || '0' }}
@@ -51,15 +74,47 @@ jobs:
         run: |
           test -n "$LLM_API_KEY"
           test -n "$EMBEDDING_API_KEY"
+          test -n "$EMBEDDING_ENDPOINT"
+          test -n "$EMBEDDING_MODEL"
+          test "$EMBEDDING_DIMENSION" -eq "$EMBEDDING_DIMENSION" 2>/dev/null
 
       - name: Start isolated Tool Runtime dependencies
         run: >-
           docker compose up -d --build --wait --wait-timeout 180
           postgres redis minio agent-api
 
+      - name: Seed knowledge embeddings
+        run: docker compose exec -T agent-api python -m scripts.seed_embeddings
+
+      - name: Verify retrieval health
+        run: docker compose exec -T agent-api python -m scripts.retrieval_health
+
+      - name: Run repeated Tool Calling smoke benchmark
+        id: smoke
+        continue-on-error: true
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_BOOTSTRAP=1 \
+            -e GITHUB_SHA \
+            agent-api \
+            python -m evals.runners.run_online \
+              --dataset evals/datasets/tool_online_cases.jsonl \
+              --generator evals.generators.live_tools:generate_tool_case \
+              --output /tmp/tool-smoke-report.json \
+              --artifacts-dir /tmp/tool-smoke-artifacts \
+              --concurrency 1 \
+              --model "$LLM_MODEL" \
+              --prompt-version tool-router-v1 \
+              --limit 3 \
+              --repetitions "${{ inputs.smoke_repetitions }}" \
+              --fail-on-flaky \
+              --budget-usd "${{ inputs.budget_usd }}"
+
       - name: Run real-model Tool Calling benchmark
         id: benchmark
         continue-on-error: true
+        if: steps.smoke.outcome == 'success'
         run: |
           docker compose exec -T \
             -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
@@ -80,6 +135,8 @@ jobs:
       - name: Collect benchmark report and diagnostics
         if: always()
         run: |
+          docker compose cp agent-api:/tmp/tool-smoke-report.json tool-smoke-report.json || true
+          docker compose cp agent-api:/tmp/tool-smoke-artifacts tool-smoke-artifacts || true
           docker compose cp agent-api:/tmp/tool-online-report.json tool-online-report.json || true
           docker compose cp agent-api:/tmp/tool-online-artifacts tool-online-artifacts || true
           docker compose ps --all > compose-ps.txt
@@ -93,6 +150,8 @@ jobs:
           path: |
             tool-online-report.json
             tool-online-artifacts/
+            tool-smoke-report.json
+            tool-smoke-artifacts/
             compose-ps.txt
             agent-api.log
           if-no-files-found: warn
@@ -103,5 +162,5 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
       - name: Enforce benchmark result
-        if: steps.benchmark.outcome != 'success'
+        if: steps.smoke.outcome != 'success' || steps.benchmark.outcome != 'success'
         run: exit 1

@@ -52,5 +52,5 @@ USER eduflow
 
 EXPOSE 8000
 
-# 开发 Compose 兼容入口；生产多副本部署应将迁移拆成单独 Job。
-CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
+# Schema migration is a separate release job; API replicas never race migrations.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

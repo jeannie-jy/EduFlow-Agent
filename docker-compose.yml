@@ -15,6 +15,18 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # One-shot release migration. Production platforms should run the same command
+  # as a pre-deploy Job before rolling API replicas.
+  migrate:
+    build: ./agent
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/eduflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   # ── Agent API (Python) ──────────────────────────────────
   agent-api:
     build: ./agent
@@ -26,6 +38,39 @@ services:
       - MANIM_EXECUTION_MODE=${MANIM_EXECUTION_MODE:-disabled}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-false}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-http://localhost:5173}
+      - ENFORCE_ORIGIN_CHECK=${ENFORCE_ORIGIN_CHECK:-false}
+      - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-}
+      - EXPOSE_API_DOCS=${EXPOSE_API_DOCS:-true}
+      - METRICS_ACCESS_TOKEN=${METRICS_ACCESS_TOKEN:-}
+      - RUN_MAINTENANCE=${RUN_MAINTENANCE:-true}
+      - BYOK_REQUIRED=${BYOK_REQUIRED:-false}
+      - CREDENTIAL_KEK_B64=${CREDENTIAL_KEK_B64:-}
+      - CREDENTIAL_KEK_VERSION=${CREDENTIAL_KEK_VERSION:-local-v1}
+      - CREDENTIAL_KMS_BACKEND=${CREDENTIAL_KMS_BACKEND:-local}
+      - CREDENTIAL_FINGERPRINT_KEY_B64=${CREDENTIAL_FINGERPRINT_KEY_B64:-}
+      - CREDENTIAL_KMS_WRAP_URL=${CREDENTIAL_KMS_WRAP_URL:-}
+      - CREDENTIAL_KMS_UNWRAP_URL=${CREDENTIAL_KMS_UNWRAP_URL:-}
+      - CREDENTIAL_KMS_BEARER_TOKEN=${CREDENTIAL_KMS_BEARER_TOKEN:-}
+      - CREDENTIAL_KMS_TIMEOUT_SECONDS=${CREDENTIAL_KMS_TIMEOUT_SECONDS:-10}
+      - DEEPSEEK_ENDPOINT=${DEEPSEEK_ENDPOINT:-https://api.deepseek.com/v1}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DASHSCOPE_ENDPOINT=${DASHSCOPE_ENDPOINT:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - DASHSCOPE_MODEL=${DASHSCOPE_MODEL:-qwen-plus}
+      - DASHSCOPE_EMBEDDING_MODEL=${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v4}
+      - AUTH_ALLOW_REGISTRATION=${AUTH_ALLOW_REGISTRATION:-true}
+      - AUTH_REQUIRE_EMAIL_VERIFICATION=${AUTH_REQUIRE_EMAIL_VERIFICATION:-false}
+      - AUTH_REGISTRATION_CHALLENGE_REQUIRED=${AUTH_REGISTRATION_CHALLENGE_REQUIRED:-false}
+      - AUTH_REGISTRATION_CHALLENGE_SECRET=${AUTH_REGISTRATION_CHALLENGE_SECRET:-}
+      - AUTH_REGISTRATION_CHALLENGE_DIFFICULTY=${AUTH_REGISTRATION_CHALLENGE_DIFFICULTY:-3}
+      - AUTH_TOKEN_MINUTES=${AUTH_TOKEN_MINUTES:-30}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-true}
       - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-90}
       - AUDIT_ARCHIVE_MAX_EVENTS=${AUDIT_ARCHIVE_MAX_EVENTS:-10000}
       - AUDIT_ARCHIVE_HMAC_KEY=${AUDIT_ARCHIVE_HMAC_KEY:-}
@@ -33,6 +78,21 @@ services:
       - API_WRITE_RATE_WINDOW_SECONDS=${API_WRITE_RATE_WINDOW_SECONDS:-60}
       - API_GENERATION_RATE_LIMIT=${API_GENERATION_RATE_LIMIT:-20}
       - API_GENERATION_RATE_WINDOW_SECONDS=${API_GENERATION_RATE_WINDOW_SECONDS:-300}
+      - QUOTA_GENERATION_DAILY=${QUOTA_GENERATION_DAILY:-5}
+      - QUOTA_GENERATION_MONTHLY=${QUOTA_GENERATION_MONTHLY:-50}
+      - QUOTA_VIDEO_DAILY=${QUOTA_VIDEO_DAILY:-1}
+      - QUOTA_VIDEO_MONTHLY=${QUOTA_VIDEO_MONTHLY:-5}
+      - QUOTA_PROJECTS=${QUOTA_PROJECTS:-50}
+      - QUOTA_MATERIAL_BYTES=${QUOTA_MATERIAL_BYTES:-524288000}
+      - QUOTA_ARTIFACT_BYTES=${QUOTA_ARTIFACT_BYTES:-2147483648}
+      - QUOTA_GENERATION_CONCURRENT=${QUOTA_GENERATION_CONCURRENT:-1}
+      - QUOTA_VIDEO_CONCURRENT=${QUOTA_VIDEO_CONCURRENT:-1}
+      - VIDEO_PUBLIC_ENABLED=${VIDEO_PUBLIC_ENABLED:-true}
+      - OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-eduflow-agent}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_TRACE_SAMPLE_RATIO=${OTEL_TRACE_SAMPLE_RATIO:-0.1}
       - ARTIFACT_STORE_BACKEND=minio
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-localhost:9000}
@@ -55,6 +115,21 @@ services:
       - LLM_REQUEST_MAX_COST_USD=${LLM_REQUEST_MAX_COST_USD:-10}
       - LLM_INPUT_COST_PER_MILLION=${LLM_INPUT_COST_PER_MILLION:-0}
       - LLM_OUTPUT_COST_PER_MILLION=${LLM_OUTPUT_COST_PER_MILLION:-0}
+      - BYOK_REQUIRED=${BYOK_REQUIRED:-false}
+      - CREDENTIAL_KMS_BACKEND=${CREDENTIAL_KMS_BACKEND:-local}
+      - CREDENTIAL_KEK_B64=${CREDENTIAL_KEK_B64:-}
+      - CREDENTIAL_KEK_VERSION=${CREDENTIAL_KEK_VERSION:-local-v1}
+      - CREDENTIAL_FINGERPRINT_KEY_B64=${CREDENTIAL_FINGERPRINT_KEY_B64:-}
+      - CREDENTIAL_KMS_WRAP_URL=${CREDENTIAL_KMS_WRAP_URL:-}
+      - CREDENTIAL_KMS_UNWRAP_URL=${CREDENTIAL_KMS_UNWRAP_URL:-}
+      - CREDENTIAL_KMS_BEARER_TOKEN=${CREDENTIAL_KMS_BEARER_TOKEN:-}
+      - CREDENTIAL_KMS_TIMEOUT_SECONDS=${CREDENTIAL_KMS_TIMEOUT_SECONDS:-10}
+      - DEEPSEEK_ENDPOINT=${DEEPSEEK_ENDPOINT:-https://api.deepseek.com/v1}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DASHSCOPE_ENDPOINT=${DASHSCOPE_ENDPOINT:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - DASHSCOPE_MODEL=${DASHSCOPE_MODEL:-qwen-plus}
+      - DASHSCOPE_EMBEDDING_MODEL=${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v4}
+      - MANIM_SCRIPT_MODE=${MANIM_SCRIPT_MODE:-deterministic}
       - TOOL_CALLING_ENABLED=${TOOL_CALLING_ENABLED:-true}
       - TOOL_MAX_ROUNDS=${TOOL_MAX_ROUNDS:-3}
       - TOOL_MAX_CALLS=${TOOL_MAX_CALLS:-8}
@@ -66,8 +141,11 @@ services:
       - SSE_EVENT_RETENTION_HOURS=${SSE_EVENT_RETENTION_HOURS:-24}
       - EMBEDDING_ENDPOINT=${EMBEDDING_ENDPOINT:-https://api.openai.com/v1}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -90,9 +168,33 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/eduflow
       - REDIS_URL=redis://redis:6379
+      - ARTIFACT_STORE_BACKEND=minio
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-localhost:9000}
+      - MINIO_ACCESS_KEY=${MINIO_USER:?Set MINIO_USER in .env}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD:?Set MINIO_PASSWORD in .env}
       - LLM_ENDPOINT=${LLM_ENDPOINT:-https://api.deepseek.com/v1}
       - LLM_MODEL=${LLM_MODEL:-deepseek-v4-flash}
       - LLM_API_KEY=${LLM_API_KEY}
+      - BYOK_REQUIRED=${BYOK_REQUIRED:-false}
+      - CREDENTIAL_KEK_B64=${CREDENTIAL_KEK_B64:-}
+      - CREDENTIAL_KEK_VERSION=${CREDENTIAL_KEK_VERSION:-local-v1}
+      - CREDENTIAL_KMS_BACKEND=${CREDENTIAL_KMS_BACKEND:-local}
+      - CREDENTIAL_FINGERPRINT_KEY_B64=${CREDENTIAL_FINGERPRINT_KEY_B64:-}
+      - CREDENTIAL_KMS_WRAP_URL=${CREDENTIAL_KMS_WRAP_URL:-}
+      - CREDENTIAL_KMS_UNWRAP_URL=${CREDENTIAL_KMS_UNWRAP_URL:-}
+      - CREDENTIAL_KMS_BEARER_TOKEN=${CREDENTIAL_KMS_BEARER_TOKEN:-}
+      - CREDENTIAL_KMS_TIMEOUT_SECONDS=${CREDENTIAL_KMS_TIMEOUT_SECONDS:-10}
+      - OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-eduflow-task-worker}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+      - OTEL_TRACE_SAMPLE_RATIO=${OTEL_TRACE_SAMPLE_RATIO:-0.1}
+      - DEEPSEEK_ENDPOINT=${DEEPSEEK_ENDPOINT:-https://api.deepseek.com/v1}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DASHSCOPE_ENDPOINT=${DASHSCOPE_ENDPOINT:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - DASHSCOPE_MODEL=${DASHSCOPE_MODEL:-qwen-plus}
+      - DASHSCOPE_EMBEDDING_MODEL=${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v4}
       - LLM_BACKUP_ENDPOINT=${LLM_BACKUP_ENDPOINT:-}
       - LLM_BACKUP_MODEL=${LLM_BACKUP_MODEL:-}
       - LLM_BACKUP_API_KEY=${LLM_BACKUP_API_KEY:-}
@@ -135,6 +237,41 @@ services:
     cpus: 1.0
     restart: unless-stopped
 
+  # ── Single-instance retention/privacy maintenance ───────
+  # Set RUN_MAINTENANCE=false on API replicas when scaling horizontally and
+  # keep this worker at exactly one replica.
+  maintenance:
+    build: ./agent
+    command: ["python", "-m", "services.maintenance_worker"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agent:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/eduflow
+      - REDIS_URL=redis://redis:6379
+      - ARTIFACT_STORE_BACKEND=minio
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-localhost:9000}
+      - MINIO_ACCESS_KEY=${MINIO_USER:?Set MINIO_USER in .env}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD:?Set MINIO_PASSWORD in .env}
+      - MATERIAL_RETENTION_DAYS=${MATERIAL_RETENTION_DAYS:-30}
+      - MATERIAL_CLEANUP_INTERVAL_SECONDS=${MATERIAL_CLEANUP_INTERVAL_SECONDS:-21600}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    restart: unless-stopped
+
   # ── Durable script-preparation worker (holds LLM/DB credentials) ──
   render-worker:
     profiles: ["video"]
@@ -157,12 +294,28 @@ services:
       - LLM_REQUEST_MAX_COST_USD=${LLM_REQUEST_MAX_COST_USD:-10}
       - LLM_INPUT_COST_PER_MILLION=${LLM_INPUT_COST_PER_MILLION:-0}
       - LLM_OUTPUT_COST_PER_MILLION=${LLM_OUTPUT_COST_PER_MILLION:-0}
+      - BYOK_REQUIRED=${BYOK_REQUIRED:-false}
+      - CREDENTIAL_KMS_BACKEND=${CREDENTIAL_KMS_BACKEND:-local}
+      - CREDENTIAL_KEK_B64=${CREDENTIAL_KEK_B64:-}
+      - CREDENTIAL_KEK_VERSION=${CREDENTIAL_KEK_VERSION:-local-v1}
+      - CREDENTIAL_FINGERPRINT_KEY_B64=${CREDENTIAL_FINGERPRINT_KEY_B64:-}
+      - CREDENTIAL_KMS_WRAP_URL=${CREDENTIAL_KMS_WRAP_URL:-}
+      - CREDENTIAL_KMS_UNWRAP_URL=${CREDENTIAL_KMS_UNWRAP_URL:-}
+      - CREDENTIAL_KMS_BEARER_TOKEN=${CREDENTIAL_KMS_BEARER_TOKEN:-}
+      - CREDENTIAL_KMS_TIMEOUT_SECONDS=${CREDENTIAL_KMS_TIMEOUT_SECONDS:-10}
+      - DEEPSEEK_ENDPOINT=${DEEPSEEK_ENDPOINT:-https://api.deepseek.com/v1}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DASHSCOPE_ENDPOINT=${DASHSCOPE_ENDPOINT:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - DASHSCOPE_MODEL=${DASHSCOPE_MODEL:-qwen-plus}
+      - DASHSCOPE_EMBEDDING_MODEL=${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v4}
       - ARTIFACT_STORE_BACKEND=minio
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=${MINIO_PUBLIC_ENDPOINT:-localhost:9000}
       - MINIO_ACCESS_KEY=${MINIO_USER:?Set MINIO_USER in .env}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:?Set MINIO_PASSWORD in .env}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -258,6 +411,7 @@ services:
       - --storage.tsdb.retention.time=15d
     volumes:
       - ./ops/prometheus:/etc/prometheus:ro
+      - ${METRICS_TOKEN_FILE:-./ops/prometheus/metrics-token.example}:/etc/prometheus/metrics-token:ro
       - prometheus_data:/prometheus
     ports: ["127.0.0.1:9090:9090"]
     depends_on:

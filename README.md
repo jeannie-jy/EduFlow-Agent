@@ -28,10 +28,10 @@
 **本次更新 (v0.9.0)：**
 - 🧩 **生成方式可选化**：10 种模块生成器（思维导图/知识卡片/交互推演/小练习/对比分析/常见误区/学习路径/代码沙箱/教学视频 + 自动生成的推演脚本），按需勾选生成
 - 🎨 **UI 流程重塑**：步骤指示器（select → plan → results）替代 Tab 栏，新建流程统一收拢到 ProjectWorkspace
-- 🛡️ **数据库初始化落地**：Alembic 从 8 张业务表的基线迁移扩展到 20 张 ORM 表，并单独维护 `knowledge_base`；agent-api 启动时自动 `alembic upgrade head`，不再依赖 init.sql 建表
+- 🛡️ **数据库初始化落地**：Alembic 管理业务表与 `knowledge_base`；Compose 使用独立一次性 `migrate` Job，API 多副本启动时不再并发执行迁移
 - 🔧 **前端类型门禁**：`npm run typecheck` 改为 `tsc -b`（此前对 solution tsconfig 是空操作），34 个存量 TS 错误清零；修复 SSE 模块事件回调解构缺失（模块进度此前被静默丢弃）
 - 🎬 **视频导出任务化**：API 只持久化排队，独立受限 Worker 通过 PostgreSQL lease 领取、重试和恢复任务；默认关闭，需显式启用 video profile
-- 🧪 **测试覆盖扩展**：当前非在线、非渲染后端回归为 1107 项，前端为 41 个测试文件 / 297 项；CI 分离运行常规测试、在线评测与真实 Manim 渲染冒烟测试
+- 🧪 **测试覆盖扩展**：当前非在线、非渲染后端回归为 1160 项，前端为 41 个测试文件 / 297 项；CI 分离运行常规测试、在线评测与真实 Manim 渲染冒烟测试
 - 🎁 **成果体验统一**：交互推演升级为统一学习外壳（按主题语义匹配 7 种体验类型）；教学视频支持从推演帧直接定位分镜；失败模块以场景化友好提示呈现（额度不足/接入失效/限流/网络/渲染失败），可在成果页直接重生成
 - 🖥️ **交互推演沙箱升级**：Tailwind 在宿主侧按产物实际使用的 class 本地编译（彻底移除 CDN 依赖），内置 `eduflow-demo` 统一演示样式，遗留模板控件自动打磨为设计系统风格
 - 🧬 **成果版本追踪**：推演脚本产出携带 `artifact_version`（SHA-256），视频产出记录 `source_frames_version`；帧编辑同步快照与模块产出两处副本，分镜过期时提示「分镜已更新」
@@ -73,8 +73,8 @@ EduFlow-Agent 是一个有状态 Agent 教学推演系统。用户通过自然�
 
 | 层次 | 技术 | 说明 |
 |------|------|------|
-| **LLM** | DeepSeek (主) | API 调用（兼容 OpenAI 接口），`LLM_MODEL` 可切换（默认 `deepseek-v4-flash`） |
-| **Embedding** | text-embedding-3-small (1536维) | 知识库语义检索，可平替通义千问 text-embedding-v4 |
+| **LLM** | DeepSeek（主）/阿里百炼（Qwen） | 生产通过服务端 KMS BYOK 调用固定官方端点；默认 DeepSeek `deepseek-chat` |
+| **Embedding** | 阿里百炼 `text-embedding-v4`（1024维） | 生产 BYOK 语义检索；未配置时明确降级为关键词检索 |
 | **Agent 编排** | LangGraph | 5 节点 StateGraph + HITL interrupt + Postgres Checkpointer |
 | **后端** | Python 3.12+ / FastAPI | 异步 REST API + SSE 流式推送 + Alembic 数据库迁移 |
 | **前端** | React 18 + TypeScript + Vite 8 | Tailwind CSS 4 + Base UI + 纸张质感主题系统 |
@@ -105,7 +105,7 @@ FastAPI 与 Vite。启动脚本会等待 PostgreSQL 就绪，并在启动后端�
 # 首次使用：配置环境变量并创建 Python 3.12 虚拟环境
 Copy-Item .env.example .env
 py -3.12 -m venv agent/.venv
-# 编辑 .env：替换数据库/MinIO 凭证，并填入 LLM 与 Embedding API Key
+# 编辑 .env：替换数据库/MinIO 凭证；全局模型 Key 仅用于本地开发
 
 # 启动基础设施、后端和前端（不传参等价于 -All）
 .\start.ps1
@@ -117,7 +117,7 @@ py -3.12 -m venv agent/.venv
 # 首次使用：配置环境变量并创建 Python 3.12 虚拟环境
 cp .env.example .env
 python3.12 -m venv agent/.venv
-# 编辑 .env，替换数据库/MinIO 凭证并填入 API Key
+# 编辑 .env，替换数据库/MinIO 凭证；公开部署使用 KMS BYOK
 
 chmod +x start.sh
 ./start.sh
@@ -154,7 +154,7 @@ chmod +x start.sh
 
 ```powershell
 Copy-Item .env.example .env
-# 编辑 .env：必须替换 DB_PASSWORD、MINIO_USER 和 MINIO_PASSWORD，按需填入 API Key
+# 编辑 .env：必须替换 DB_PASSWORD、MINIO_USER 和 MINIO_PASSWORD；模型 Key 由用户在前端绑定
 docker compose up -d --build
 ```
 
@@ -172,7 +172,8 @@ cp .env.example .env
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | `web` | 5173 | Nginx 托管的前端生产构建与 API 反向代理 |
-| `agent-api` | 8000 | FastAPI 后端 API（启动时自动执行数据库迁移） |
+| `migrate` | 无 | 一次性 Alembic 发布 Job |
+| `agent-api` | 8000 | FastAPI 后端 API（等待迁移 Job 成功后启动） |
 | `postgres` | 5432 | PostgreSQL 16 + pgvector |
 | `redis` | 6379 | Redis 7 缓存 + 导出状态追踪 |
 | `minio` | 9000/9001 | S3 兼容对象存储（持久化导出产物与上传素材） |
@@ -313,7 +314,7 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端常规本地回归：**1107 passed，6 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。
+- 后端常规本地回归：**1160 passed，6 skipped**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。
 - 前端门禁：**41 files / 297 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
@@ -323,7 +324,7 @@ python -m scripts.seed_embeddings
 - **真实 Tool Calling 已进入 Knowledge 主链**：模型可在有界多轮循环中自主选择 `knowledge_search`、`material_lookup`、`get_project_context`，经 Pydantic Schema、服务端 actor/project 上下文、owner 策略、超时/轮数/进程级共享并发/调用数/结果大小预算后执行真实服务，并把结构化 ToolResult 回填继续推理。每次调用以迁移 `0013` 持久化脱敏 Tool Trace，EduFlowBench 已加入 16 个选择、无工具、参数、故障、权限、注入与预算案例；Shell、任意 SQL、任意文件和写工具不在 Registry。真实模型 Tool Bench 基线仍需凭据与成本授权。
 - **真实模型 Tool Bench 具备显式执行入口**：`tool_online_cases.jsonl` 的 8 个在线案例通过 `live_tools` 适配器直接调用生产 Tool Runtime，并记录选择、执行状态、多轮 Token、估算成本和 p95；手动 `Online Tool Calling Bench` 工作流只在提供评测 Secrets 后运行，使用隔离 Compose 数据库并上传可审计报告。仓库尚未取得凭据与成本授权，因此不宣称已有真实模型分数。
 - **核心质量 Bench 已接入生产 Graph 与独立 Judge**：`live_workflow` 将 50 个核心案例直接送入 Planner–Knowledge–Coder–Quality–Reflection LangGraph；`live_judge` 使用独立 endpoint/key/model 完成七维盲评，并把候选与 Judge Token/成本分开记录。手动 `Online EduFlowBench Quality` 工作流使用隔离依赖并上传报告、产物和日志；总成本达到阈值后停止新案例/Judge。真实运行与人工校准完成前不宣称语义质量分数。
-- **授权管理边界**：后端已有 student/teacher/admin RBAC、owner 隔离、scrypt 密码散列与 HttpOnly opaque session；登录/注册、普通写操作及高成本生成入口分别使用 Redis 优先的固定窗口限流，Redis 故障时退化到有界进程内计数。高风险写操作仅 teacher/admin 可用，admin 可跨 owner 管理；管理员页面支持角色/账号状态调整和全会话撤销，服务端阻止自我降权及移除最后一名有效管理员，变更会撤销旧会话并写审计。首次管理员使用一次性 bootstrap 命令建立；存量 owner/本地素材通过 dry-run 优先的显式迁移命令处理。当前自助注册默认 teacher；HTTPS 部署必须设置 `AUTH_COOKIE_SECURE=true`。
+- **授权与账号闭环**：自助注册默认 student 并记录条款/隐私版本；生产要求邮箱验证，提供一次性验证与密码重置、全会话撤销、数据导出及带冷静期注销。后端保留 student/teacher/admin RBAC、owner 隔离、scrypt 密码散列、HttpOnly 会话、Origin/CSRF 校验与管理员审计调额；teacher/admin 仅能由管理员提升。
 - **视频导出仍需继续加固**：API 只创建持久化任务，准备器通过数据库 lease 串行领取，无网络、无凭证沙箱执行生成代码；已有幂等键、逐次 attempt、lease 心跳、取消、可重试错误分类、指数退避和每任务磁盘/文件数配额。沙箱当前仍为常驻容器及共享任务卷，还需补每任务临时容器、更完整的恶意脚本和压力验证。
 - **参数重算已具备跨产物影响分析**：`local` 参数原子校验后直接应用；结构性参数使用 DSL 显式依赖与结构化引用推断，从最早受影响帧开始重算状态后继，无法证明依赖时安全降级为全量。影响会沿生成器 `requires` DAG 传播到下游模块，UI 在写入前展示重算/保留范围及过期产物，并用影响指纹阻止并发状态变化后的过期执行；成功重生成后清除对应 stale 标记。
 - **版本与帧投影已收敛**：Frames 表是活动编辑真源，`ProjectVersion` 保存不可变聚合快照，`current_version_id` 在项目行锁内推进；dirty working copy、恢复和导出固定版本语义明确。`module_outputs.frames` 仅存 artifact reference，迁移 0020 归一化存量 JSONB，读取时按需水合兼容结构；`python -m scripts.audit_artifact_consistency` 可只读核对指针、快照与 Frames 投影。
@@ -386,9 +387,13 @@ uv pip compile requirements.txt --python-version 3.12 --universal -o requirement
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `LLM_API_KEY` | DeepSeek API Key | - |
-| `LLM_MODEL` | LLM 模型名称 | `deepseek-v4-flash` |
-| `EMBEDDING_API_KEY` | Embedding API Key | - |
+| `BYOK_REQUIRED` | 生产必须为 `true`，禁用平台 Key 回退 | `false`（仅本地开发） |
+| `CREDENTIAL_KMS_BACKEND` | 生产为 `http`，通过内网 HTTPS KMS Bridge 调用云 KMS | `local`（仅开发） |
+| `CREDENTIAL_KMS_WRAP_URL` / `CREDENTIAL_KMS_UNWRAP_URL` | 生产 KMS Bridge 固定地址 | - |
+| `CREDENTIAL_KEK_B64` | 仅本地开发的 32 字节 base64 KEK | - |
+| `METRICS_ACCESS_TOKEN` | 生产/预发布内部 Prometheus 抓取令牌；公网请求返回 404 | - |
+| `RUN_MAINTENANCE` | 是否在 API 进程运行素材保留与注销处理；多副本 API 设为 `false`，单独运行 `maintenance` 服务 | `true` |
+| `LLM_API_KEY` / `EMBEDDING_API_KEY` | 仅本地开发回退；生产留空 | - |
 | `DATABASE_URL` | 数据库连接字符串 | 手动开发有本地回退值；Compose 由必填 `DB_PASSWORD` 构造 |
 | `REDIS_URL` | Redis 连接字符串 | `redis://localhost:6379` |
 | `FFMPEG_PATH` | FFmpeg 安装目录（留空自动查找） | (空) |
@@ -397,7 +402,8 @@ uv pip compile requirements.txt --python-version 3.12 --universal -o requirement
 ### 数据库迁移
 
 业务表由 Alembic 管理（基线迁移 `agent/alembic/versions/0001_baseline.py`：8 张 ORM 表 + knowledge_base），
-Docker 部署时 `agent-api` 启动前会自动执行 `alembic upgrade head`；手动部署需先执行一次：
+Docker Compose 由一次性 `migrate` 服务执行 `alembic upgrade head`，成功后才启动 API；
+托管部署应使用同样的独立发布 Job，禁止每个 API 副本自行迁移。手动部署需先执行一次：
 
 ```bash
 cd agent
