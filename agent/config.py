@@ -203,6 +203,7 @@ class Settings(BaseSettings):
     # director always falls back to the same compiler before a job can fail.
     manim_script_mode: Literal["deterministic", "llm"] = "deterministic"
     export_worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60)
+    export_sandbox_claim_stale_seconds: int = Field(default=120, ge=10, le=86400)
     export_worker_heartbeat_seconds: float = Field(default=30.0, ge=1, le=300)
     export_worker_max_attempts: int = Field(default=3, ge=1, le=10)
     export_retry_base_seconds: float = Field(default=5.0, ge=0.1, le=3600)

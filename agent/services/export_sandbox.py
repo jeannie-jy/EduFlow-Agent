@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import socket
+import time
 from pathlib import Path
 
 from api.export import (
@@ -34,6 +35,37 @@ def _assert_task_path_is_local(path: Path, job_dir: Path) -> None:
     resolved = path.resolve()
     if not resolved.is_relative_to(job_dir):
         raise SandboxPathError(f"Task path escapes job directory: {path}")
+
+
+def _reap_stale_claims(
+    export_root: Path,
+    *,
+    stale_after_seconds: float,
+    now: float | None = None,
+) -> int:
+    """Remove request claims orphaned by a sandbox process crash.
+
+    A retry writes a fresh ``render-request.json``.  An old claim cannot be
+    safely re-enqueued because the worker may already have timed out and
+    scheduled a new attempt.  Reaping only claims older than the configured
+    grace period prevents unbounded workspace growth while leaving a recently
+    claimed request untouched during normal rendering.
+    """
+    cutoff = (time.time() if now is None else now) - stale_after_seconds
+    root = export_root.resolve()
+    reaped = 0
+    for claim in export_root.glob("*/render-request.claimed-*.json"):
+        job_dir = claim.parent.resolve()
+        if not job_dir.is_relative_to(root):
+            continue
+        try:
+            if claim.stat().st_mtime > cutoff:
+                continue
+            claim.unlink(missing_ok=True)
+            reaped += 1
+        except OSError:
+            logger.warning("unable to reap stale sandbox claim: %s", claim)
+    return reaped
 
 
 def process_one_request(export_root: Path) -> bool:
@@ -151,6 +183,12 @@ async def run_sandbox() -> None:
     export_root.mkdir(parents=True, exist_ok=True)
     logger.info("credential-free render sandbox started")
     while True:
+        reaped = _reap_stale_claims(
+            export_root,
+            stale_after_seconds=settings.export_sandbox_claim_stale_seconds,
+        )
+        if reaped:
+            logger.info("reaped %d stale sandbox request claim(s)", reaped)
         if not process_one_request(export_root):
             await asyncio.sleep(settings.export_worker_poll_seconds)
 

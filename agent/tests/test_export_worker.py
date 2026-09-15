@@ -392,6 +392,30 @@ def test_sandbox_claims_filesystem_request_and_writes_result(tmp_path):
     render.assert_called_once()
 
 
+def test_sandbox_reaps_only_stale_orphaned_claims(tmp_path):
+    from services.export_sandbox import _reap_stale_claims
+
+    old_claim = tmp_path / "old-job" / "render-request.claimed-crashed.json"
+    old_claim.parent.mkdir()
+    old_claim.write_text("{}", encoding="utf-8")
+    fresh_claim = tmp_path / "fresh-job" / "render-request.claimed-active.json"
+    fresh_claim.parent.mkdir()
+    fresh_claim.write_text("{}", encoding="utf-8")
+
+    os.utime(old_claim, (100, 100))
+    os.utime(fresh_claim, (950, 950))
+
+    reaped = _reap_stale_claims(
+        tmp_path,
+        stale_after_seconds=100,
+        now=1000,
+    )
+
+    assert reaped == 1
+    assert not old_claim.exists()
+    assert fresh_claim.exists()
+
+
 def test_workspace_quota_counts_bytes_and_files_without_following_symlinks(tmp_path):
     from api.export import _workspace_exceeds_limit
 
