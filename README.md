@@ -24,15 +24,14 @@
 > **v1.0.0 — 发布前质量与安全验收**
 >
 > 前后端回归、真实视频渲染、安全边界、故障恢复、对象存储迁移与公开部署保护门禁已完成工程化验收；真实在线模型质量评测仍需显式凭据与成本授权。
-
 **本次更新 (v1.0.0)：**
-- ✅ **前端回归修复**：补齐新建项目页模块目录的 MSW 接口模拟，`npm run verify` 全绿（42 个测试文件 / 302 项测试）。
-- 🧪 **后端质量基线**：常规非在线、非渲染回归通过 `1174 passed，1 skipped，6 deselected`。
-- 🎬 **真实视频验收**：Manim/FFmpeg golden smoke、确定性布局审计（重叠/越界/文本截断）、双 Worker 并行与 Redis/PostgreSQL/MinIO 故障恢复验证通过。
-- 🛡️ **渲染安全加固**：无网络/无凭据 Sandbox、脚本摘要校验、路径与 symlink 越界拒绝、超时/OOM/工作区配额、恶意脚本、容器中断重启及孤儿 claim 回收验证通过。
-- 🔐 **公开部署保护**：公开视频默认关闭；生产环境未完成任务级隔离与安全审批时 fail-closed。
-- 🗄️ **迁移可靠性**：本地 PostgreSQL/MinIO 历史数据迁移演练通过；补充部分上传失败时的对象补偿机制。
-- 📊 **发布验收边界**：真实 Tool Calling Bench、50 案例独立 Judge、至少 20% 人工校准尚未运行；本版本不宣称真实模型质量、成功率或成本。
+- **前端回归修复**：补齐新建项目页模块目录的 MSW 接口模拟，`npm run verify` 全绿（42 个测试文件 / 302 项测试）。
+- **后端质量基线**：常规非在线、非渲染回归通过 `1174 passed，1 skipped，6 deselected`。
+- **真实视频验收**：Manim/FFmpeg golden smoke、确定性布局审计（重叠/越界/文本截断）、双 Worker 并行与 Redis/PostgreSQL/MinIO 故障恢复验证通过。
+- **渲染安全加固**：无网络/无凭据 Sandbox、脚本摘要校验、路径与 symlink 越界拒绝、超时/OOM/工作区配额、恶意脚本、容器中断重启及孤儿 claim 回收验证通过。
+- **公开部署保护**：公开视频默认关闭；生产环境未完成任务级隔离与安全审批时 fail-closed。
+- **迁移可靠性**：本地 PostgreSQL/MinIO 历史数据迁移演练通过；补充部分上传失败时的对象补偿机制。
+- **发布验收边界**：真实 Tool Calling Bench、50 案例独立 Judge、至少 20% 人工校准尚未运行；本版本不宣称真实模型质量、成功率或成本。
 
 **历史版本：**
 - **v0.8.0 — 模块化生成主线 + 可靠性加固**：10 种模块化教学产物、任务化视频导出、真实后端会话、素材治理、成果版本追踪与关键操作审计
@@ -40,11 +39,11 @@
 - **v0.6.0 — LLM 驱动 Manim**：教学语义 → LLM 自主设计可视化布局/配色/动画、Manim 脚本 6 项静态质量检测 + 自动修复 + 失败重试、双模式渲染雏形
 
 **下一阶段规划：**
-- 🎨 **成果工作台深化**：在现有逐帧编辑和版本管理基础上，继续推进帧批量编辑、成果校验视图与发布流程
-- ⚡ **时效优化**：推进 LLM 调用并行化、SSE 进度细化、模块并发调优，以及更细粒度的前端代码分割和沙箱运行时懒加载
-- 🚀 **视频任务横向扩展**：在现有 PostgreSQL lease Worker 基础上完善多 Worker 容量验证、队列优先级与每任务临时渲染容器
-- 🎓 **模板库扩充**：更多公开教学案例与按知识点预置的生成模板
-- 🎬 **导出视频优化**：已接入确定性布局审计，将元素重叠、画面越界和文本截断写入渲染配置；已完成真实 Manim/FFmpeg 样本验收，后续继续修复高频布局问题
+- **成果工作台深化**：在现有逐帧编辑和版本管理基础上，继续推进帧批量编辑、成果校验视图与发布流程
+- **时效优化**：推进 LLM 调用并行化、SSE 进度细化、模块并发调优，以及更细粒度的前端代码分割和沙箱运行时懒加载
+- **视频任务横向扩展**：在现有 PostgreSQL lease Worker 基础上完善多 Worker 容量验证、队列优先级与每任务临时渲染容器
+- **模板库扩充**：更多公开教学案例与按知识点预置的生成模板
+- **导出视频优化**：已接入确定性布局审计，将元素重叠、画面越界和文本截断写入渲染配置；已完成真实 Manim/FFmpeg 样本验收，后续继续修复高频布局问题
 
 ---
 
@@ -314,20 +313,6 @@ python -m scripts.seed_embeddings
 - 前端门禁：**42 files / 302 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
-
-## 已知局限与后续可拓展思路
-
-- **真实 Tool Calling 已进入 Knowledge 主链**：模型可在有界多轮循环中自主选择 `knowledge_search`、`material_lookup`、`get_project_context`，经 Pydantic Schema、服务端 actor/project 上下文、owner 策略、超时/轮数/进程级共享并发/调用数/结果大小预算后执行真实服务，并把结构化 ToolResult 回填继续推理。每次调用以迁移 `0013` 持久化脱敏 Tool Trace，EduFlowBench 已加入 16 个选择、无工具、参数、故障、权限、注入与预算案例；Shell、任意 SQL、任意文件和写工具不在 Registry。真实模型 Tool Bench 基线仍需凭据与成本授权。
-- **真实模型 Tool Bench 具备显式执行入口**：`tool_online_cases.jsonl` 的 8 个在线案例通过 `live_tools` 适配器直接调用生产 Tool Runtime，并记录选择、执行状态、多轮 Token、估算成本和 p95；手动 `Online Tool Calling Bench` 工作流只在提供评测 Secrets 后运行，使用隔离 Compose 数据库并上传可审计报告。仓库尚未取得凭据与成本授权，因此不宣称已有真实模型分数。
-- **核心质量 Bench 已接入生产 Graph 与独立 Judge**：`live_workflow` 将 50 个核心案例直接送入 Planner–Knowledge–Coder–Quality–Reflection LangGraph；`live_judge` 使用独立 endpoint/key/model 完成七维盲评，并把候选与 Judge Token/成本分开记录。手动 `Online EduFlowBench Quality` 工作流使用隔离依赖并上传报告、产物和日志；总成本达到阈值后停止新案例/Judge。真实运行与人工校准完成前不宣称语义质量分数。
-- **授权与账号闭环**：自助注册默认 student 并记录条款/隐私版本；生产要求邮箱验证，提供一次性验证与密码重置、全会话撤销、数据导出及带冷静期注销。后端保留 student/teacher/admin RBAC、owner 隔离、scrypt 密码散列、HttpOnly 会话、Origin/CSRF 校验与管理员审计调额；teacher/admin 仅能由管理员提升。
-- **视频导出仍需继续加固**：API 只创建持久化任务，准备器通过数据库 lease 串行领取，无网络、无凭证沙箱执行生成代码；已有幂等键、逐次 attempt、lease 心跳、取消、readiness 超时、可重试错误分类、指数退避、每任务磁盘/文件数配额、任务目录 symlink 越界拒绝、孤儿 claim 回收和确定性布局审计。当前 Docker 已实测 5 个 golden MP4、共享卷端到端 MP4、2 Worker 并行、Redis/MinIO/PostgreSQL 故障恢复、Sandbox 容器中断/重启恢复、网络隔离和受限 OOM；沙箱当前仍为常驻容器及共享任务卷，公开多租户部署前仍需每任务临时容器或经安全评审的等效强隔离方案。
-- **参数重算已具备跨产物影响分析**：`local` 参数原子校验后直接应用；结构性参数使用 DSL 显式依赖与结构化引用推断，从最早受影响帧开始重算状态后继，无法证明依赖时安全降级为全量。影响会沿生成器 `requires` DAG 传播到下游模块，UI 在写入前展示重算/保留范围及过期产物，并用影响指纹阻止并发状态变化后的过期执行；成功重生成后清除对应 stale 标记。
-- **版本与帧投影已收敛**：Frames 表是活动编辑真源，`ProjectVersion` 保存不可变聚合快照，`current_version_id` 在项目行锁内推进；dirty working copy、恢复和导出固定版本语义明确。`module_outputs.frames` 仅存 artifact reference，迁移 0020 归一化存量 JSONB，读取时按需水合兼容结构；`python -m scripts.audit_artifact_consistency` 可只读核对指针、快照与 Frames 投影。
-- **材料解析已持久化并隔离执行**：上传素材通过 `ArtifactStore` 写入 MinIO，解析 API 只幂等创建 owner-scoped `material_parse` 任务；带凭据 Worker 使用 lease/heartbeat 下载并签署文件，再交给无网络、无服务凭据、受 CPU/内存/PID 约束的 `material-sandbox`。沙箱复核 SHA-256，结果通过 Schema/大小边界后，Worker 在仍持有任务所有权时原子写回。生成只读取数据库中的已解析结果；旧 `data/uploads` 已有保留源文件、预检后显式执行的迁移工具，本地隔离 PostgreSQL/MinIO 迁移演练已通过，真实部署规模的数据迁移与 MinIO 生产策略仍待完成。
-- **SSE 事件支持跨进程重放**：每次生成使用独立 `stream_id`，事件发送前写入 PostgreSQL 账本，包含单调 `id`、`event_id` 和 `schema_version`；前端按标准 SSE frame 解析并以 `Last-Event-ID` 自动重连去重。生产者通过可续租 lease 排他执行，正常断连释放，进程崩溃后可超时接管；终态流只重放、不重新执行。页面优先从 `sessionStorage` 恢复 URL 和游标，本地状态缺失时可在 owner 校验后从服务端发现项目活动流；等待审批状态由项目快照恢复。部分非主 Graph 模块接管时的细粒度 checkpoint 仍未实现。
-- **可观测性已具备本地运营闭环**：主生成、恢复、局部重生成和反馈 Reflection Worker 持久化 workflow/node Trace；Tool Calling 记录脱敏参数/结果摘要、状态与耗时。`/api/metrics/prometheus` 从 PostgreSQL 聚合 24 小时工作流成功率/p95、节点 Token/成本、工具错误、队列等待、导出与 SSE 状态；可选 Compose profile 提供 Prometheus、告警规则和 Grafana 面板。尚未接入 OpenTelemetry Collector、外部通知渠道和长期指标仓库。
-- **模块生成入口已统一且支持成本预检**：首次生成、单模块重试和批量失败重试均进入同一 LangGraph Modules 节点，由 Graph 收尾执行唯一一次快照/版本持久化；重试前按最近成功 Trace 的单模块费用中位数展示非约束性估算。没有有效计价样本时明确显示“不可估算”，并单独展示 Token/成本硬上限。
 
 ## 文档索引
 
