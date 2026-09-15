@@ -27,7 +27,7 @@ Browser (untrusted input)
 | 解析 | 恶意 PDF/PPTX 利用解析器读取凭据、联网、耗尽 CPU/内存/PID | 带凭据 Worker 只负责下载和 SHA-256 签名；无网络无凭据材料沙箱验签后解析；只读根、tmpfs、CPU/内存/PID/超时/结果大小限制 | 当前是常驻容器；真实 OOM/fork-bomb 压测待运行 |
 | Prompt/RAG | 用户、材料或检索结果关闭边界、伪造系统角色、诱导泄密或 Tool 滥用 | Prompt 标记字符编码；系统策略明确所有外部内容为不可信数据；Tool Registry 只读 allowlist；服务端注入 actor/project；结果回填保持 `trust=untrusted`；专项回归数据集 | Prompt 防护不能作为绝对安全边界；真实模型注入基线和人工校准待运行 |
 | Tool Calling | 未注册能力、参数注入、跨租户访问、调用风暴、结果注入 | Pydantic `extra=forbid`、owner 二次校验、只读 Registry、轮数/调用数/共享并发/超时/结果预算、脱敏 Trace | MCP/Skill 和写工具未实现；未来写工具必须增加审批、幂等和补偿 |
-| 视频代码执行 | 模型代码访问密钥/网络/宿主文件、fork bomb、磁盘填满、迟到结果覆盖 | API/准备器不执行代码；无网络无凭据沙箱复核脚本摘要；非 root、只读根、cap drop、PID/CPU/内存/时间/文件数/字节限制；lease/attempt 校验 | 共享卷与常驻沙箱弱于每任务临时容器；真实恶意样本压力报告待补 |
+| 视频代码执行 | 模型代码访问密钥/网络/宿主文件、fork bomb、磁盘填满、迟到结果覆盖 | API/准备器不执行代码；无网络无凭据沙箱复核脚本摘要；非 root、只读根、cap drop、PID/CPU/内存/时间/文件数/字节限制；lease/attempt 校验；已实测网络隔离、超时、受限 OOM、恶意脚本、容器重启恢复和 60 秒只读容量门禁 | 共享卷与常驻沙箱弱于每任务临时容器；fork bomb、超大产物的持续压力和多副本真实任务 soak 仍待补齐 |
 | 下载 | 猜测 job/material ID、路径穿越、永久公开链接、已取消任务泄漏产物 | owner/project 联合查询、规范化对象 key、短期 presigned URL、固定产物清单、终态/attempt 校验 | 外部 CDN/WAF、下载审计归档和一次性 URL 未实现 |
 
 ## 3. Prompt Injection 数据流规则
@@ -50,4 +50,4 @@ Browser (untrusted input)
 - `test_auth.py` 及 API 集成测试：会话、role、owner 和跨项目不可见性。
 
 这些是确定性工程证据，不等于真实模型攻击成功率或容器逃逸证明。真实在线 Bench、
-容器恶意样本和多副本压力测试仍须单独记录报告。
+持续恶意样本压力和多副本真实任务 soak 仍须单独记录报告。
