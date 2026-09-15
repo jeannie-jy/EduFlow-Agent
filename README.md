@@ -15,30 +15,24 @@
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-orange.svg)](https://langchain-ai.github.io/langgraph/)
-[![Version](https://img.shields.io/badge/version-0.9.0-informational.svg)]()
+[![Version](https://img.shields.io/badge/version-1.0.0-informational.svg)]()
 
 ---
 
 ## 当前状态
 
-> **v0.9.0 — Agent 工程化闭环 + EduFlowBench**
+> **v1.0.0 — 发布前质量与安全验收**
 >
-> 统一 LangGraph 工作流、受控 Tool Calling、RAG、HITL、质量反思、持久化执行与评测链路已完成工程化收口。
+> 前后端回归、真实视频渲染、安全边界、故障恢复、对象存储迁移与公开部署保护门禁已完成工程化验收；真实在线模型质量评测仍需显式凭据与成本授权。
 
-**本次更新 (v0.9.0)：**
-- 🧩 **生成方式可选化**：10 种模块生成器（思维导图/知识卡片/交互推演/小练习/对比分析/常见误区/学习路径/代码沙箱/教学视频 + 自动生成的推演脚本），按需勾选生成
-- 🎨 **UI 流程重塑**：步骤指示器（select → plan → results）替代 Tab 栏，新建流程统一收拢到 ProjectWorkspace
-- 🛡️ **数据库初始化落地**：Alembic 管理业务表与 `knowledge_base`；Compose 使用独立一次性 `migrate` Job，API 多副本启动时不再并发执行迁移
-- 🔧 **前端类型门禁**：`npm run typecheck` 改为 `tsc -b`（此前对 solution tsconfig 是空操作），34 个存量 TS 错误清零；修复 SSE 模块事件回调解构缺失（模块进度此前被静默丢弃）
-- 🎬 **视频导出任务化**：API 只持久化排队，独立受限 Worker 通过 PostgreSQL lease 领取、重试和恢复任务；默认关闭，需显式启用 video profile
-- 🧪 **测试覆盖扩展**：当前非在线、非渲染后端回归为 1170 项，前端为 42 个测试文件 / 302 项；CI 分离运行常规测试、在线评测与真实 Manim 渲染冒烟测试
-- 🎁 **成果体验统一**：交互推演升级为统一学习外壳（按主题语义匹配 7 种体验类型）；教学视频支持从推演帧直接定位分镜；失败模块以场景化友好提示呈现（额度不足/接入失效/限流/网络/渲染失败），可在成果页直接重生成
-- 🖥️ **交互推演沙箱升级**：Tailwind 在宿主侧按产物实际使用的 class 本地编译（彻底移除 CDN 依赖），内置 `eduflow-demo` 统一演示样式，遗留模板控件自动打磨为设计系统风格
-- 🧬 **成果版本追踪**：推演脚本产出携带 `artifact_version`（SHA-256），视频产出记录 `source_frames_version`；帧编辑同步快照与模块产出两处副本，分镜过期时提示「分镜已更新」
-- 🔐 **真实后端会话**：注册/登录使用 scrypt 密码散列与仅存散列的 HttpOnly opaque session；Compose 默认保护业务 API，并按项目 owner 隔离项目路径与导出产物
-- 📁 **素材治理**：上传文件记录 owner 与到期时间，校验 PDF/PPTX/文本内容签名，支持删除和定时保留期清理，解析不阻塞 API 事件循环
-- 🧾 **关键操作审计**：账号注册/登录、项目创建/删除、素材上传/删除及视频排队写入只追加审计事件，并关联 request ID
-- 🧭 **LLM 提示词防漂移**：生成请求显式声明主题权威边界（示例仅描述输出形状），对比分析泛化支持算法/概念/机制/协议/用户自定义主题
+**本次更新 (v1.0.0)：**
+- ✅ **前端回归修复**：补齐新建项目页模块目录的 MSW 接口模拟，`npm run verify` 全绿（42 个测试文件 / 302 项测试）。
+- 🧪 **后端质量基线**：常规非在线、非渲染回归通过 `1174 passed，1 skipped，6 deselected`。
+- 🎬 **真实视频验收**：Manim/FFmpeg golden smoke、确定性布局审计（重叠/越界/文本截断）、双 Worker 并行与 Redis/PostgreSQL/MinIO 故障恢复验证通过。
+- 🛡️ **渲染安全加固**：无网络/无凭据 Sandbox、脚本摘要校验、路径与 symlink 越界拒绝、超时/OOM/工作区配额、恶意脚本、容器中断重启及孤儿 claim 回收验证通过。
+- 🔐 **公开部署保护**：公开视频默认关闭；生产环境未完成任务级隔离与安全审批时 fail-closed。
+- 🗄️ **迁移可靠性**：本地 PostgreSQL/MinIO 历史数据迁移演练通过；补充部分上传失败时的对象补偿机制。
+- 📊 **发布验收边界**：真实 Tool Calling Bench、50 案例独立 Judge、至少 20% 人工校准尚未运行；本版本不宣称真实模型质量、成功率或成本。
 
 **历史版本：**
 - **v0.8.0 — 模块化生成主线 + 可靠性加固**：10 种模块化教学产物、任务化视频导出、真实后端会话、素材治理、成果版本追踪与关键操作审计
