@@ -260,7 +260,10 @@ class Settings(BaseSettings):
     quota_artifact_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
     quota_generation_concurrent: int = Field(default=1, ge=1, le=100)
     quota_video_concurrent: int = Field(default=1, ge=1, le=100)
-    video_public_enabled: bool = True
+    # Public video export stays off until task-level isolation has been
+    # implemented and reviewed. Admins can still exercise the queue locally.
+    video_public_enabled: bool = False
+    video_public_isolation_approved: bool = False
 
     # OTLP/HTTP tracing. Header value uses the standard comma-separated
     # key=value format and must be injected by the deployment secret manager.

@@ -126,6 +126,24 @@ async def create_export_job(
     settings = get_settings()
     if not settings.video_public_enabled and not is_admin(current_user):
         raise HTTPException(status_code=403, detail="Video export is not enabled for public accounts")
+    if (
+        getattr(settings, "environment", "development") == "production"
+        and settings.video_public_enabled
+        and not getattr(settings, "video_public_isolation_approved", False)
+        and not is_admin(current_user)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "code": "VIDEO_EXPORT_REQUIRES_TASK_ISOLATION",
+                    "message": (
+                        "Public video export requires per-task render isolation "
+                        "and an explicit security approval."
+                    ),
+                }
+            },
+        )
     if settings.manim_execution_mode != "queue":
         raise HTTPException(
             status_code=503,

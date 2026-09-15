@@ -210,6 +210,8 @@ docker compose --profile video --profile observability up -d --build
 能力移除及 CPU/内存/PID 限制。Worker 对失败 attempt 执行带 jitter 的指数退避；
 沙箱运行期间还会检查每任务目录的总字节和文件数，超限或超时都会回收整个渲染进程组。
 当前仍是常驻沙箱而非每任务临时容器，更完整的恶意样本与压力验证仍属后续加固项。
+公开账户的视频导出默认关闭；生产环境即使显式打开，也必须先完成每任务隔离并设置
+`VIDEO_PUBLIC_ISOLATION_APPROVED=true`，否则普通用户请求会被拒绝。
 
 视频脚本默认使用 `MANIM_SCRIPT_MODE=deterministic`，直接把已校验的逐帧 DSL 编译为
 Manim，不增加模型调用。需要实验更自由的视觉编排时可设为 `llm`；LLM 调用或脚本渲染
@@ -314,7 +316,7 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端常规本地回归：**1171 passed，1 skipped，6 deselected**（真实 Manim 渲染和显式授权的在线评测按环境单独执行；symlink 能力按平台单独跳过）。
+- 后端常规本地回归：**1172 passed，1 skipped，6 deselected**（真实 Manim 渲染和显式授权的在线评测按环境单独执行；symlink 能力按平台单独跳过）。
 - 前端门禁：**42 files / 302 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
