@@ -25,6 +25,17 @@ class ScriptIntegrityError(RuntimeError):
     """Prepared script changed after the privileged worker approved it."""
 
 
+class SandboxPathError(RuntimeError):
+    """A task input/output path escapes its own shared-volume directory."""
+
+
+def _assert_task_path_is_local(path: Path, job_dir: Path) -> None:
+    """Reject symlinked task paths that could cross tenant/job boundaries."""
+    resolved = path.resolve()
+    if not resolved.is_relative_to(job_dir):
+        raise SandboxPathError(f"Task path escapes job directory: {path}")
+
+
 def process_one_request(export_root: Path) -> bool:
     """Atomically claim and render one prepared job from the shared volume."""
     for request_path in export_root.glob("*/render-request.json"):
@@ -48,6 +59,9 @@ def process_one_request(export_root: Path) -> bool:
 
             scripts_dir = job_dir / "scripts"
             script_path = scripts_dir / "main.py"
+            _assert_task_path_is_local(scripts_dir, job_dir)
+            _assert_task_path_is_local(script_path, job_dir)
+            _assert_task_path_is_local(job_dir / "videos", job_dir)
             if not script_path.is_file():
                 raise FileNotFoundError("Prepared Manim script is missing")
             expected_sha256 = str(request.get("script_sha256", ""))
@@ -82,7 +96,7 @@ def process_one_request(export_root: Path) -> bool:
                 "retryable": True,
                 "error_code": None if artifact else "render_failed",
             }
-        except (ExportWorkspaceLimitError, ScriptIntegrityError) as exc:
+        except (ExportWorkspaceLimitError, ScriptIntegrityError, SandboxPathError) as exc:
             logger.warning(
                 "sandbox request rejected: job=%s reason=%s",
                 job_dir.name,
@@ -95,13 +109,21 @@ def process_one_request(export_root: Path) -> bool:
                 "error": (
                     "Prepared script integrity check failed"
                     if isinstance(exc, ScriptIntegrityError)
-                    else "Render workspace quota exceeded"
+                    else (
+                        "Render task path escapes its job directory"
+                        if isinstance(exc, SandboxPathError)
+                        else "Render workspace quota exceeded"
+                    )
                 ),
                 "retryable": False,
                 "error_code": (
                     "script_integrity_failed"
                     if isinstance(exc, ScriptIntegrityError)
-                    else "workspace_quota_exceeded"
+                    else (
+                        "task_path_escape"
+                        if isinstance(exc, SandboxPathError)
+                        else "workspace_quota_exceeded"
+                    )
                 ),
             }
         except Exception:

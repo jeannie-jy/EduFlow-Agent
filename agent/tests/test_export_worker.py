@@ -460,6 +460,42 @@ def test_sandbox_rejects_script_modified_after_worker_approval(tmp_path):
     render.assert_not_called()
 
 
+def test_sandbox_rejects_task_symlink_escape(tmp_path):
+    from services.export_sandbox import process_one_request
+
+    job_dir = tmp_path / "job-symlink"
+    job_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_script = outside_dir / "main.py"
+    script = "from manim import *"
+    outside_script.write_text(script, encoding="utf-8")
+    try:
+        (job_dir / "scripts").symlink_to(outside_dir, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this Windows runner")
+
+    (job_dir / "render-request.json").write_text(
+        _sandbox_request(script, "attempt-symlink"), encoding="utf-8"
+    )
+    settings = MagicMock(
+        export_max_workspace_bytes=1024,
+        export_max_workspace_files=100,
+    )
+
+    with (
+        patch("services.export_sandbox.get_settings", return_value=settings),
+        patch("services.export_sandbox._render_manim_sync") as render,
+    ):
+        assert process_one_request(tmp_path) is True
+
+    result = json.loads((job_dir / "render-result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert result["retryable"] is False
+    assert result["error_code"] == "task_path_escape"
+    render.assert_not_called()
+
+
 def test_compose_sandbox_has_no_network_or_service_credentials():
     compose = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text(
