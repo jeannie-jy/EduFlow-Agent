@@ -200,12 +200,16 @@ async def readiness_checks() -> dict[str, str]:
     """Probe dependencies needed to accept generation and export work."""
     from sqlalchemy import text
 
+    timeout_seconds = get_settings().readiness_timeout_seconds
     checks: dict[str, str] = {}
     try:
-        from db.database import async_session_factory
+        async def probe_database() -> None:
+            from db.database import async_session_factory
 
-        async with async_session_factory() as session:
-            await session.execute(text("SELECT 1"))
+            async with async_session_factory() as session:
+                await session.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(probe_database(), timeout=timeout_seconds)
         checks["database"] = "ok"
     except Exception as exc:
         logger.warning("readiness database check failed: %s", exc)
@@ -217,7 +221,9 @@ async def readiness_checks() -> dict[str, str]:
         redis_client = await _get_redis()
         if redis_client is None:
             raise ConnectionError("redis client unavailable")
-        pong = await __import__("asyncio").to_thread(redis_client.ping)
+        pong = await asyncio.wait_for(
+            asyncio.to_thread(redis_client.ping), timeout=timeout_seconds
+        )
         checks["redis"] = "ok" if pong else "unavailable"
     except Exception as exc:
         logger.warning("readiness redis check failed: %s", exc)
@@ -226,7 +232,9 @@ async def readiness_checks() -> dict[str, str]:
     try:
         from services.artifact_store import get_artifact_store
 
-        await get_artifact_store().ready()
+        await asyncio.wait_for(
+            get_artifact_store().ready(), timeout=timeout_seconds
+        )
         checks["artifact_store"] = "ok"
     except Exception as exc:
         logger.warning("readiness artifact store check failed: %s", exc)
