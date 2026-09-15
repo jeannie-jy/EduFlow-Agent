@@ -19,9 +19,9 @@
 
 ## 尚未完成的故障验证
 
-- Redis、PostgreSQL、MinIO 的真实停止/恢复 smoke，以及 Manim 执行超时、网络隔离、受限 OOM
-  和恶意脚本探针已经产出本地 Docker 验证结果；仍需补齐 Manim 容器崩溃后的 lease 接管与恢复；
+- Redis、PostgreSQL、MinIO 的真实停止/恢复 smoke，以及 Manim 执行超时、网络隔离、受限 OOM、
+  恶意脚本和容器强制中断/重启后的 golden MP4 恢复探针已经产出本地 Docker 验证结果；
 - fork bomb、超大产物和资源配额的持续压力测试；
-- 已提供 `http_capacity_smoke.py` 和 60 秒手动 CI 容量门禁，记录只读端点的
-  RPS、错误率和 p50/p95/p99；多副本 API/Worker 携带真实任务的长时间 soak 仍待运行；
+- `http_capacity_smoke.py` 的 60 秒只读容量门禁已通过（10,838 请求、180.467 RPS、0% 错误率、
+  p99 242.8ms）；多副本 API/Worker 携带真实任务的长时间 soak 仍待运行；
 - 真实模型 Tool/质量 Bench 与至少 20% 人工校准。
