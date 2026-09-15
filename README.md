@@ -50,7 +50,7 @@
 - ⚡ **时效优化**：推进 LLM 调用并行化、SSE 进度细化、模块并发调优，以及更细粒度的前端代码分割和沙箱运行时懒加载
 - 🚀 **视频任务横向扩展**：在现有 PostgreSQL lease Worker 基础上完善多 Worker 容量验证、队列优先级与每任务临时渲染容器
 - 🎓 **模板库扩充**：更多公开教学案例与按知识点预置的生成模板
-- 🎬 **导出视频优化**：已接入确定性布局审计，将元素重叠、画面越界和文本截断写入渲染配置；仍需真实 Manim/FFmpeg 样本验收并继续修复高频布局问题
+- 🎬 **导出视频优化**：已接入确定性布局审计，将元素重叠、画面越界和文本截断写入渲染配置；已完成真实 Manim/FFmpeg 样本验收，后续继续修复高频布局问题
 
 ---
 
@@ -328,7 +328,7 @@ python -m scripts.seed_embeddings
 - **视频导出仍需继续加固**：API 只创建持久化任务，准备器通过数据库 lease 串行领取，无网络、无凭证沙箱执行生成代码；已有幂等键、逐次 attempt、lease 心跳、取消、readiness 超时、可重试错误分类、指数退避、每任务磁盘/文件数配额、任务目录 symlink 越界拒绝和确定性布局审计。当前 Docker 已实测 5 个 golden MP4、共享卷端到端 MP4、2 Worker 并行、Redis/MinIO/PostgreSQL 故障恢复、网络隔离和受限 OOM；沙箱当前仍为常驻容器及共享任务卷，公开多租户部署前仍需每任务临时容器或经安全评审的等效强隔离方案。
 - **参数重算已具备跨产物影响分析**：`local` 参数原子校验后直接应用；结构性参数使用 DSL 显式依赖与结构化引用推断，从最早受影响帧开始重算状态后继，无法证明依赖时安全降级为全量。影响会沿生成器 `requires` DAG 传播到下游模块，UI 在写入前展示重算/保留范围及过期产物，并用影响指纹阻止并发状态变化后的过期执行；成功重生成后清除对应 stale 标记。
 - **版本与帧投影已收敛**：Frames 表是活动编辑真源，`ProjectVersion` 保存不可变聚合快照，`current_version_id` 在项目行锁内推进；dirty working copy、恢复和导出固定版本语义明确。`module_outputs.frames` 仅存 artifact reference，迁移 0020 归一化存量 JSONB，读取时按需水合兼容结构；`python -m scripts.audit_artifact_consistency` 可只读核对指针、快照与 Frames 投影。
-- **材料解析已持久化并隔离执行**：上传素材通过 `ArtifactStore` 写入 MinIO，解析 API 只幂等创建 owner-scoped `material_parse` 任务；带凭据 Worker 使用 lease/heartbeat 下载并签署文件，再交给无网络、无服务凭据、受 CPU/内存/PID 约束的 `material-sandbox`。沙箱复核 SHA-256，结果通过 Schema/大小边界后，Worker 在仍持有任务所有权时原子写回。生成只读取数据库中的已解析结果；旧 `data/uploads` 已有保留源文件、预检后显式执行的迁移工具，真实部署数据迁移与 MinIO 容器集成报告仍待完成。
+- **材料解析已持久化并隔离执行**：上传素材通过 `ArtifactStore` 写入 MinIO，解析 API 只幂等创建 owner-scoped `material_parse` 任务；带凭据 Worker 使用 lease/heartbeat 下载并签署文件，再交给无网络、无服务凭据、受 CPU/内存/PID 约束的 `material-sandbox`。沙箱复核 SHA-256，结果通过 Schema/大小边界后，Worker 在仍持有任务所有权时原子写回。生成只读取数据库中的已解析结果；旧 `data/uploads` 已有保留源文件、预检后显式执行的迁移工具，本地隔离 PostgreSQL/MinIO 迁移演练已通过，真实部署规模的数据迁移与 MinIO 生产策略仍待完成。
 - **SSE 事件支持跨进程重放**：每次生成使用独立 `stream_id`，事件发送前写入 PostgreSQL 账本，包含单调 `id`、`event_id` 和 `schema_version`；前端按标准 SSE frame 解析并以 `Last-Event-ID` 自动重连去重。生产者通过可续租 lease 排他执行，正常断连释放，进程崩溃后可超时接管；终态流只重放、不重新执行。页面优先从 `sessionStorage` 恢复 URL 和游标，本地状态缺失时可在 owner 校验后从服务端发现项目活动流；等待审批状态由项目快照恢复。部分非主 Graph 模块接管时的细粒度 checkpoint 仍未实现。
 - **可观测性已具备本地运营闭环**：主生成、恢复、局部重生成和反馈 Reflection Worker 持久化 workflow/node Trace；Tool Calling 记录脱敏参数/结果摘要、状态与耗时。`/api/metrics/prometheus` 从 PostgreSQL 聚合 24 小时工作流成功率/p95、节点 Token/成本、工具错误、队列等待、导出与 SSE 状态；可选 Compose profile 提供 Prometheus、告警规则和 Grafana 面板。尚未接入 OpenTelemetry Collector、外部通知渠道和长期指标仓库。
 - **模块生成入口已统一且支持成本预检**：首次生成、单模块重试和批量失败重试均进入同一 LangGraph Modules 节点，由 Graph 收尾执行唯一一次快照/版本持久化；重试前按最近成功 Trace 的单模块费用中位数展示非约束性估算。没有有效计价样本时明确显示“不可估算”，并单独展示 Token/成本硬上限。

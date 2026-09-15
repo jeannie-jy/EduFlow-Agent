@@ -19,12 +19,9 @@
 
 ## 尚未完成的故障验证
 
-- 仓库已提供 `agent/scripts/compose_fault_smoke.py` 与手动工作流
-  `.github/workflows/fault-injection.yml`，用于真实停止 Redis、PostgreSQL、MinIO
-  容器并验证 liveness、依赖级 readiness 和恢复；当前开发环境无可用 Docker
-  daemon，因此脚本已实现但尚未产出一次真实运行报告；
-- Manim 容器崩溃、执行超时与恢复的真实故障注入；
-- fork bomb、OOM、超大产物的持续压力测试；
+- Redis、PostgreSQL、MinIO 的真实停止/恢复 smoke，以及 Manim 执行超时、网络隔离、受限 OOM
+  和恶意脚本探针已经产出本地 Docker 验证结果；仍需补齐 Manim 容器崩溃后的 lease 接管与恢复；
+- fork bomb、超大产物和资源配额的持续压力测试；
 - 已提供 `http_capacity_smoke.py` 和 60 秒手动 CI 容量门禁，记录只读端点的
   RPS、错误率和 p50/p95/p99；多副本 API/Worker 携带真实任务的长时间 soak 仍待运行；
 - 真实模型 Tool/质量 Bench 与至少 20% 人工校准。
