@@ -91,6 +91,26 @@ export const handlers = [
     );
   }),
 
+  // ── Module generation metadata ─────────────────────────
+  // ProjectWorkspace loads this list even for the client-side `_new`
+  // placeholder. Keep the browser tests independent from any local API
+  // process by returning the same public catalog as the production fallback.
+  http.get("http://localhost:8000/api/projects/:id/generate/modules", () => {
+    return HttpResponse.json({
+      modules: [
+        { module_id: "mindmap", display_name: "思维导图", description: "知识概念导图", icon: "mindmap", category: "visual", priority: 1, estimated_seconds: 15 },
+        { module_id: "cards", display_name: "知识卡片", description: "概念知识卡片", icon: "cards", category: "visual", priority: 2, estimated_seconds: 20 },
+        { module_id: "interactive_demo", display_name: "交互推演", description: "知识互动体验", icon: "play", category: "interactive", priority: 3, estimated_seconds: 40 },
+        { module_id: "quiz", display_name: "小练习", description: "自动生成练习题", icon: "quiz", category: "interactive", priority: 4, estimated_seconds: 25 },
+        { module_id: "comparison", display_name: "对比分析", description: "按当前主题生成多维度对比", icon: "comparison", category: "visual", priority: 5, estimated_seconds: 30 },
+        { module_id: "video", display_name: "教学视频", description: "生成教学视频", icon: "video", category: "export", priority: 6, estimated_seconds: 120 },
+        { module_id: "misconception", display_name: "常见误区", description: "识别并澄清常见误解", icon: "misconception", category: "visual", priority: 7, estimated_seconds: 30 },
+        { module_id: "pathway", display_name: "学习路径", description: "生成循序渐进的学习路径", icon: "pathway", category: "visual", priority: 8, estimated_seconds: 30 },
+        { module_id: "sandbox", display_name: "代码沙箱", description: "提供可运行的代码实验", icon: "sandbox", category: "interactive", priority: 9, estimated_seconds: 45 },
+      ],
+    });
+  }),
+
   http.delete("http://localhost:8000/api/projects/:id", () => {
     return new HttpResponse(null, { status: 204 });
   }),
