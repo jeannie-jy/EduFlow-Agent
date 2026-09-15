@@ -31,7 +31,7 @@
 - 🛡️ **数据库初始化落地**：Alembic 管理业务表与 `knowledge_base`；Compose 使用独立一次性 `migrate` Job，API 多副本启动时不再并发执行迁移
 - 🔧 **前端类型门禁**：`npm run typecheck` 改为 `tsc -b`（此前对 solution tsconfig 是空操作），34 个存量 TS 错误清零；修复 SSE 模块事件回调解构缺失（模块进度此前被静默丢弃）
 - 🎬 **视频导出任务化**：API 只持久化排队，独立受限 Worker 通过 PostgreSQL lease 领取、重试和恢复任务；默认关闭，需显式启用 video profile
-- 🧪 **测试覆盖扩展**：当前非在线、非渲染后端回归为 1168 项，前端为 42 个测试文件 / 302 项；CI 分离运行常规测试、在线评测与真实 Manim 渲染冒烟测试
+- 🧪 **测试覆盖扩展**：当前非在线、非渲染后端回归为 1170 项，前端为 42 个测试文件 / 302 项；CI 分离运行常规测试、在线评测与真实 Manim 渲染冒烟测试
 - 🎁 **成果体验统一**：交互推演升级为统一学习外壳（按主题语义匹配 7 种体验类型）；教学视频支持从推演帧直接定位分镜；失败模块以场景化友好提示呈现（额度不足/接入失效/限流/网络/渲染失败），可在成果页直接重生成
 - 🖥️ **交互推演沙箱升级**：Tailwind 在宿主侧按产物实际使用的 class 本地编译（彻底移除 CDN 依赖），内置 `eduflow-demo` 统一演示样式，遗留模板控件自动打磨为设计系统风格
 - 🧬 **成果版本追踪**：推演脚本产出携带 `artifact_version`（SHA-256），视频产出记录 `source_frames_version`；帧编辑同步快照与模块产出两处副本，分镜过期时提示「分镜已更新」
@@ -325,7 +325,7 @@ python -m scripts.seed_embeddings
 - **真实模型 Tool Bench 具备显式执行入口**：`tool_online_cases.jsonl` 的 8 个在线案例通过 `live_tools` 适配器直接调用生产 Tool Runtime，并记录选择、执行状态、多轮 Token、估算成本和 p95；手动 `Online Tool Calling Bench` 工作流只在提供评测 Secrets 后运行，使用隔离 Compose 数据库并上传可审计报告。仓库尚未取得凭据与成本授权，因此不宣称已有真实模型分数。
 - **核心质量 Bench 已接入生产 Graph 与独立 Judge**：`live_workflow` 将 50 个核心案例直接送入 Planner–Knowledge–Coder–Quality–Reflection LangGraph；`live_judge` 使用独立 endpoint/key/model 完成七维盲评，并把候选与 Judge Token/成本分开记录。手动 `Online EduFlowBench Quality` 工作流使用隔离依赖并上传报告、产物和日志；总成本达到阈值后停止新案例/Judge。真实运行与人工校准完成前不宣称语义质量分数。
 - **授权与账号闭环**：自助注册默认 student 并记录条款/隐私版本；生产要求邮箱验证，提供一次性验证与密码重置、全会话撤销、数据导出及带冷静期注销。后端保留 student/teacher/admin RBAC、owner 隔离、scrypt 密码散列、HttpOnly 会话、Origin/CSRF 校验与管理员审计调额；teacher/admin 仅能由管理员提升。
-- **视频导出仍需继续加固**：API 只创建持久化任务，准备器通过数据库 lease 串行领取，无网络、无凭证沙箱执行生成代码；已有幂等键、逐次 attempt、lease 心跳、取消、可重试错误分类、指数退避、每任务磁盘/文件数配额、任务目录 symlink 越界拒绝和确定性布局审计。沙箱当前仍为常驻容器及共享任务卷，还需补每任务临时容器、更完整的恶意脚本、OOM/超时压力验证、多 Worker 容量实测及真实 Manim/FFmpeg 渲染验收。
+- **视频导出仍需继续加固**：API 只创建持久化任务，准备器通过数据库 lease 串行领取，无网络、无凭证沙箱执行生成代码；已有幂等键、逐次 attempt、lease 心跳、取消、readiness 超时、可重试错误分类、指数退避、每任务磁盘/文件数配额、任务目录 symlink 越界拒绝和确定性布局审计。当前 Docker 已实测 5 个 golden MP4、共享卷端到端 MP4、2 Worker 并行、Redis/MinIO/PostgreSQL 故障恢复、网络隔离和受限 OOM；沙箱当前仍为常驻容器及共享任务卷，公开多租户部署前仍需每任务临时容器或经安全评审的等效强隔离方案。
 - **参数重算已具备跨产物影响分析**：`local` 参数原子校验后直接应用；结构性参数使用 DSL 显式依赖与结构化引用推断，从最早受影响帧开始重算状态后继，无法证明依赖时安全降级为全量。影响会沿生成器 `requires` DAG 传播到下游模块，UI 在写入前展示重算/保留范围及过期产物，并用影响指纹阻止并发状态变化后的过期执行；成功重生成后清除对应 stale 标记。
 - **版本与帧投影已收敛**：Frames 表是活动编辑真源，`ProjectVersion` 保存不可变聚合快照，`current_version_id` 在项目行锁内推进；dirty working copy、恢复和导出固定版本语义明确。`module_outputs.frames` 仅存 artifact reference，迁移 0020 归一化存量 JSONB，读取时按需水合兼容结构；`python -m scripts.audit_artifact_consistency` 可只读核对指针、快照与 Frames 投影。
 - **材料解析已持久化并隔离执行**：上传素材通过 `ArtifactStore` 写入 MinIO，解析 API 只幂等创建 owner-scoped `material_parse` 任务；带凭据 Worker 使用 lease/heartbeat 下载并签署文件，再交给无网络、无服务凭据、受 CPU/内存/PID 约束的 `material-sandbox`。沙箱复核 SHA-256，结果通过 Schema/大小边界后，Worker 在仍持有任务所有权时原子写回。生成只读取数据库中的已解析结果；旧 `data/uploads` 已有保留源文件、预检后显式执行的迁移工具，真实部署数据迁移与 MinIO 容器集成报告仍待完成。
