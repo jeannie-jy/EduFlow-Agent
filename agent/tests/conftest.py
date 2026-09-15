@@ -9,12 +9,18 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+
+# Settings loads the repository-level .env by default.  Keep the test suite
+# deterministic and independent from a developer's local authentication mode.
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("AUTH_REQUIRED", "false")
 
 
 # The LLM gateway keeps circuit-breaker state at process scope.  Isolate tests

@@ -185,7 +185,9 @@ agent/
 | `POST` | `/api/knowledge/search` | 语义检索（pgvector） |
 | `GET` | `/api/knowledge/templates` | 知识点模板列表 |
 | `POST` | `/api/materials/upload` | 上传课件文件 |
+| `GET` | `/api/materials` | 当前用户课件列表（仅元数据） |
 | `POST` | `/api/materials/{id}/parse` | 解析文件内容 |
+| `DELETE` | `/api/materials/{id}` | 删除当前用户课件 |
 | `GET/DELETE` | `/api/background-jobs/{job_id}` | 查询或取消持久化后台任务 |
 | `GET` | `/api/projects/{id}/workflow-runs` | 查询项目工作流运行记录 |
 | `GET` | `/api/projects/{id}/workflow-runs/{run_id}` | 查询节点级 Trace、模型和成本 |
@@ -245,7 +247,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-最近一次常规本地后端回归为 **1160 passed，6 skipped**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。前端最近一次为 **41 files / 297 tests**，TypeScript、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
+最近一次常规本地后端回归为 **1165 passed，6 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。前端最近一次为 **42 files / 302 tests**，TypeScript、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
 
 ## 数据流
 
