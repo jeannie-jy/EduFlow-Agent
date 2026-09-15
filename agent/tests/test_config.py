@@ -17,3 +17,10 @@ def test_video_script_compilation_is_deterministic_by_default():
     settings = Settings(_env_file=None)
 
     assert settings.manim_script_mode == "deterministic"
+
+
+def test_public_video_is_closed_until_task_isolation_is_approved():
+    settings = Settings(_env_file=None)
+
+    assert settings.video_public_enabled is False
+    assert settings.video_public_isolation_approved is False
