@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,8 @@ from db.database import async_session_factory, close_database
 from db.models import BackgroundJob, Material, Project, User
 from services.artifact_store import ArtifactStore, get_artifact_store
 from services.audit import record_audit
+
+logger = logging.getLogger(__name__)
 
 
 def legacy_material_source(material: Material, upload_root: Path) -> Path:
@@ -92,14 +95,32 @@ async def migrate_legacy_data(
 
     if file_sources:
         artifact_store = store or get_artifact_store()
-        for material, source in file_sources:
-            suffix = Path(material.stored_filename).suffix.lower()
-            key = f"materials/{material.id}/source{suffix}"
-            stored = await artifact_store.put_file(key, source, material.media_type)
-            if stored.size_bytes != material.size_bytes:
-                raise ValueError(f"Material size mismatch during migration: {material.id}")
-            material.storage_key = stored.key
-            report["migrated_material_files"] += 1
+        uploaded_keys: list[str] = []
+        try:
+            for material, source in file_sources:
+                suffix = Path(material.stored_filename).suffix.lower()
+                key = f"materials/{material.id}/source{suffix}"
+                stored = await artifact_store.put_file(key, source, material.media_type)
+                # Record the key before validating metadata so a successful
+                # upload followed by a size mismatch is also compensated.
+                uploaded_keys.append(stored.key)
+                if stored.size_bytes != material.size_bytes:
+                    raise ValueError(
+                        f"Material size mismatch during migration: {material.id}"
+                    )
+                material.storage_key = stored.key
+                report["migrated_material_files"] += 1
+        except Exception:
+            for key in reversed(uploaded_keys):
+                try:
+                    await artifact_store.delete(key)
+                except Exception:
+                    logger.warning(
+                        "legacy migration compensation failed: key=%s",
+                        key,
+                        exc_info=True,
+                    )
+            raise
 
     record_audit(
         session,
