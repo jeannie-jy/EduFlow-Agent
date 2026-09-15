@@ -3,6 +3,8 @@
 import asyncio
 import hashlib
 import json
+import os
+import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -427,6 +429,18 @@ def test_sandbox_rejects_oversized_workspace_without_rendering(tmp_path):
     assert result["retryable"] is False
     assert result["error_code"] == "workspace_quota_exceeded"
     render.assert_not_called()
+
+
+def test_render_subprocess_timeout_terminates_process_group(tmp_path):
+    from api.export import _run_subprocess_group
+
+    with pytest.raises(TimeoutError, match="exceeded 1s"):
+        _run_subprocess_group(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=str(tmp_path),
+            env=os.environ.copy(),
+            timeout=1,
+        )
 
 
 def test_sandbox_rejects_script_modified_after_worker_approval(tmp_path):
