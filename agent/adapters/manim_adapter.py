@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 from datetime import UTC, datetime
@@ -146,6 +147,184 @@ ANIMATION_IMPORTS: dict[str, str] = {
     "swap": "CyclicReplace",
 }
 
+# The DSL uses a 0..1000-ish canvas while Manim's default camera is 14 x 8.
+# Keep these values in one place so the generator and the deterministic layout
+# audit agree on what can be visible in the final frame.
+MANIM_X_LIMITS = (-7.0, 7.0)
+MANIM_Y_LIMITS = (-4.0, 4.0)
+MAX_GENERATED_LABEL_CHARS = 20
+MAX_GENERATED_NARRATION_CHARS = 200
+
+
+def _map_dsl_position(position: dict[str, Any]) -> tuple[float, float]:
+    """Map a DSL canvas position to the same coordinates used by the generator."""
+    raw_x = position.get("x", 0)
+    raw_y = position.get("y", 0)
+    if not isinstance(raw_x, (int, float)) or not isinstance(raw_y, (int, float)):
+        raise ValueError("position x/y must be numbers")
+    if not math.isfinite(float(raw_x)) or not math.isfinite(float(raw_y)):
+        raise ValueError("position x/y must be finite")
+    return float(raw_x) / 100.0 - 3.0, (float(raw_y) / 100.0 - 2.0) * -1
+
+
+def _estimated_object_bounds(
+    visual_object: dict[str, Any],
+    center: tuple[float, float],
+) -> tuple[float, float, float, float]:
+    """Return a conservative Manim bounding box for a generated object.
+
+    This is intentionally an estimate rather than a renderer-dependent pixel
+    measurement. It catches layout regressions before a costly render while
+    keeping the rule deterministic in CI environments without Manim installed.
+    """
+    obj_type = str(visual_object.get("type", "node"))
+    style = visual_object.get("style") or {}
+    size = style.get("size", 30)
+    try:
+        radius = max(0.25, min(2.5, float(size) / 30.0 * 0.5))
+    except (TypeError, ValueError):
+        radius = 0.5
+
+    half_width, half_height = radius, radius
+    if obj_type == "edge":
+        half_width, half_height = 2.2, 0.35
+    elif obj_type in {"process", "card", "memory_block"}:
+        half_width, half_height = 1.1, 0.55
+    elif obj_type in {"table", "array", "linked_list", "timeline"}:
+        headers = visual_object.get("headers") or []
+        rows = visual_object.get("rows") or visual_object.get("cells") or []
+        columns = max([len(headers), *(len(row) for row in rows if isinstance(row, list)), 1])
+        half_width = min(5.8, max(1.0, columns * 0.45))
+        half_height = min(3.0, max(0.45, (len(rows) + 1) * 0.3))
+    elif obj_type == "code_block":
+        code = str(visual_object.get("code", ""))
+        longest_line = max((len(line) for line in code.splitlines()), default=1)
+        half_width = min(6.0, max(1.0, longest_line * 0.045))
+        half_height = min(3.2, max(0.45, len(code.splitlines()) * 0.12))
+    elif obj_type == "formula":
+        formula = str(visual_object.get("latex", ""))
+        half_width = min(6.0, max(0.6, len(formula) * 0.045))
+        half_height = 0.45
+
+    label = str(visual_object.get("label") or "")
+    if label:
+        # Labels are emitted below/above the mobject. Include a small text box
+        # so an otherwise in-bounds object is still flagged when its label is
+        # likely to be clipped.
+        half_width = max(half_width, min(4.0, max(0.5, len(label) * 0.055)))
+        half_height += 0.35
+
+    x, y = center
+    return x - half_width, x + half_width, y - half_height, y + half_height
+
+
+def validate_render_layout(dsl: dict[str, Any]) -> list[dict[str, Any]]:
+    """Audit generated video layout without requiring Manim or a display.
+
+    The result is intentionally structured for persistence in render_config.
+    Warnings describe likely visual defects (overlap, clipping, truncation);
+    malformed numeric coordinates are errors because their rendering is not
+    deterministic.
+    """
+    issues: list[dict[str, Any]] = []
+    for frame_index, frame in enumerate(dsl.get("frames", [])):
+        frame_id = str(frame.get("frame_id", f"f_{frame_index:03d}"))
+        frame_issues: list[tuple[str, dict[str, Any]]] = []
+        boxes: list[tuple[str, tuple[float, float, float, float]]] = []
+
+        narration = str(frame.get("narration") or "")
+        if len(narration) > MAX_GENERATED_NARRATION_CHARS:
+            frame_issues.append((
+                "narration-truncated",
+                {
+                    "severity": "warn",
+                    "detail": (
+                        f"narration has {len(narration)} characters; generated subtitle "
+                        f"is limited to {MAX_GENERATED_NARRATION_CHARS}"
+                    ),
+                },
+            ))
+
+        for object_index, visual_object in enumerate(frame.get("visual_objects", [])):
+            object_id = str(visual_object.get("id", f"object_{object_index}"))
+            position = visual_object.get("position") or {}
+            try:
+                center = _map_dsl_position(position)
+            except ValueError as exc:
+                frame_issues.append((
+                    "invalid-position",
+                    {
+                        "severity": "error",
+                        "object_id": object_id,
+                        "detail": str(exc),
+                    },
+                ))
+                continue
+
+            label = str(visual_object.get("label") or "")
+            if len(label) > MAX_GENERATED_LABEL_CHARS:
+                frame_issues.append((
+                    "label-truncated",
+                    {
+                        "severity": "warn",
+                        "object_id": object_id,
+                        "detail": (
+                            f"label has {len(label)} characters; generated label "
+                            f"is limited to {MAX_GENERATED_LABEL_CHARS}"
+                        ),
+                    },
+                ))
+
+            if visual_object.get("type") == "formula":
+                formula = str(visual_object.get("latex") or "")
+                if len(_strip_latex(formula)) > MAX_GENERATED_NARRATION_CHARS:
+                    frame_issues.append((
+                        "formula-truncated",
+                        {
+                            "severity": "warn",
+                            "object_id": object_id,
+                            "detail": "formula text exceeds the generated 200-character limit",
+                        },
+                    ))
+
+            box = _estimated_object_bounds(visual_object, center)
+            boxes.append((object_id, box))
+            if (
+                box[0] < MANIM_X_LIMITS[0]
+                or box[1] > MANIM_X_LIMITS[1]
+                or box[2] < MANIM_Y_LIMITS[0]
+                or box[3] > MANIM_Y_LIMITS[1]
+            ):
+                frame_issues.append((
+                    "object-out-of-bounds",
+                    {
+                        "severity": "warn",
+                        "object_id": object_id,
+                        "detail": (
+                            f"estimated bounds {tuple(round(value, 2) for value in box)} "
+                            f"exceed the Manim frame {MANIM_X_LIMITS} x {MANIM_Y_LIMITS}"
+                        ),
+                    },
+                ))
+
+        for left_index, (left_id, left_box) in enumerate(boxes):
+            for right_id, right_box in boxes[left_index + 1:]:
+                overlap_width = min(left_box[1], right_box[1]) - max(left_box[0], right_box[0])
+                overlap_height = min(left_box[3], right_box[3]) - max(left_box[2], right_box[2])
+                if overlap_width > 0.05 and overlap_height > 0.05:
+                    frame_issues.append((
+                        "object-overlap",
+                        {
+                            "severity": "warn",
+                            "object_id": f"{left_id},{right_id}",
+                            "detail": "estimated object bounds overlap in the same frame",
+                        },
+                    ))
+
+        for rule, detail in frame_issues:
+            issues.append({"frame_id": frame_id, "rule": rule, **detail})
+    return issues
+
 
 # ============================================================================
 # 脚本生成器
@@ -253,7 +432,7 @@ class ManimScriptGenerator:
             # 生成 narration（作为字幕）
             narration = frame.get("narration", "")
             if narration:
-                safe_narration = " ".join(str(narration).split())[:200]
+                safe_narration = " ".join(str(narration).split())[:MAX_GENERATED_NARRATION_CHARS]
                 lines.append(f'        # Narration: "{safe_narration}"')
                 lines.append(
                     f"        subtitle = Text({safe_narration!r}, "
@@ -297,8 +476,9 @@ class ManimScriptGenerator:
             var_name = f"{safe_id}_{frame_idx}"
 
             position = vo.get("position", {})
-            x = max(-7.0, min(7.0, position.get("x", 0) / 100.0 - 3.0))
-            y = max(-4.0, min(4.0, (position.get("y", 0) / 100.0 - 2.0) * -1))
+            raw_x, raw_y = _map_dsl_position(position)
+            x = max(MANIM_X_LIMITS[0], min(MANIM_X_LIMITS[1], raw_x))
+            y = max(MANIM_Y_LIMITS[0], min(MANIM_Y_LIMITS[1], raw_y))
 
             style = vo.get("style", {})
             color = style.get("color", "#4A90D9")
@@ -316,7 +496,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        f"        {var_name}_label = Text({label[:MAX_GENERATED_LABEL_CHARS]!r}, "
                         "font=EDUFLOW_CJK_FONT, font_size=20)"
                         f".next_to({var_name}, DOWN, buff=0.1)"
                     )
@@ -332,7 +512,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        f"        {var_name}_label = Text({label[:MAX_GENERATED_LABEL_CHARS]!r}, "
                         "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, UP, buff=0.1)"
                     )
@@ -350,7 +530,7 @@ class ManimScriptGenerator:
             elif obj_type == "formula":
                 latex_raw = vo.get("latex", "x")
                 # 生产沙箱不安装 LaTeX，始终编译为 Unicode Text。
-                safe = _strip_latex(latex_raw)[:200]
+                safe = _strip_latex(latex_raw)[:MAX_GENERATED_NARRATION_CHARS]
                 code_lines.append(
                     f"        {var_name} = Text({safe!r}, font=EDUFLOW_CJK_FONT, "
                     "font_size=24, color=WHITE)"
@@ -377,7 +557,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        f"        {var_name}_label = Text({label[:MAX_GENERATED_LABEL_CHARS]!r}, "
                         "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".move_to({var_name}.get_center())"
                     )
@@ -391,7 +571,7 @@ class ManimScriptGenerator:
                 )
                 if label:
                     code_lines.append(
-                        f"        {var_name}_label = Text({label[:20]!r}, "
+                        f"        {var_name}_label = Text({label[:MAX_GENERATED_LABEL_CHARS]!r}, "
                         "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, DOWN)"
                     )
@@ -469,6 +649,7 @@ def generate_render_config(
     }
 
     q = quality_map.get(quality, quality_map["h"])
+    layout_issues = validate_render_layout(dsl)
 
     return {
         "project_id": dsl.get("project_id", ""),
@@ -481,6 +662,8 @@ def generate_render_config(
         "pixel_height": q["pixel_height"],
         "pixel_width": q["pixel_width"],
         "include_subtitles": include_subtitles,
+        "layout_valid": not any(i["severity"] == "error" for i in layout_issues),
+        "layout_issues": layout_issues,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 

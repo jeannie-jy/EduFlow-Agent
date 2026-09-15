@@ -15,6 +15,7 @@ from adapters.manim_adapter import (
     convert_dsl_to_manim,
     generate_render_config,
     generate_subtitles_srt,
+    validate_render_layout,
 )
 
 # ============================================================================
@@ -371,6 +372,61 @@ class TestRenderConfig:
     def test_config_includes_timestamp(self, empty_dsl):
         config = generate_render_config(empty_dsl)
         assert "generated_at" in config
+
+    def test_config_persists_deterministic_layout_audit(self, empty_dsl):
+        config = generate_render_config(empty_dsl)
+        assert config["layout_valid"] is True
+        assert config["layout_issues"] == []
+
+    def test_layout_audit_flags_overlap_clipping_and_text_truncation(self):
+        dsl = {
+            "project_id": "p",
+            "topic": "layout",
+            "frames": [{
+                "frame_id": "f_layout",
+                "narration": "n" * 201,
+                "visual_objects": [
+                    {
+                        "id": "clipped",
+                        "type": "node",
+                        "label": "l" * 21,
+                        "position": {"x": 1000, "y": 650},
+                    },
+                    {
+                        "id": "overlap",
+                        "type": "node",
+                        "position": {"x": 1000, "y": 650},
+                    },
+                ],
+            }],
+        }
+
+        issues = validate_render_layout(dsl)
+        rules = {issue["rule"] for issue in issues}
+
+        assert {"object-out-of-bounds", "object-overlap", "label-truncated", "narration-truncated"} <= rules
+
+    def test_layout_audit_marks_non_finite_coordinates_as_errors(self):
+        dsl = {
+            "frames": [{
+                "frame_id": "f_invalid",
+                "visual_objects": [{
+                    "id": "bad",
+                    "type": "node",
+                    "position": {"x": float("nan"), "y": 0},
+                }],
+            }],
+        }
+
+        issues = validate_render_layout(dsl)
+
+        assert issues == [{
+            "frame_id": "f_invalid",
+            "rule": "invalid-position",
+            "severity": "error",
+            "object_id": "bad",
+            "detail": "position x/y must be finite",
+        }]
 
 
 # ============================================================================
