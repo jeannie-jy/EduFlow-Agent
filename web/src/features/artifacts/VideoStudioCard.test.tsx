@@ -31,6 +31,23 @@ describe("VideoStudioCard", () => {
     });
   });
 
+  it("uses a balanced desktop studio layout without an empty grid column", () => {
+    const { container } = render(
+      <VideoStudioCard
+        projectId="project-layout"
+        videoValue={{ status: "completed", config: {} }}
+        framesValue={{ artifact_version: "v1", frames: [] }}
+      />,
+    );
+
+    expect(container.querySelector('[data-layout="studio-grid"]')).toHaveClass(
+      "xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]",
+    );
+    expect(container.querySelector('[data-layout="studio-controls"]')).toHaveClass(
+      "space-y-4",
+    );
+  });
+
   it("cancels an active durable render job", async () => {
     window.localStorage.setItem("eduflow:video-job:project-cancel", JSON.stringify({
       jobId: "job-active",
@@ -59,6 +76,63 @@ describe("VideoStudioCard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "取消制作" }));
     await waitFor(() => expect(exportMocks.cancelExportJob).toHaveBeenCalledWith("job-active"));
     expect(await screen.findByText("制作已取消")).toBeInTheDocument();
+  });
+
+  it("clears a stale failure banner after a retry completes", async () => {
+    const artifact = { type: "mp4", url: "/api/export/job-video/download/lesson.mp4?inline=1", size_bytes: 12 };
+    window.localStorage.setItem("eduflow:video-job:project-completed", JSON.stringify({
+      jobId: "job-video",
+      status: "completed",
+      progress: 100,
+      artifacts: [artifact],
+      error: "render failed on the previous attempt",
+      config: {},
+    }));
+    exportMocks.getExportStatus.mockResolvedValue({
+      job_id: "job-video",
+      status: "completed",
+      progress_pct: 100,
+      artifacts: [artifact],
+      error_log: null,
+    });
+
+    render(
+      <VideoStudioCard
+        projectId="project-completed"
+        videoValue={{ status: "completed", config: {} }}
+        framesValue={{ artifact_version: "v1", frames: [] }}
+      />,
+    );
+
+    expect(await screen.findByText("视频已完成")).toBeInTheDocument();
+    expect(screen.queryByText("视频渲染未完成")).not.toBeInTheDocument();
+  });
+
+  it("shows a download fallback when the native video preview errors", async () => {
+    const artifact = { type: "mp4", url: "/api/export/job-video/download/lesson.mp4?inline=1", size_bytes: 12 };
+    exportMocks.getExportStatus.mockResolvedValue({
+      job_id: "job-video",
+      status: "completed",
+      progress_pct: 100,
+      artifacts: [artifact],
+      error_log: null,
+    });
+    const { container } = render(
+      <VideoStudioCard
+        projectId="project-preview-error"
+        videoValue={{ status: "completed", job_id: "job-video", config: {} }}
+        framesValue={{ artifact_version: "v1", frames: [] }}
+      />,
+    );
+
+    const video = await waitFor(() => {
+      const element = container.querySelector("video");
+      if (!element) throw new Error("video preview has not rendered");
+      return element;
+    });
+    fireEvent.error(video);
+    expect(await screen.findByText("预览加载失败，视频文件仍可下载。")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "下载视频" })).toHaveAttribute("href", artifact.url);
   });
 
   it("creates a render job from editable output settings", async () => {

@@ -273,10 +273,7 @@ async def run_claimed_export(job: dict[str, Any]) -> None:
         # trusted worker; the render sandbox never receives this value.
         from services.provider_credentials import CredentialReferenceUnavailableError
         credential_ref = (job.get("config") or {}).get("credential_ref")
-        if credential_ref or (
-            getattr(settings, "byok_required", False)
-            and getattr(settings, "manim_script_mode", "deterministic") == "llm"
-        ):
+        if credential_ref or getattr(settings, "manim_script_mode", "deterministic") == "llm":
             owner_id = job.get("owner_id")
             if not owner_id:
                 raise CredentialReferenceUnavailableError(

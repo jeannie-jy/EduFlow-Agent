@@ -3,6 +3,7 @@
 POST   /api/projects/{id}/export/manim          创建视频导出任务
 GET    /api/export/{job_id}                     查询导出状态
 GET    /api/export/{job_id}/download/{filename} 下载产物
+     MP4 预览使用 ?inline=1，通过 API 流式返回并支持 Range 请求
 """
 
 from __future__ import annotations
@@ -22,8 +23,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -171,14 +172,12 @@ async def create_export_job(
         # Capture only the credential reference in the durable job.  The
         # worker decrypts it just before the provider call; render sandbox
         # input never contains this value.
-        from db.models import ProviderCredential
+        from services.provider_credentials import selected_provider_credential
 
-        credential = await session.scalar(select(ProviderCredential).where(
-            ProviderCredential.user_id == current_user.id,
-            ProviderCredential.purpose == "generation",
-            ProviderCredential.status == "active",
-        ).order_by(ProviderCredential.version.desc()))
-        if credential is None and settings.byok_required:
+        credential = await selected_provider_credential(
+            session, current_user.id, "generation"
+        )
+        if credential is None:
             raise HTTPException(status_code=428, detail="A generation provider credential is required")
         if credential is not None:
             credential_ref = {"id": str(credential.id), "version": credential.version}
@@ -246,6 +245,7 @@ async def create_export_job(
             await reserve_quota(
                 session, user_id=current_user.id, resource="video",
                 idempotency_key=quota_key,
+                count_toward_limit=False,
                 details={"project_id": project_id, "job_target": "manim_video"},
             )
         except QuotaExceededError as exc:
@@ -905,6 +905,7 @@ def _render_manim_sync(
     ffmpeg_dir = _find_ffmpeg()
     if ffmpeg_dir:
         env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
+    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
 
     media_abs = str(Path(media_dir).resolve())
     result = _run_subprocess_group(
@@ -950,6 +951,7 @@ def _render_manim_sync(
                 continue
             dest = export_dir / mp4.name
             _shutil.copy2(mp4, dest)
+            _optimize_mp4_for_web(dest, ffmpeg_bin)
             return {
                 "type": "mp4",
                 "filename": mp4.name,
@@ -957,7 +959,6 @@ def _render_manim_sync(
             }
 
     # Manim 未产出最终 MP4，尝试手动合并 partial_movie_files
-    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
     merged = _merge_partial_movies(export_dir, ffmpeg_bin)
     if merged:
         return merged
@@ -1089,6 +1090,8 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
                     str(concat_list),
                     "-c",
                     "copy",
+                    "-movflags",
+                    "+faststart",
                     str(output),
                     "-y",
                 ],
@@ -1115,6 +1118,42 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
         # 继续尝试下一个 partial_movie_files 目录
 
     return None
+
+
+def _optimize_mp4_for_web(path: Path, ffmpeg_bin: str) -> None:
+    """Move the MP4 ``moov`` atom up front so browsers can load metadata fast."""
+    if not path.is_file() or path.suffix.lower() != ".mp4":
+        return
+    optimized = path.with_name(f".{path.stem}.faststart{path.suffix}")
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(optimized),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0 and optimized.is_file() and optimized.stat().st_size > 0:
+            optimized.replace(path)
+        elif optimized.exists():
+            optimized.unlink(missing_ok=True)
+    except Exception:
+        optimized.unlink(missing_ok=True)
+        logger.info("MP4 faststart 优化跳过: %s", path.name, exc_info=True)
 
 
 def _update_redis_status(
@@ -1309,7 +1348,7 @@ async def get_export_status(
                 result["artifacts"] = [
                     {
                         "type": a.get("type", "mp4"),
-                        "url": f"/api/export/{job_id}/download/{a.get('filename', 'output.mp4')}",
+                        "url": _artifact_download_url(job_id, a),
                         "size_bytes": a.get("size_bytes", 0),
                     }
                     for a in artifacts
@@ -1356,7 +1395,7 @@ async def get_export_status(
                 "artifacts": [
                     {
                         "type": a.get("type", "mp4"),
-                        "url": f"/api/export/{job_id}/download/{a.get('filename', 'output.mp4')}",
+                        "url": _artifact_download_url(job_id, a),
                         "size_bytes": a.get("size_bytes", 0),
                     }
                     for a in db_artifacts
@@ -1384,6 +1423,20 @@ def _public_export_error(error_log: object) -> str | None:
     return public_failure_message("render")
 
 
+def _artifact_download_url(job_id: str, artifact: dict) -> str:
+    """Build a browser-safe URL for an exported artifact.
+
+    MP4 previews are served through the API instead of redirecting to MinIO.
+    A redirect works for ordinary downloads, but media elements issue follow-up
+    Range requests and may fail when the redirect crosses the storage origin.
+    """
+    filename = artifact.get("filename", "output.mp4")
+    url = f"/api/export/{job_id}/download/{filename}"
+    if artifact.get("type", "mp4") == "mp4":
+        url += "?inline=1"
+    return url
+
+
 # ============================================================================
 # 下载产物
 # ============================================================================
@@ -1395,6 +1448,8 @@ async def download_artifact(
     filename: str,
     session: AsyncSession = Depends(get_session),
     current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    request: Request = None,  # type: ignore[assignment]
+    inline: bool = False,
 ):
     """下载导出的产物文件。
 
@@ -1427,7 +1482,18 @@ async def download_artifact(
     if artifact and artifact.get("storage_key"):
         from services.artifact_store import get_artifact_store
 
-        url = await get_artifact_store().presigned_get_url(artifact["storage_key"])
+        store = get_artifact_store()
+        if inline and artifact.get("type", "mp4") == "mp4":
+            streamed = await _stream_minio_artifact(
+                store,
+                artifact["storage_key"],
+                filename,
+                request,
+            )
+            if streamed is not None:
+                return streamed
+
+        url = await store.presigned_get_url(artifact["storage_key"])
         if url:
             return RedirectResponse(url=url, status_code=307)
 
@@ -1480,6 +1546,114 @@ async def download_artifact(
         path=str(file_path),
         media_type=media_type,
         filename=filename,
+        content_disposition_type="inline" if inline and suffix == ".mp4" else "attachment",
+    )
+
+
+def _parse_byte_range(value: str | None, total_size: int) -> tuple[int, int] | None:
+    """Parse one HTTP byte range, returning inclusive start/end offsets."""
+    if not value:
+        return None
+    if not value.lower().startswith("bytes=") or total_size <= 0:
+        raise ValueError("Invalid byte range")
+    spec = value[6:].split(",", 1)[0].strip()
+    if "-" not in spec:
+        raise ValueError("Invalid byte range")
+    start_text, end_text = (part.strip() for part in spec.split("-", 1))
+    try:
+        if not start_text:
+            suffix_length = int(end_text)
+            if suffix_length <= 0:
+                raise ValueError
+            start = max(total_size - suffix_length, 0)
+            end = total_size - 1
+        else:
+            start = int(start_text)
+            if start < 0 or start >= total_size:
+                raise ValueError
+            end = total_size - 1 if not end_text else min(int(end_text), total_size - 1)
+            if end < start:
+                raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid byte range") from exc
+    return start, end
+
+
+async def _stream_minio_artifact(
+    store: object,
+    key: str,
+    filename: str,
+    request: Request | None,
+) -> Response | None:
+    """Proxy an MP4 from MinIO with Range support for native browser playback."""
+    # LocalArtifactStore intentionally has no client/bucket attributes.  Keep
+    # this check duck-typed so the API remains importable without minio installed.
+    client = getattr(store, "client", None)
+    bucket = getattr(store, "bucket", None)
+    if client is None or not bucket:
+        return None
+
+    from services.artifact_store import normalize_artifact_key
+
+    try:
+        safe_key = normalize_artifact_key(key)
+        stat = await asyncio.to_thread(client.stat_object, bucket, safe_key)
+        total_size = int(stat.size)
+        content_type = getattr(stat, "content_type", None) or "video/mp4"
+        range_header = request.headers.get("range") if request is not None else None
+        try:
+            byte_range = _parse_byte_range(range_header, total_size)
+        except ValueError:
+            return Response(
+                status_code=416,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes */{total_size}",
+                },
+            )
+
+        start, end = byte_range or (0, total_size - 1)
+        length = end - start + 1
+        object_response = await asyncio.to_thread(
+            client.get_object,
+            bucket,
+            safe_key,
+            offset=start,
+            length=length,
+        )
+    except Exception:
+        logger.warning("MinIO 视频流读取失败", exc_info=True)
+        return None
+
+    def body():
+        try:
+            while True:
+                chunk = object_response.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            with contextlib.suppress(Exception):
+                object_response.close()
+            with contextlib.suppress(Exception):
+                object_response.release_conn()
+
+    from urllib.parse import quote
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(length),
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+    }
+    status_code = 200
+    if byte_range is not None:
+        headers["Content-Range"] = f"bytes {start}-{end}/{total_size}"
+        status_code = 206
+    return StreamingResponse(
+        body(),
+        status_code=status_code,
+        media_type=content_type,
+        headers=headers,
     )
 
 

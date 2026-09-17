@@ -38,6 +38,24 @@ function formatFileSize(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function previewUrlForArtifact(url: string) {
+  // Sessions persisted before the API streaming change still contain the old
+  // redirect URL.  Normalize those URLs on the client so a transient polling
+  // failure cannot leave the preview stuck on the legacy media path.
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (!parsed.pathname.startsWith("/api/export/") || !parsed.pathname.toLowerCase().endsWith(".mp4")) {
+      return url;
+    }
+    parsed.searchParams.set("inline", "1");
+    return /^[a-z][a-z\d+.-]*:/i.test(url)
+      ? parsed.toString()
+      : `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return url;
+  }
+}
+
 export function VideoStudioCard({
   videoValue,
   framesValue,
@@ -62,7 +80,12 @@ export function VideoStudioCard({
   const [status, setStatus] = useState(storedSession?.status ?? video.status ?? "ready");
   const [progress, setProgress] = useState(storedSession?.progress ?? 0);
   const [artifacts, setArtifacts] = useState<ExportArtifact[]>(storedSession?.artifacts ?? []);
-  const [error, setError] = useState<string | null>(storedSession?.error ?? null);
+  // A completed retry supersedes any error persisted by an earlier attempt.
+  // Without this guard the status badge says “completed” while the old
+  // failure banner remains visible after a refresh.
+  const [error, setError] = useState<string | null>(
+    storedSession?.status === "completed" ? null : storedSession?.error ?? null,
+  );
   const [jobId, setJobId] = useState(storedSession?.jobId ?? video.job_id);
   const [config, setConfig] = useState<ExportManimRequest>(storedSession?.config ?? defaultConfig);
   const [creatingJob, setCreatingJob] = useState(false);
@@ -82,6 +105,7 @@ export function VideoStudioCard({
         setProgress(result.progress_pct ?? 0);
         setArtifacts(result.artifacts ?? []);
         if (result.status === "failed") setError(result.error_log ?? "渲染失败");
+        if (result.status === "completed" || result.status === "cancelled") setError(null);
         if (!["completed", "failed", "cancelled"].includes(result.status)) {
           timeout = window.setTimeout(poll, 3000);
         }
@@ -149,6 +173,14 @@ export function VideoStudioCard({
     sourceFramesVersion !== frames.artifact_version,
   );
   const mp4 = artifacts.find((artifact) => artifact.type === "mp4");
+  const previewUrl = mp4 ? previewUrlForArtifact(mp4.url) : undefined;
+  const [previewError, setPreviewError] = useState(false);
+
+  useEffect(() => {
+    // The URL changes when a new render is selected.  Reset the media error so
+    // the replacement element gets a chance to load normally.
+    setPreviewError(false);
+  }, [previewUrl]);
   const totalSeconds = Math.round(
     frames.frames.reduce((sum, frame) => sum + (frame.duration_ms ?? 5000), 0) / 1000,
   );
@@ -177,7 +209,10 @@ export function VideoStudioCard({
   }, [frames.frames, targetFrameId]);
 
   return (
-    <div className="space-y-4 p-4">
+    <div
+      className="grid min-w-0 gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]"
+      data-layout="studio-grid"
+    >
       <div className="min-w-0 space-y-4">
         <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -341,12 +376,33 @@ export function VideoStudioCard({
         {status === "completed" && mp4 && (
           <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
             <h3 className="mb-3 text-sm font-bold">成片预览</h3>
-            <video controls className="w-full rounded-lg bg-black" src={mp4.url}>您的浏览器不支持视频播放</video>
+            <video
+              key={previewUrl}
+              controls
+              preload="metadata"
+              className="w-full rounded-lg bg-black"
+              src={previewUrl}
+              onError={() => setPreviewError(true)}
+            >
+              您的浏览器不支持视频播放
+            </video>
+            {previewError && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-[color-mix(in_oklch,var(--error)_7%,var(--card))] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+                <span>预览加载失败，视频文件仍可下载。</span>
+                <a
+                  className="font-semibold text-[var(--interactive)] underline underline-offset-2"
+                  href={previewUrl}
+                  download
+                >
+                  下载视频
+                </a>
+              </div>
+            )}
           </section>
         )}
       </div>
 
-      <aside className="grid items-start gap-4 lg:grid-cols-2">
+      <aside className="min-w-0 space-y-4" data-layout="studio-controls">
         <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <p className="text-xs font-semibold text-[var(--muted-foreground)]">视频制作状态</p>
           <div className="mt-3 flex items-center gap-2">

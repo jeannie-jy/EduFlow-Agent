@@ -1,11 +1,14 @@
 """ArtifactStore contract tests for local and MinIO-backed exports."""
 
+from pathlib import Path
+from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
+from starlette.requests import Request
 
 from services.artifact_store import (
     LocalArtifactStore,
@@ -177,3 +180,81 @@ async def test_cross_owner_download_does_not_issue_presigned_url():
 
     assert exc.value.status_code == 404
     get_store.assert_not_called()
+
+
+def test_video_artifact_urls_request_api_streaming():
+    from api.export import _artifact_download_url
+
+    assert _artifact_download_url("job-1", {"type": "mp4", "filename": "lesson.mp4"}) == (
+        "/api/export/job-1/download/lesson.mp4?inline=1"
+    )
+    assert _artifact_download_url("job-1", {"type": "manim_source", "filename": "main.py"}) == (
+        "/api/export/job-1/download/main.py"
+    )
+
+
+def test_byte_range_parser_supports_open_and_suffix_ranges():
+    from api.export import _parse_byte_range
+
+    assert _parse_byte_range("bytes=2-5", 10) == (2, 5)
+    assert _parse_byte_range("bytes=8-", 10) == (8, 9)
+    assert _parse_byte_range("bytes=-3", 10) == (7, 9)
+    with pytest.raises(ValueError):
+        _parse_byte_range("bytes=10-", 10)
+
+
+def test_mp4_faststart_uses_a_safe_replace(tmp_path):
+    from api.export import _optimize_mp4_for_web
+
+    source = tmp_path / "lesson.mp4"
+    source.write_bytes(b"original")
+
+    def fake_ffmpeg(command, **kwargs):
+        del kwargs
+        Path(command[-1]).write_bytes(b"optimized")
+        return CompletedProcess(command, 0, "", "")
+
+    with patch("api.export.subprocess.run", side_effect=fake_ffmpeg):
+        _optimize_mp4_for_web(source, "ffmpeg")
+
+    assert source.read_bytes() == b"optimized"
+    assert not (tmp_path / ".lesson.faststart.mp4").exists()
+
+
+@pytest.mark.asyncio
+async def test_minio_video_stream_proxies_range_requests():
+    from api.export import _stream_minio_artifact
+
+    class FakeObject:
+        def __init__(self):
+            self.closed = False
+
+        def read(self, size):
+            del size
+            if self.closed:
+                return b""
+            self.closed = True
+            return b"cdef"
+
+        def close(self):
+            self.closed = True
+
+        def release_conn(self):
+            pass
+
+    response = FakeObject()
+    client = MagicMock()
+    client.stat_object.return_value = SimpleNamespace(size=10, content_type="video/mp4")
+    client.get_object.return_value = response
+    store = SimpleNamespace(client=client, bucket="artifacts")
+    request = Request({"type": "http", "headers": [(b"range", b"bytes=2-5")]})
+
+    streamed = await _stream_minio_artifact(store, "exports/job/lesson.mp4", "lesson.mp4", request)
+
+    assert streamed is not None
+    assert streamed.status_code == 206
+    assert streamed.headers["content-range"] == "bytes 2-5/10"
+    assert streamed.headers["content-length"] == "4"
+    chunks = [chunk async for chunk in streamed.body_iterator]
+    assert b"".join(chunks) == b"cdef"
+    client.get_object.assert_called_once_with("artifacts", "exports/job/lesson.mp4", offset=2, length=4)

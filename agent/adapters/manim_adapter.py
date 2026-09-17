@@ -122,16 +122,20 @@ ANIMATION_MAP: dict[str, str] = {
     "appear": "FadeIn",
     "disappear": "FadeOut",
     "highlight": "Indicate",  # Indicate 是 Manim 的高亮闪烁动画
-    "transform": "Transform",
+    # Transform requires both a source and a destination mobject.  The DSL
+    # currently carries only one target for these semantic operations, so use
+    # a safe emphasis animation instead of emitting invalid Transform(obj).
+    "transform": "Indicate",
     "move": "animate.move_to",
     "update_value": "Transform",  # 值变化用 Transform + 新对象
-    "compare": "AnimationGroup",  # 组合动画
+    # AnimationGroup accepts Animation instances, not a raw Mobject.
+    "compare": "Indicate",
     "swap": "CyclicReplace",  # 交换位置
-    "relax_edge": "Transform",  # 边权重变化
+    "relax_edge": "Indicate",  # 边权重变化（无目标值时安全强调）
     "enqueue": "FadeIn",
     "dequeue": "FadeOut",
-    "split": "Transform",
-    "merge": "Transform",
+    "split": "Indicate",
+    "merge": "Indicate",
     "schedule": "FadeIn",
     "lock": "FadeIn",  # 锁定图标出现
     "unlock": "FadeOut",  # 锁定图标消失
@@ -142,8 +146,8 @@ ANIMATION_IMPORTS: dict[str, str] = {
     "appear": "FadeIn",
     "disappear": "FadeOut",
     "highlight": "Indicate",
-    "transform": "Transform",
-    "compare": "AnimationGroup",
+    "transform": "Indicate",
+    "compare": "Indicate",
     "swap": "CyclicReplace",
 }
 

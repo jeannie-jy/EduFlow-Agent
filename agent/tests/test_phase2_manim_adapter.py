@@ -303,6 +303,28 @@ class TestManimScriptGenerator:
         # 应使用 FadeIn 回退
         assert "FadeIn" in script
 
+    def test_single_target_semantic_animations_never_wrap_raw_mobjects(self):
+        """Manim AnimationGroup/Transform cannot accept one raw Mobject."""
+        semantic_types = ["compare", "transform", "relax_edge", "split", "merge"]
+        dsl = {
+            "project_id": "p1",
+            "topic": "safe semantic animations",
+            "frames": [{
+                "frame_id": f"f_{index:03d}",
+                "title": animation_type,
+                "narration": "",
+                "visual_objects": [{"id": f"obj_{index}", "type": "node"}],
+                "animations": [{"type": animation_type, "target": f"obj_{index}"}],
+            } for index, animation_type in enumerate(semantic_types)],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "AnimationGroup(obj_" not in script
+        assert "Transform(obj_" not in script
+        assert script.count("self.play(Indicate(obj_") == len(semantic_types)
+        compile(script, "<generated-manim>", "exec")
+
     def test_mixed_visual_object_types_imports(self):
         """多类型 VisualObject 应生成完整的 import 集合。"""
         dsl = {
