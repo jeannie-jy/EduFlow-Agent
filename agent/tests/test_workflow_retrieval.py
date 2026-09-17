@@ -1,5 +1,6 @@
 """RAG integration tests for the Knowledge -> Coder main path."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -222,3 +223,45 @@ async def test_pgvector_failure_rolls_back_before_keyword_fallback():
     assert result == []
     assert session.rollback_count == 1
     fallback.assert_awaited_once_with("queues", 5, None, None, session)
+
+
+@pytest.mark.asyncio
+async def test_seed_serializes_jsonb_metadata_arrays_for_asyncpg():
+    """Raw text statements must not bind Python lists directly to JSONB."""
+    from services.knowledge_service import seed_knowledge_embeddings
+
+    class Result:
+        def fetchone(self):
+            return None
+
+    class Session:
+        def __init__(self):
+            self.inserts = []
+            self.committed = False
+
+        async def execute(self, statement, params):
+            sql = str(statement)
+            if sql.lstrip().upper().startswith("SELECT"):
+                return Result()
+            self.inserts.append((sql, params))
+            return Result()
+
+        async def commit(self):
+            self.committed = True
+
+    session = Session()
+    with patch(
+        "services.knowledge_service.generate_embedding",
+        new=AsyncMock(return_value=[0.1, 0.2]),
+    ):
+        count = await seed_knowledge_embeddings(session)
+
+    assert count == 22
+    assert session.committed is True
+    sql, params = session.inserts[0]
+    assert "CAST(:object_types AS jsonb)" in sql
+    assert "CAST(:animation_types AS jsonb)" in sql
+    assert params["object_types"] == json.dumps(["array", "code_block"], ensure_ascii=False)
+    assert params["animation_types"] == json.dumps(
+        ["compare", "swap", "highlight", "appear"], ensure_ascii=False
+    )

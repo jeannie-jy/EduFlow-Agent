@@ -62,6 +62,42 @@ _LEXICAL_STOPWORDS = {
 }
 
 
+def _json_array_param(value: Any) -> str:
+    """Serialize a knowledge metadata array for a PostgreSQL JSONB bind.
+
+    ``text()`` statements do not carry SQLAlchemy's JSONB bind processor, so
+    passing a Python list directly to asyncpg makes it try to call ``encode``
+    on the list.  Keep the conversion at the raw-SQL boundary and let
+    PostgreSQL validate the resulting JSON value via an explicit cast.
+    """
+    if value is None:
+        value = []
+    elif isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            decoded = [value]
+        value = decoded if isinstance(decoded, (list, tuple)) else [decoded]
+    elif not isinstance(value, (list, tuple)):
+        value = [value]
+    return json.dumps(list(value), ensure_ascii=False)
+
+
+def _json_array_result(value: Any) -> list[Any]:
+    """Normalize JSONB (or legacy JSON text) metadata to a list for callers."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+        return list(decoded) if isinstance(decoded, (list, tuple)) else []
+    return []
+
+
 def _lexical_search_terms(query: str) -> list[str]:
     """Extract bounded, meaningful lexical anchors for hybrid retrieval."""
     normalized = query.lower()
@@ -205,8 +241,8 @@ async def search_knowledge_pgvector(
             "subject": row.subject,
             "difficulty": row.difficulty or 3,
             "similarity": round(row.similarity, 4) if row.similarity else 0.0,
-            "object_types": row.object_types or [],
-            "animation_types": row.animation_types or [],
+            "object_types": _json_array_result(row.object_types),
+            "animation_types": _json_array_result(row.animation_types),
         }
         for row in rows
     ]
@@ -260,8 +296,8 @@ async def _fallback_keyword_search(
             "subject": row.subject,
             "difficulty": row.difficulty or 3,
             "similarity": round(row.similarity, 4) if row.similarity else 0.0,
-            "object_types": row.object_types or [],
-            "animation_types": row.animation_types or [],
+            "object_types": _json_array_result(row.object_types),
+            "animation_types": _json_array_result(row.animation_types),
         }
         for row in rows
     ]
@@ -315,8 +351,8 @@ async def seed_knowledge_embeddings(session: AsyncSession) -> int:
                     source_key = :source_key,
                     subject = :subject,
                     difficulty = :difficulty,
-                    object_types = :object_types,
-                    animation_types = :animation_types,
+                    object_types = CAST(:object_types AS jsonb),
+                    animation_types = CAST(:animation_types AS jsonb),
                     embedding = CAST(:embedding AS vector)
                 WHERE id = :id
             """)
@@ -327,8 +363,8 @@ async def seed_knowledge_embeddings(session: AsyncSession) -> int:
                 "embedding": embedding_str,
                 "subject": item.get("subject", ""),
                 "difficulty": item.get("difficulty", 3),
-                "object_types": item.get("object_types", []),
-                "animation_types": item.get("animation_types", []),
+                "object_types": _json_array_param(item.get("object_types", [])),
+                "animation_types": _json_array_param(item.get("animation_types", [])),
             })
             count += 1
             logger.info("知识条目 embedding 已更新: %s", concept)
@@ -347,7 +383,8 @@ async def seed_knowledge_embeddings(session: AsyncSession) -> int:
             INSERT INTO knowledge_base
                 (source_key, concept, content, embedding, subject, difficulty, object_types, animation_types)
             VALUES
-                (:source_key, :concept, :content, CAST(:embedding AS vector), :subject, :difficulty, :object_types, :animation_types)
+                (:source_key, :concept, :content, CAST(:embedding AS vector), :subject, :difficulty,
+                 CAST(:object_types AS jsonb), CAST(:animation_types AS jsonb))
         """)
         await session.execute(insert_sql, {
             "source_key": source_key,
@@ -356,8 +393,8 @@ async def seed_knowledge_embeddings(session: AsyncSession) -> int:
             "embedding": embedding_str,
             "subject": item.get("subject", ""),
             "difficulty": item.get("difficulty", 3),
-            "object_types": item.get("object_types", []),
-            "animation_types": item.get("animation_types", []),
+            "object_types": _json_array_param(item.get("object_types", [])),
+            "animation_types": _json_array_param(item.get("animation_types", [])),
         })
         count += 1
         logger.info("知识条目已写入: %s (dim=%d)", concept, len(embedding))
