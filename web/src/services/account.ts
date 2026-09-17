@@ -1,14 +1,18 @@
 import { api } from "./api-client";
 
-export type ProviderName = "deepseek" | "dashscope";
+export type ProviderName = "deepseek" | "dashscope" | "openai" | "ollama";
 export type CredentialPurpose = "generation" | "embedding";
 
 export interface ProviderCredential {
   id: string;
+  name: string;
   provider: ProviderName;
   purpose: CredentialPurpose;
+  model: string;
+  base_url: string;
   version: number;
-  status: "active" | "invalid" | "revoked";
+  status: "unverified" | "valid" | "invalid" | "revoked";
+  is_active: boolean;
   key_last_four: string;
   validated_at: string | null;
   last_used_at: string | null;
@@ -26,7 +30,6 @@ export interface UsageSnapshot {
   };
   llm_limits: {
     task_max_tokens: number;
-    monthly_reference_cost_usd: number;
   };
 }
 
@@ -35,11 +38,30 @@ export function listProviderCredentials() {
 }
 
 export function saveProviderCredential(input: {
+  name?: string;
   provider: ProviderName;
   purpose: CredentialPurpose;
+  model?: string;
+  base_url?: string;
   api_key: string;
+  make_active?: boolean;
 }) {
   return api.post<ProviderCredential>("/me/provider-credentials", input);
+}
+
+export function updateProviderCredential(id: string, input: {
+  name?: string;
+  provider?: ProviderName;
+  purpose?: CredentialPurpose;
+  model?: string;
+  base_url?: string;
+  api_key?: string;
+}) {
+  return api.put<ProviderCredential>(`/me/provider-credentials/${id}`, input);
+}
+
+export function activateProviderCredential(id: string) {
+  return api.post<ProviderCredential>(`/me/provider-credentials/${id}/activate`);
 }
 
 export function validateProviderCredential(id: string) {
@@ -56,7 +78,6 @@ export function getUsage() {
 
 export function updateUsageLimits(input: {
   task_max_tokens?: number;
-  monthly_reference_cost_usd?: number;
 }) {
   return api.put<{ limits: Record<string, number> }>("/me/usage-limits", input);
 }

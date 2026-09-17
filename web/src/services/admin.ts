@@ -42,17 +42,12 @@ export interface AdminQuota {
 }
 
 export type AdminQuotaChange = Partial<{
-  generation_day: number;
-  generation_month: number;
-  video_day: number;
-  video_month: number;
   projects: number;
   material_bytes: number;
   artifact_bytes: number;
   generation_concurrent: number;
   video_concurrent: number;
   task_max_tokens: number;
-  monthly_reference_cost_usd: number;
   is_suspended: boolean;
 }>;
 

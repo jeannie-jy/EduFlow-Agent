@@ -33,33 +33,10 @@ async def resolve_user_llm_limits(session: AsyncSession, user_id: uuid.UUID) -> 
     policy = await session.get(UserQuotaPolicy, user_id)
     settings = get_settings()
     overrides = policy.limits if policy else {}
-    monthly_cap = overrides.get("monthly_reference_cost_usd")
-    max_cost = float(settings.llm_request_max_cost_usd)
-    if monthly_cap is not None:
-        now = datetime.now(UTC)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        used = float(await session.scalar(select(func.coalesce(func.sum(WorkflowRun.estimated_cost_usd), 0.0)).join(
-            Project, Project.id == WorkflowRun.project_id
-        ).where(WorkflowRun.started_at >= month_start, Project.owner_id == str(user_id))) or 0.0)
-        max_cost = min(max_cost, max(0.01, float(monthly_cap) - used))
     return (
         int(overrides.get("task_max_tokens", settings.llm_request_max_tokens)),
-        max_cost,
+        float(settings.llm_request_max_cost_usd),
     )
-
-
-async def ensure_monthly_reference_cost_capacity(session: AsyncSession, *, user_id: uuid.UUID) -> None:
-    policy = await session.get(UserQuotaPolicy, user_id)
-    cap = (policy.limits or {}).get("monthly_reference_cost_usd") if policy else None
-    if cap is None:
-        return
-    now = datetime.now(UTC)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    used = float(await session.scalar(select(func.coalesce(func.sum(WorkflowRun.estimated_cost_usd), 0.0)).join(
-        Project, Project.id == WorkflowRun.project_id
-    ).where(WorkflowRun.started_at >= month_start, Project.owner_id == str(user_id))) or 0.0)
-    if used >= float(cap):
-        raise QuotaExceededError("reference_cost_usd", "month", int(float(cap) * 100))
 
 
 class QuotaExceededError(RuntimeError):
@@ -188,6 +165,7 @@ async def consume_quota(
 async def reserve_quota(
     session: AsyncSession, *, user_id: uuid.UUID, resource: str,
     idempotency_key: str, amount: int = 1, details: dict | None = None,
+    count_toward_limit: bool = True,
 ) -> bool:
     """Reserve quota for a task until it is settled or released.
 
@@ -212,36 +190,41 @@ async def reserve_quota(
     if existing is not None:
         return False
 
-    now = datetime.now(UTC)
-    starts = _period_starts(now)
-    for period, limit in _limits(resource, policy.limits if policy else None).items():
-        bucket = await session.scalar(
-            select(UsageBucket).where(
-                UsageBucket.user_id == user_id,
-                UsageBucket.resource == resource,
-                UsageBucket.period == period,
-                UsageBucket.period_start == starts[period],
-            ).with_for_update()
-        )
-        consumed = int(bucket.consumed if bucket else 0)
-        if consumed + amount > limit:
-            raise QuotaExceededError(resource, period, limit)
-        if bucket is None:
-            bucket = UsageBucket(
-                id=uuid.uuid4(), user_id=user_id, resource=resource,
-                period=period, period_start=starts[period], consumed=0,
+    starts: dict[str, datetime] = {}
+    ledger_amount = 0
+    if count_toward_limit:
+        now = datetime.now(UTC)
+        starts = _period_starts(now)
+        for period, limit in _limits(resource, policy.limits if policy else None).items():
+            bucket = await session.scalar(
+                select(UsageBucket).where(
+                    UsageBucket.user_id == user_id,
+                    UsageBucket.resource == resource,
+                    UsageBucket.period == period,
+                    UsageBucket.period_start == starts[period],
+                ).with_for_update()
             )
-            session.add(bucket)
-        bucket.consumed = consumed + amount
+            consumed = int(bucket.consumed if bucket else 0)
+            if consumed + amount > limit:
+                raise QuotaExceededError(resource, period, limit)
+            if bucket is None:
+                bucket = UsageBucket(
+                    id=uuid.uuid4(), user_id=user_id, resource=resource,
+                    period=period, period_start=starts[period], consumed=0,
+                )
+                session.add(bucket)
+            bucket.consumed = consumed + amount
+        ledger_amount = amount
 
     reservation_details = dict(details or {})
     reservation_details.update({
         "_quota_state": "reserved",
-        "_quota_amount": amount,
+        "_quota_amount": ledger_amount,
+        "_quota_metered": count_toward_limit,
         "_quota_period_starts": {period: value.isoformat() for period, value in starts.items()},
     })
     session.add(UsageLedger(
-        id=uuid.uuid4(), user_id=user_id, resource=resource, amount=amount,
+        id=uuid.uuid4(), user_id=user_id, resource=resource, amount=ledger_amount,
         idempotency_key=idempotency_key, details=reservation_details,
     ))
     await session.flush()
@@ -393,10 +376,9 @@ async def usage_snapshot(session: AsyncSession, user_id: uuid.UUID) -> dict[str,
     ))).all())
     values = {(row.resource, row.period): int(row.consumed) for row in rows}
     policy = await session.get(UserQuotaPolicy, user_id)
-    limits = {
-        resource: _limits(resource, policy.limits if policy else None)
-        for resource in ("generation", "video")
-    }
+    # Generation and video creation are unlimited by count. Capacity is
+    # protected with concurrency, timeout, workspace and storage limits.
+    limits: dict[str, dict[str, int]] = {}
     resources = {
         resource: {
             period: {"used": values.get((resource, period), 0), "limit": value}
@@ -434,7 +416,6 @@ async def usage_snapshot(session: AsyncSession, user_id: uuid.UUID) -> dict[str,
         "is_suspended": bool(policy.is_suspended) if policy else False,
         "llm_limits": {
             "task_max_tokens": int((policy_limits or {}).get("task_max_tokens", settings.llm_request_max_tokens)),
-            "monthly_reference_cost_usd": float((policy_limits or {}).get("monthly_reference_cost_usd", settings.llm_request_max_cost_usd)),
         },
         "limits": {
             "projects": {"used": project_count, "limit": _total_limit("projects", policy_limits)},

@@ -129,20 +129,13 @@ async def submit_feedback(
     if should_reflect and project.dsl_snapshot:
         credential_ref = None
         if current_user is not None:
-            from config import get_settings
-            from db.models import ProviderCredential
-            credential = await session.scalar(
-                select(ProviderCredential)
-                .where(
-                    ProviderCredential.user_id == current_user.id,
-                    ProviderCredential.purpose == "generation",
-                    ProviderCredential.status == "active",
-                )
-                .order_by(ProviderCredential.version.desc())
+            from services.provider_credentials import selected_provider_credential
+            credential = await selected_provider_credential(
+                session, current_user.id, "generation"
             )
             if credential is not None:
                 credential_ref = {"id": str(credential.id), "version": credential.version}
-            elif get_settings().byok_required:
+            else:
                 raise HTTPException(
                     status_code=428,
                     detail="A generation provider credential is required",
@@ -150,21 +143,18 @@ async def submit_feedback(
             from services.quota import (
                 QuotaExceededError,
                 acquire_quota_lock,
-                ensure_monthly_reference_cost_capacity,
                 reserve_quota,
             )
             try:
                 await acquire_quota_lock(
                     session, user_id=current_user.id, resource="generation"
                 )
-                await ensure_monthly_reference_cost_capacity(
-                    session, user_id=current_user.id
-                )
                 await reserve_quota(
                     session,
                     user_id=current_user.id,
                     resource="generation",
                     idempotency_key=f"feedback:{feedback.id}",
+                    count_toward_limit=credential_ref is None,
                     details={
                         "project_id": project_id,
                         "action": "feedback_reflection",

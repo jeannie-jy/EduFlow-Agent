@@ -20,17 +20,12 @@ const roleLabels: Record<UserRole, string> = {
 };
 
 const quotaFields = [
-  ["generation_day", "生成/日"],
-  ["generation_month", "生成/月"],
-  ["video_day", "视频/日"],
-  ["video_month", "视频/月"],
   ["projects", "项目数"],
   ["material_bytes", "素材字节"],
   ["artifact_bytes", "产物字节"],
   ["generation_concurrent", "生成并发"],
   ["video_concurrent", "视频并发"],
   ["task_max_tokens", "单任务 Token"],
-  ["monthly_reference_cost_usd", "月度参考费用"],
 ] as const;
 
 export function AdminUsersPage() {

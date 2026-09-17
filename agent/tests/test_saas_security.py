@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config import Settings, validate_runtime_settings
 from db.models import (
+    ActiveProviderCredential,
     ProviderCredential,
     UsageBucket,
     UsageLedger,
@@ -50,6 +51,250 @@ def _settings(**overrides):
 
 
 @pytest.mark.asyncio
+async def test_provider_credential_list_excludes_revoked_history():
+    from api.account import list_provider_credentials
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(User.__table__.create)
+        await connection.run_sync(ProviderCredential.__table__.create)
+        await connection.run_sync(ActiveProviderCredential.__table__.create)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    user_id = uuid.uuid4()
+    active_id = uuid.uuid4()
+    revoked_id = uuid.uuid4()
+    async with factory() as session:
+        user = User(
+            id=user_id, email="credentials@example.com", nickname="Credentials",
+            password_hash="unused", role="student", is_active=True,
+        )
+        session.add_all([
+            user,
+            ProviderCredential(
+                id=active_id, user_id=user_id, provider="deepseek", purpose="generation",
+                version=2, status="valid", ciphertext="ciphertext", encrypted_data_key="key",
+                nonce="nonce", key_fingerprint="fingerprint", key_last_four="2222",
+                kms_key_version="test-v1",
+            ),
+            ActiveProviderCredential(
+                user_id=user_id, purpose="generation", credential_id=active_id,
+            ),
+            ProviderCredential(
+                id=revoked_id, user_id=user_id, provider="deepseek", purpose="generation",
+                version=1, status="revoked", ciphertext="ciphertext", encrypted_data_key="key",
+                nonce="nonce", key_fingerprint="fingerprint", key_last_four="1111",
+                kms_key_version="test-v1",
+            ),
+        ])
+        await session.commit()
+
+        result = await list_provider_credentials(session=session, current_user=user)
+
+    assert [item["id"] for item in result["items"]] == [str(active_id)]
+    assert result["items"][0]["is_active"] is True
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_saving_a_provider_preserves_the_active_credential_for_its_purpose():
+    from api.account import CredentialRequest, create_provider_credential
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(User.__table__.create)
+        await connection.run_sync(ProviderCredential.__table__.create)
+        await connection.run_sync(ActiveProviderCredential.__table__.create)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    user_id = uuid.uuid4()
+    old_id = uuid.uuid4()
+    embedding_id = uuid.uuid4()
+    envelope = {
+        "ciphertext": "ciphertext",
+        "encrypted_data_key": "key",
+        "nonce": "nonce",
+        "key_fingerprint": "fingerprint",
+        "key_last_four": "4444",
+        "kms_key_version": "test-v1",
+    }
+    async with factory() as session:
+        user = User(
+            id=user_id, email="replace@example.com", nickname="Replace",
+            password_hash="unused", role="student", is_active=True,
+        )
+        session.add_all([
+            user,
+            ProviderCredential(
+                id=old_id, user_id=user_id, provider="deepseek", purpose="generation",
+                version=1, status="valid", **envelope,
+            ),
+            ProviderCredential(
+                id=embedding_id, user_id=user_id, provider="dashscope", purpose="embedding",
+                version=1, status="valid", **envelope,
+            ),
+            ActiveProviderCredential(
+                user_id=user_id, purpose="generation", credential_id=old_id,
+            ),
+            ActiveProviderCredential(
+                user_id=user_id, purpose="embedding", credential_id=embedding_id,
+            ),
+        ])
+        await session.commit()
+
+        with (
+            patch("api.account.encrypt_api_key", new=AsyncMock(return_value=envelope)),
+            patch("api.account.record_audit"),
+        ):
+            result = await create_provider_credential(
+                body=CredentialRequest(
+                    provider="dashscope", purpose="generation", api_key="sk-new-generation-key",
+                ),
+                session=session,
+                current_user=user,
+            )
+        await session.commit()
+
+        old = await session.get(ProviderCredential, old_id)
+        embedding = await session.get(ProviderCredential, embedding_id)
+        replacement = await session.get(ProviderCredential, uuid.UUID(str(result["id"])))
+
+        selection = await session.scalar(select(ActiveProviderCredential).where(
+            ActiveProviderCredential.user_id == user_id,
+            ActiveProviderCredential.purpose == "generation",
+        ))
+
+    assert old is not None and old.status == "valid"
+    assert embedding is not None and embedding.status == "valid"
+    assert replacement is not None
+    assert replacement.provider == "dashscope"
+    assert replacement.purpose == "generation"
+    assert replacement.status == "unverified"
+    assert selection is not None and selection.credential_id == old_id
+    assert result["is_active"] is False
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_activating_a_saved_connection_switches_selection_without_deleting_backup():
+    from api.account import activate_provider_credential
+    from services.provider_credentials import selected_provider_credential
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(User.__table__.create)
+        await connection.run_sync(ProviderCredential.__table__.create)
+        await connection.run_sync(ActiveProviderCredential.__table__.create)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    user_id = uuid.uuid4()
+    first_id = uuid.uuid4()
+    second_id = uuid.uuid4()
+    envelope = {
+        "ciphertext": "ciphertext", "encrypted_data_key": "key", "nonce": "nonce",
+        "key_fingerprint": "fingerprint", "key_last_four": "5555",
+        "kms_key_version": "test-v1",
+    }
+    async with factory() as session:
+        user = User(
+            id=user_id, email="switch@example.com", nickname="Switch",
+            password_hash="unused", role="student", is_active=True,
+        )
+        session.add_all([
+            user,
+            ProviderCredential(
+                id=first_id, user_id=user_id, provider="deepseek", purpose="generation",
+                version=1, status="valid", **envelope,
+            ),
+            ProviderCredential(
+                id=second_id, user_id=user_id, provider="dashscope", purpose="generation",
+                version=1, status="unverified", **envelope,
+            ),
+            ActiveProviderCredential(
+                user_id=user_id, purpose="generation", credential_id=first_id,
+            ),
+        ])
+        await session.commit()
+
+        with patch("api.account.record_audit"):
+            result = await activate_provider_credential(
+                credential_id=str(second_id), session=session, current_user=user,
+            )
+        await session.commit()
+        selected = await selected_provider_credential(session, user_id, "generation")
+        first = await session.get(ProviderCredential, first_id)
+
+    assert result["is_active"] is True
+    assert selected is not None and selected.id == second_id
+    assert first is not None and first.status == "valid"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_successful_validation_does_not_change_the_active_credential():
+    from api.account import validate_provider_credential
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(User.__table__.create)
+        await connection.run_sync(ProviderCredential.__table__.create)
+        await connection.run_sync(ActiveProviderCredential.__table__.create)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    user_id = uuid.uuid4()
+    active_id = uuid.uuid4()
+    recovering_id = uuid.uuid4()
+    envelope = {
+        "ciphertext": "ciphertext",
+        "encrypted_data_key": "key",
+        "nonce": "nonce",
+        "key_fingerprint": "fingerprint",
+        "key_last_four": "5555",
+        "kms_key_version": "test-v1",
+    }
+    async with factory() as session:
+        user = User(
+            id=user_id, email="validate@example.com", nickname="Validate",
+            password_hash="unused", role="student", is_active=True,
+        )
+        session.add_all([
+            user,
+            ProviderCredential(
+                id=active_id, user_id=user_id, provider="deepseek", purpose="generation",
+                version=1, status="valid", **envelope,
+            ),
+            ActiveProviderCredential(
+                user_id=user_id, purpose="generation", credential_id=active_id,
+            ),
+            ProviderCredential(
+                id=recovering_id, user_id=user_id, provider="dashscope", purpose="generation",
+                version=1, status="invalid", **envelope,
+            ),
+        ])
+        await session.commit()
+
+        mock_client = AsyncMock()
+        mock_client.models.list = AsyncMock()
+        with (
+            patch("api.account.decrypt_api_key", new=AsyncMock(return_value="sk-valid-key")),
+            patch("api.account.AsyncOpenAI", return_value=mock_client),
+            patch("api.account.record_audit"),
+        ):
+            await validate_provider_credential(
+                credential_id=str(recovering_id), session=session, current_user=user,
+            )
+        await session.commit()
+
+        active = await session.get(ProviderCredential, active_id)
+        recovering = await session.get(ProviderCredential, recovering_id)
+        selection = await session.scalar(select(ActiveProviderCredential).where(
+            ActiveProviderCredential.user_id == user_id,
+            ActiveProviderCredential.purpose == "generation",
+        ))
+
+    assert active is not None and active.status == "valid"
+    assert recovering is not None and recovering.status == "valid"
+    assert selection is not None and selection.credential_id == active_id
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_envelope_encryption_round_trip_never_persists_plaintext():
     user_id = uuid.uuid4()
     secret = "sk-sensitive-provider-key"
@@ -59,7 +304,7 @@ async def test_envelope_encryption_round_trip_never_persists_plaintext():
         )
         row = ProviderCredential(
             id=uuid.uuid4(), user_id=user_id, provider="deepseek", purpose="generation",
-            version=1, status="active", **envelope,
+            version=1, status="valid", **envelope,
         )
         serialized = repr(envelope)
         assert secret not in serialized
@@ -202,4 +447,46 @@ async def test_quota_reservation_settlement_and_release_are_idempotent():
                 )
             )
             assert bucket is not None and bucket.consumed == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_byok_reservation_is_audited_without_consuming_generation_quota():
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(User.__table__.create)
+        await connection.run_sync(UsageBucket.__table__.create)
+        await connection.run_sync(UsageLedger.__table__.create)
+        await connection.run_sync(UserQuotaPolicy.__table__.create)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    user_id = uuid.uuid4()
+    async with factory() as session:
+        session.add(User(
+            id=user_id, email="byok-quota@example.com", nickname="BYOK",
+            password_hash="unused", role="student", is_active=True,
+        ))
+        await session.commit()
+        with patch("services.quota.get_settings", return_value=_settings()):
+            for index in range(4):
+                assert await reserve_quota(
+                    session,
+                    user_id=user_id,
+                    resource="generation",
+                    idempotency_key=f"byok-{index}",
+                    count_toward_limit=False,
+                ) is True
+
+            bucket = await session.scalar(select(UsageBucket).where(
+                UsageBucket.user_id == user_id,
+                UsageBucket.resource == "generation",
+            ))
+            rows = list((await session.scalars(select(UsageLedger).where(
+                UsageLedger.user_id == user_id,
+                UsageLedger.resource == "generation",
+            ))).all())
+
+            assert bucket is None
+            assert len(rows) == 4
+            assert all(row.amount == 0 for row in rows)
+            assert all(row.details.get("_quota_metered") is False for row in rows)
     await engine.dispose()

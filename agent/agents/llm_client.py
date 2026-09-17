@@ -49,42 +49,13 @@ def _get_llm_client(provider: str = "primary") -> AsyncOpenAI:
             timeout=httpx.Timeout(get_settings().llm_timeout_seconds, connect=10.0),
             max_retries=0,
         )
-    # Public deployments are BYOK-only.  Failing here prevents a missed
-    # credential scope (including a newly added worker path) from silently
-    # charging a platform-wide fallback key.
-    if provider == "primary" and get_settings().byok_required:
-        raise CredentialUnavailableError("A user generation credential is required")
-    attribute = "client" if provider == "primary" else "backup_client"
-    client = getattr(_llm_client_local, attribute, None)
-    if client is None:
-        import httpx
-        settings = get_settings()
-        if provider == "backup":
-            if not _backup_available(settings):
-                raise RuntimeError("Backup LLM provider is not configured")
-            endpoint = settings.llm_backup_endpoint
-            api_key = settings.llm_backup_api_key
-        else:
-            endpoint = settings.llm_endpoint
-            api_key = settings.llm_api_key
-        client = AsyncOpenAI(
-            base_url=endpoint,
-            api_key=api_key,
-            timeout=httpx.Timeout(settings.llm_timeout_seconds, connect=10.0),
-            max_retries=0,
-        )
-        setattr(_llm_client_local, attribute, client)
-    return client
+    # Every provider call must be attributable to the current user's encrypted
+    # credential. There is deliberately no process-wide key fallback.
+    raise CredentialUnavailableError("A user generation credential is required")
 
 
 def _backup_available(settings) -> bool:
-    if current_generation_credential() is not None:
-        return False
-    return bool(
-        getattr(settings, "llm_backup_endpoint", "")
-        and getattr(settings, "llm_backup_model", "")
-        and getattr(settings, "llm_backup_api_key", "")
-    )
+    return False
 
 
 def _structured_response_format(
@@ -142,22 +113,9 @@ def _get_embedding_client() -> AsyncOpenAI:
             timeout=get_settings().llm_timeout_seconds,
             max_retries=0,
         )
-    if get_settings().byok_required:
-        # Missing embedding BYOK is an intentional keyword-retrieval
-        # downgrade; the retrieval service catches this typed failure and
-        # surfaces the quality warning without using a global key.
-        raise CredentialUnavailableError("An embedding credential is required for semantic retrieval")
-    client = getattr(_embedding_client_local, "client", None)
-    if client is None:
-        settings = get_settings()
-        client = AsyncOpenAI(
-            base_url=settings.embedding_endpoint,
-            api_key=settings.embedding_api_key,
-            timeout=settings.llm_timeout_seconds,
-            max_retries=0,
-        )
-        _embedding_client_local.client = client
-    return client
+    # Missing embedding BYOK is an intentional keyword-retrieval downgrade;
+    # never fall back to a process-wide embedding key.
+    raise CredentialUnavailableError("An embedding credential is required for semantic retrieval")
 
 
 def _primary_endpoint(settings) -> str:

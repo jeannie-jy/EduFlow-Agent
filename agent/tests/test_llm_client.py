@@ -8,10 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai import AsyncOpenAI
+
+from services.provider_credentials import (
+    CredentialContext,
+    CredentialUnavailableError,
+    credential_scope,
+)
 
 from agents.llm_client import (
     EmbeddingDimensionError,
@@ -33,60 +39,41 @@ from agents.llm_client import (
 class TestClientSingleton:
     """单例模式测试。"""
 
-    def test_get_llm_client_returns_same_instance(self):
-        """多次调用 _get_llm_client 应返回同一实例。"""
-        # 重置全局状态
-        import agents.llm_client as llm_mod
-        llm_mod._llm_client = None
+    def test_get_llm_client_requires_user_credential(self):
+        with pytest.raises(CredentialUnavailableError):
+            _get_llm_client()
 
-        c1 = _get_llm_client()
-        c2 = _get_llm_client()
-        assert c1 is c2
-
-    def test_get_embedding_client_returns_same_instance(self):
-        """多次调用 _get_embedding_client 应返回同一实例。"""
-        import agents.llm_client as llm_mod
-        llm_mod._embedding_client = None
-
-        c1 = _get_embedding_client()
-        c2 = _get_embedding_client()
-        assert c1 is c2
+    def test_get_embedding_client_requires_user_credential(self):
+        with pytest.raises(CredentialUnavailableError):
+            _get_embedding_client()
 
     def test_create_llm_client_is_alias(self):
-        """create_llm_client 是 _get_llm_client 的别名。"""
-        import agents.llm_client as llm_mod
-        llm_mod._llm_client = None
-
-        c = create_llm_client()
-        assert isinstance(c, AsyncOpenAI)
+        with pytest.raises(CredentialUnavailableError):
+            create_llm_client()
 
     def test_create_embedding_client_is_alias(self):
-        """create_embedding_client 是 _get_embedding_client 的别名。"""
-        import agents.llm_client as llm_mod
-        llm_mod._embedding_client = None
+        with pytest.raises(CredentialUnavailableError):
+            create_embedding_client()
 
-        c = create_embedding_client()
-        assert isinstance(c, AsyncOpenAI)
+    def test_llm_client_uses_user_endpoint(self):
+        generation = CredentialContext(
+            credential_id=uuid.uuid4(), version=1, provider="deepseek",
+            purpose="generation", endpoint="https://api.deepseek.com/v1",
+            model="deepseek-chat", api_key="test-user-key",
+        )
+        with credential_scope(generation, None):
+            c = _get_llm_client()
+        assert generation.endpoint in str(c.base_url)
 
-    def test_llm_client_uses_config_endpoint(self):
-        """LLM 客户端应使用配置中的 endpoint。"""
-        import agents.llm_client as llm_mod
-        llm_mod._llm_client = None
-
-        from config import get_settings
-        settings = get_settings()
-        c = _get_llm_client()
-        assert settings.llm_endpoint in str(c.base_url)
-
-    def test_embedding_client_uses_config_endpoint(self):
-        """Embedding 客户端应使用配置中的 endpoint。"""
-        import agents.llm_client as llm_mod
-        llm_mod._embedding_client = None
-
-        from config import get_settings
-        settings = get_settings()
-        c = _get_embedding_client()
-        assert settings.embedding_endpoint in str(c.base_url)
+    def test_embedding_client_uses_user_endpoint(self):
+        embedding = CredentialContext(
+            credential_id=uuid.uuid4(), version=1, provider="dashscope",
+            purpose="embedding", endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model="text-embedding-v4", api_key="test-user-key",
+        )
+        with credential_scope(None, embedding):
+            c = _get_embedding_client()
+        assert embedding.endpoint in str(c.base_url)
 
     def test_node_model_routing_prefers_explicit_then_route_then_default(self):
         settings = MagicMock(

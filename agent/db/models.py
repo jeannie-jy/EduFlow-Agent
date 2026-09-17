@@ -83,9 +83,15 @@ class ProviderCredential(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "provider", "purpose", "version"),
         Index("ix_provider_credentials_user_status", "user_id", "status"),
-        CheckConstraint("provider IN ('deepseek', 'dashscope')", name="ck_provider_credentials_provider"),
+        CheckConstraint(
+            "provider IN ('deepseek', 'dashscope', 'openai', 'ollama')",
+            name="ck_provider_credentials_provider",
+        ),
         CheckConstraint("purpose IN ('generation', 'embedding')", name="ck_provider_credentials_purpose"),
-        CheckConstraint("status IN ('active', 'invalid', 'revoked')", name="ck_provider_credentials_status"),
+        CheckConstraint(
+            "status IN ('unverified', 'valid', 'invalid', 'revoked')",
+            name="ck_provider_credentials_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
@@ -94,6 +100,9 @@ class ProviderCredential(Base):
     )
     provider: Mapped[str] = mapped_column(String(30), nullable=False)
     purpose: Mapped[str] = mapped_column(String(30), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="Model connection")
+    model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_data_key: Mapped[str] = mapped_column(Text, nullable=False)
     nonce: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -101,10 +110,36 @@ class ProviderCredential(Base):
     key_last_four: Mapped[str] = mapped_column(String(4), nullable=False)
     kms_key_version: Mapped[str] = mapped_column(String(100), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unverified")
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ActiveProviderCredential(Base):
+    """The connection explicitly selected for one user and runtime purpose."""
+
+    __tablename__ = "active_provider_credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('generation', 'embedding')",
+            name="ck_active_provider_credentials_purpose",
+        ),
+        Index("ix_active_provider_credentials_credential", "credential_id"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    purpose: Mapped[str] = mapped_column(String(30), primary_key=True)
+    credential_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_credentials.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

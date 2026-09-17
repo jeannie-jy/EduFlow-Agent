@@ -215,12 +215,12 @@ agent/
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `BYOK_REQUIRED` | `false`（生产必须 `true`） | 生产强制用户配置自己的 DeepSeek/百炼凭据；平台不回退全局 Key |
+| `BYOK_REQUIRED` | `true`（不可关闭） | 强制用户配置自己的模型凭据；平台不提供全局 Key 回退 |
 | `CREDENTIAL_KMS_BACKEND` | `local`（仅开发） | 生产使用内网 HTTPS KMS Bridge；数据库只保存信封密文 |
 | `METRICS_ACCESS_TOKEN` | — | 生产/预发布指标端点的内部抓取令牌；不得暴露给浏览器 |
-| `LLM_API_KEY` | — | 仅本地开发兼容回退；公开部署必须为空，用户在“模型接入”中提交凭据 |
-| `LLM_ENDPOINT` / `LLM_MODEL` | — | 仅本地开发兼容配置；生产供应商地址和模型由服务端白名单固定 |
-| `EMBEDDING_API_KEY` | — | 仅本地开发兼容回退；生产可选百炼 Embedding BYOK，未配置时降级关键词检索 |
+| `LLM_API_KEY` | — | 已停用；用户在“模型接入”中提交生成凭据 |
+| `LLM_ENDPOINT` / `LLM_MODEL` | — | 供应商默认值；实际地址和模型来自用户当前连接 |
+| `EMBEDDING_API_KEY` | — | 已停用；未配置用户 Embedding 连接时降级为关键词检索 |
 | `EMBEDDING_MODEL` | `text-embedding-v4` | 本地兼容模型；生产使用服务端固定的百炼模型 |
 | `EMBEDDING_DIMENSION` | `1024` | pgvector 向量维度，必须匹配 Embedding 服务返回值 |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | 数据库连接 |

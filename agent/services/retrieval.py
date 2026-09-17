@@ -55,15 +55,11 @@ async def retrieve_knowledge_context(
     settings = get_settings()
     search_queries = queries or [query]
     embedding_degraded = False
-    # Test fixtures and lightweight callers may provide only retrieval knobs;
-    # treat the absent deployment flag as the local-development default.
-    if getattr(settings, "byok_required", False):
-        # Credential scoping is request-local. A missing embedding credential
-        # is an intentional quality downgrade, not an invitation to use a
-        # platform-wide key; surface that fact to traces and the UI.
-        from services.provider_credentials import current_embedding_credential
+    # Credential scoping is request-local. A missing embedding credential is
+    # an intentional quality downgrade, never an invitation to use a global key.
+    from services.provider_credentials import current_embedding_credential
 
-        embedding_degraded = current_embedding_credential() is None
+    embedding_degraded = current_embedding_credential() is None
     # For an explicit unknown/private-topic request, generated objectives are
     # not independent evidence. Searching them can turn a semantic near-match
     # (e.g. a generic DP document) into a false positive and defeat abstention.

@@ -25,9 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from db.models import ProviderCredential
+from db.models import ActiveProviderCredential, ProviderCredential
 
-ProviderName = Literal["deepseek", "dashscope"]
+ProviderName = Literal["deepseek", "dashscope", "openai", "ollama"]
 CredentialPurpose = Literal["generation", "embedding"]
 
 
@@ -237,57 +237,104 @@ async def decrypt_api_key(row: ProviderCredential) -> str:
         raise CredentialUnavailableError("Provider credential envelope is invalid") from exc
 
 
-def _endpoint_model(provider: str, purpose: str) -> tuple[str, str]:
+def provider_defaults(provider: str, purpose: str) -> tuple[str, str]:
     settings = get_settings()
     if provider == "deepseek" and purpose == "generation":
-        endpoint, model = settings.deepseek_endpoint, settings.deepseek_model
-        allowed_hosts = {"api.deepseek.com"}
+        return settings.deepseek_endpoint, settings.deepseek_model
     elif provider == "dashscope" and purpose == "generation":
-        endpoint, model = settings.dashscope_endpoint, settings.dashscope_model
-        allowed_hosts = {"dashscope.aliyuncs.com"}
+        return settings.dashscope_endpoint, settings.dashscope_model
     elif provider == "dashscope" and purpose == "embedding":
-        endpoint, model = settings.dashscope_endpoint, settings.dashscope_embedding_model
-        allowed_hosts = {"dashscope.aliyuncs.com"}
-    else:
-        raise CredentialUnavailableError("Provider does not support the requested purpose")
+        return settings.dashscope_endpoint, settings.dashscope_embedding_model
+    elif provider == "openai" and purpose == "generation":
+        return "https://api.openai.com/v1", "gpt-4.1-mini"
+    elif provider == "openai" and purpose == "embedding":
+        return "https://api.openai.com/v1", "text-embedding-3-small"
+    elif provider == "ollama" and purpose == "generation":
+        return "http://localhost:11434/v1", "llama3.2"
+    elif provider == "ollama" and purpose == "embedding":
+        return "http://localhost:11434/v1", "nomic-embed-text"
+    raise CredentialUnavailableError("Provider does not support the requested purpose")
 
-    # The browser never supplies an endpoint. Keep the server-side provider
-    # configuration equally strict in every environment so a mistaken
-    # deployment value cannot turn BYOK into an SSRF primitive (for example a
-    # cloud metadata or private-network URL).
+
+def _endpoint_model(
+    provider: str, purpose: str, base_url: str | None = None, model: str | None = None,
+) -> tuple[str, str]:
+    default_endpoint, default_model = provider_defaults(provider, purpose)
+    endpoint = (base_url or default_endpoint).strip().rstrip("/")
+    selected_model = (model or default_model).strip()
+    if not selected_model or len(selected_model) > 200:
+        raise CredentialConfigurationError("Provider model must contain 1 to 200 characters")
+
+    allowed_hosts: set[str]
+    if provider == "deepseek":
+        allowed_hosts = {"api.deepseek.com"}
+        allowed_schemes = {"https"}
+        allowed_ports = {None, 443}
+    elif provider == "dashscope":
+        allowed_hosts = {"dashscope.aliyuncs.com"}
+        allowed_schemes = {"https"}
+        allowed_ports = {None, 443}
+    elif provider == "openai":
+        allowed_hosts = {"api.openai.com"}
+        allowed_schemes = {"https"}
+        allowed_ports = {None, 443}
+    elif provider == "ollama":
+        # Ollama is intentionally limited to the developer machine. Arbitrary
+        # private/public URLs would turn credential validation into an SSRF
+        # primitive from the API server's network position.
+        allowed_hosts = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+        allowed_schemes = {"http"}
+        allowed_ports = {11434}
+    else:
+        raise CredentialUnavailableError("Unsupported provider")
+
     parsed = urlsplit(endpoint)
     try:
         port = parsed.port
     except ValueError as exc:
         raise CredentialConfigurationError("Provider endpoint has an invalid port") from exc
     if (
-        parsed.scheme != "https"
+        parsed.scheme not in allowed_schemes
         or (parsed.hostname or "").lower() not in allowed_hosts
-        or port not in {None, 443}
+        or port not in allowed_ports
         or parsed.username
         or parsed.password
         or parsed.query
         or parsed.fragment
     ):
         raise CredentialConfigurationError("Provider endpoint is not in the production allowlist")
-    return endpoint, model
+    return endpoint, selected_model
+
+
+async def selected_provider_credential(
+    session: AsyncSession, user_id: uuid.UUID, purpose: CredentialPurpose,
+) -> ProviderCredential | None:
+    return await session.scalar(
+        select(ProviderCredential)
+        .join(
+            ActiveProviderCredential,
+            ActiveProviderCredential.credential_id == ProviderCredential.id,
+        )
+        .where(
+            ActiveProviderCredential.user_id == user_id,
+            ActiveProviderCredential.purpose == purpose,
+            ProviderCredential.user_id == user_id,
+            ProviderCredential.purpose == purpose,
+            ProviderCredential.status.in_(("unverified", "valid")),
+        )
+    )
 
 
 async def resolve_user_credentials(
     session: AsyncSession, user_id: uuid.UUID,
 ) -> tuple[CredentialContext | None, CredentialContext | None]:
-    rows = list((await session.scalars(
-        select(ProviderCredential)
-        .where(ProviderCredential.user_id == user_id, ProviderCredential.status == "active")
-        .order_by(ProviderCredential.version.desc())
-    )).all())
-    generation_row = next((row for row in rows if row.purpose == "generation"), None)
-    embedding_row = next((row for row in rows if row.purpose == "embedding"), None)
+    generation_row = await selected_provider_credential(session, user_id, "generation")
+    embedding_row = await selected_provider_credential(session, user_id, "embedding")
 
     async def build(row: ProviderCredential | None) -> CredentialContext | None:
         if row is None:
             return None
-        endpoint, model = _endpoint_model(row.provider, row.purpose)
+        endpoint, model = _endpoint_model(row.provider, row.purpose, row.base_url, row.model)
         row.last_used_at = datetime.now(UTC)
         return CredentialContext(
             credential_id=row.id,
@@ -301,7 +348,7 @@ async def resolve_user_credentials(
 
     generation = await build(generation_row)
     embedding = await build(embedding_row)
-    if get_settings().byok_required and generation is None:
+    if generation is None:
         raise CredentialReferenceUnavailableError("A generation provider credential is required")
     return generation, embedding
 
@@ -322,11 +369,14 @@ async def resolve_credential_reference(
         ProviderCredential.user_id == user_id,
         ProviderCredential.version == version,
         ProviderCredential.purpose == "generation",
-        ProviderCredential.status == "active",
+        ProviderCredential.status.in_(("unverified", "valid")),
     ))
     if generation_row is None:
         raise CredentialReferenceUnavailableError("Referenced provider credential is unavailable")
-    endpoint, model = _endpoint_model(generation_row.provider, generation_row.purpose)
+    endpoint, model = _endpoint_model(
+        generation_row.provider, generation_row.purpose,
+        generation_row.base_url, generation_row.model,
+    )
     generation = CredentialContext(
         credential_id=generation_row.id, version=generation_row.version,
         provider=generation_row.provider, purpose=generation_row.purpose,
@@ -350,13 +400,17 @@ def credential_scope(
         _generation_context.reset(generation_token)
 
 
-def public_credential(row: ProviderCredential) -> dict[str, object]:
+def public_credential(row: ProviderCredential, *, is_active: bool = False) -> dict[str, object]:
     return {
         "id": str(row.id),
+        "name": row.name,
         "provider": row.provider,
         "purpose": row.purpose,
+        "model": row.model,
+        "base_url": row.base_url,
         "version": row.version,
         "status": row.status,
+        "is_active": is_active,
         "key_last_four": row.key_last_four,
         "validated_at": row.validated_at,
         "last_used_at": row.last_used_at,

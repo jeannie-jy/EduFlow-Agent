@@ -32,17 +32,12 @@ class AdminUserUpdate(BaseModel):
 
 
 class AdminQuotaUpdate(BaseModel):
-    generation_day: int | None = Field(default=None, ge=0, le=10000)
-    generation_month: int | None = Field(default=None, ge=0, le=100000)
-    video_day: int | None = Field(default=None, ge=0, le=1000)
-    video_month: int | None = Field(default=None, ge=0, le=10000)
     projects: int | None = Field(default=None, ge=0, le=100000)
     material_bytes: int | None = Field(default=None, ge=0, le=10 * 1024**4)
     artifact_bytes: int | None = Field(default=None, ge=0, le=10 * 1024**4)
     generation_concurrent: int | None = Field(default=None, ge=0, le=100)
     video_concurrent: int | None = Field(default=None, ge=0, le=100)
     task_max_tokens: int | None = Field(default=None, ge=1, le=10_000_000)
-    monthly_reference_cost_usd: float | None = Field(default=None, ge=0.01, le=10_000)
     is_suspended: bool | None = None
 
     @model_validator(mode="after")

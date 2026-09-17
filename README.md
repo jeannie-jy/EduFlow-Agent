@@ -368,13 +368,13 @@ uv pip compile requirements.txt --python-version 3.12 --universal -o requirement
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `BYOK_REQUIRED` | 生产必须为 `true`，禁用平台 Key 回退 | `false`（仅本地开发） |
+| `BYOK_REQUIRED` | 固定为 `true`；模型调用只使用用户自己的接入配置 | `true` |
 | `CREDENTIAL_KMS_BACKEND` | 生产为 `http`，通过内网 HTTPS KMS Bridge 调用云 KMS | `local`（仅开发） |
 | `CREDENTIAL_KMS_WRAP_URL` / `CREDENTIAL_KMS_UNWRAP_URL` | 生产 KMS Bridge 固定地址 | - |
 | `CREDENTIAL_KEK_B64` | 仅本地开发的 32 字节 base64 KEK | - |
 | `METRICS_ACCESS_TOKEN` | 生产/预发布内部 Prometheus 抓取令牌；公网请求返回 404 | - |
 | `RUN_MAINTENANCE` | 是否在 API 进程运行素材保留与注销处理；多副本 API 设为 `false`，单独运行 `maintenance` 服务 | `true` |
-| `LLM_API_KEY` / `EMBEDDING_API_KEY` | 仅本地开发回退；生产留空 | - |
+| `LLM_API_KEY` / `EMBEDDING_API_KEY` | 已停用；密钥必须由用户在“模型接入”中配置 | - |
 | `DATABASE_URL` | 数据库连接字符串 | 手动开发有本地回退值；Compose 由必填 `DB_PASSWORD` 构造 |
 | `REDIS_URL` | Redis 连接字符串 | `redis://localhost:6379` |
 | `FFMPEG_PATH` | FFmpeg 安装目录（留空自动查找） | (空) |

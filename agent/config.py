@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,7 +80,9 @@ class Settings(BaseSettings):
     # ── LLM ───────────────────────────────────────────────
     llm_endpoint: str = "https://api.deepseek.com/v1"
     llm_model: str = "deepseek-v4-flash"
-    llm_api_key: str = "your-deepseek-api-key"
+    # Provider credentials are user-owned and resolved from the encrypted
+    # credential store. Global keys are intentionally unsupported.
+    llm_api_key: str = ""
     llm_backup_endpoint: str = ""
     llm_backup_model: str = ""
     llm_backup_api_key: str = ""
@@ -105,7 +107,14 @@ class Settings(BaseSettings):
     llm_output_cost_per_million: float = Field(default=0.0, ge=0)
     llm_request_max_tokens: int = Field(default=200_000, ge=1, le=10_000_000)
     llm_request_max_cost_usd: float = Field(default=10.0, ge=0.01, le=10_000)
-    byok_required: bool = False
+    byok_required: bool = True
+
+    @field_validator("byok_required", mode="before")
+    @classmethod
+    def _require_byok(cls, value: object) -> bool:
+        if value is True or (isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}):
+            return True
+        raise ValueError("BYOK_REQUIRED cannot be disabled")
     credential_kms_backend: Literal["local", "http"] = "local"
     credential_kek_b64: str = ""
     credential_kek_version: str = "local-v1"
@@ -124,7 +133,7 @@ class Settings(BaseSettings):
     # ── Embedding ─────────────────────────────────────────
     embedding_endpoint: str = "https://api.openai.com/v1"
     embedding_model: str = "text-embedding-v4"
-    embedding_api_key: str = "your-openai-api-key"
+    embedding_api_key: str = ""
     # The configured Alibaba-compatible text-embedding-v4 endpoint returns
     # 1024-dimensional vectors. Keep this explicit: pgvector dimensions must
     # match the provider response exactly.
