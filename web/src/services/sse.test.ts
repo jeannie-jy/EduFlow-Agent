@@ -132,6 +132,33 @@ describe("connectSSE", () => {
     conn.close();
   });
 
+  it("preserves the HTTP status and backend error detail when opening fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        detail: {
+          error: {
+            code: "CONCURRENCY_LIMIT",
+            message: "Another generation is already active",
+          },
+        },
+      })),
+      body: null,
+    }));
+
+    const { connectSSE } = await import("@/services/sse");
+    const onError = vi.fn();
+    connectSSE("http://localhost/stream", { onError, reconnectMs: 0 });
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce(), { timeout: 2000 });
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      status: 409,
+      code: "CONCURRENCY_LIMIT",
+      message: expect.stringContaining("Another generation is already active"),
+    }));
+  });
+
   it("handles multiple events in sequence", async () => {
     const events = [
       sseEvent("progress", { phase: "planner", message: "planning", pct: 10 }),

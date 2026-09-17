@@ -510,7 +510,7 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
 
 async def modules_node(state: AgentState) -> dict[str, Any]:
     """Run the dependency-aware module scheduler as a canonical graph node."""
-    from services.module_dispatcher import dispatch_modules
+    from services.module_dispatcher import dispatch_modules, persist_module_checkpoint
 
     final: dict[str, Any] = {}
     async for event in dispatch_modules(
@@ -528,8 +528,37 @@ async def modules_node(state: AgentState) -> dict[str, Any]:
             except (TypeError, json.JSONDecodeError):
                 final = {}
         elif event_name in {"progress", "module_start", "module_done", "module_error"}:
-            await _emit_module_graph_event(event_name, event.get("data", "{}"))
+            encoded = event.get("data", "{}")
+            # Persist each result before forwarding it to the SSE stream. The
+            # graph node is otherwise atomic from LangGraph's perspective and
+            # a disconnected browser would lose all completed modules.
+            if event_name in {"module_done", "module_error"}:
+                try:
+                    payload = json.loads(encoded)
+                except (TypeError, json.JSONDecodeError):
+                    payload = {}
+                if isinstance(payload, dict) and isinstance(payload.get("module_id"), str):
+                    await persist_module_checkpoint(
+                        state.get("project_id", ""),
+                        module_id=payload["module_id"],
+                        output=payload.get("output"),
+                        error=(str(payload.get("error")) if event_name == "module_error" else None),
+                        teaching_plan=state.get("teaching_plan", {}),
+                        knowledge_graph=state.get("knowledge_graph", {}),
+                        selected_modules=state.get("selected_modules", []),
+                    )
+            try:
+                await _emit_module_graph_event(event_name, encoded)
+            except Exception:
+                # A tracing/custom-event transport failure must not abort the
+                # module scheduler or discard already persisted artifacts.
+                logger.exception("转发模块事件失败: event=%s", event_name)
     outputs = final.get("module_outputs") or {}
+    # A recovery run can legitimately have no pending modules when every
+    # artifact was persisted before the reconnect. Preserve that durable
+    # projection so the graph still emits a successful terminal state.
+    if not outputs and isinstance(state.get("module_context_outputs"), dict):
+        outputs = dict(state["module_context_outputs"])
     frames_output = outputs.get("frames") if isinstance(outputs, dict) else None
     return {
         "module_outputs": outputs,

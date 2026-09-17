@@ -116,16 +116,20 @@ export function ProjectWorkspace() {
   useEffect(() => {
     if (isNew) return;
     if (!project?.status) return;
-    const hasOutputs = Object.keys(project.module_outputs ?? {}).length > 0;
-    const hasErrors = Object.keys((project.dsl?.module_errors as Record<string, unknown> | undefined) ?? {}).length > 0;
-    if (project.status === "done" && (hasOutputs || hasErrors)) {
+    // The persisted project status is the source of truth for workflow
+    // navigation. A completed project may legitimately have no successful
+    // module outputs (for example, every selected module failed, or an older
+    // project only persisted its teaching plan). In that case the results
+    // panel must explain the empty state instead of silently sending the user
+    // back to step one while the header still says “已完成”.
+    if (project.status === "done") {
       setCurrentStep("results");
       setCompletedSteps(["select", "plan"]);
     } else {
       setCurrentStep("select");
       setCompletedSteps([]);
     }
-  }, [project?.status, project?.module_outputs, project?.dsl?.module_errors, isNew]);
+  }, [project?.status, isNew]);
 
   // Step 3 时替换 URL（新建模式）
   useEffect(() => {

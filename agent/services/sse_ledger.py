@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 
@@ -22,12 +23,42 @@ def new_stream_id() -> str:
     return str(uuid.uuid4())
 
 
+async def register_sse_stream(
+    session: AsyncSession, *, stream_id: str, project_id: str, kind: str
+) -> None:
+    """Persist a stream before its URL is returned to the client.
+
+    Keeping this in the caller's transaction makes the project state, quota
+    reservation, and replay handle one atomic admission decision.  The
+    consumer-side ``_ensure_stream`` remains as a compatibility fallback for
+    older callers that create a stream lazily.
+    """
+    from db.models import SSEStream
+
+    parsed_stream = uuid.UUID(stream_id)
+    parsed_project = uuid.UUID(project_id)
+    existing = await session.get(SSEStream, parsed_stream)
+    if existing is not None:
+        if existing.project_id != parsed_project:
+            raise PermissionError("SSE stream belongs to another project")
+        return
+    session.add(
+        SSEStream(
+            id=parsed_stream,
+            project_id=parsed_project,
+            kind=kind[:50],
+            status="active",
+        )
+    )
+    await session.flush()
+
+
 def _wire_event(event_id: int, event_name: str, payload: dict) -> dict[str, str]:
     enriched = {**payload, "schema_version": "1.0", "event_id": event_id}
     return {
         "id": str(event_id),
         "event": event_name,
-        "data": json.dumps(enriched, ensure_ascii=False),
+        "data": json.dumps(enriched, ensure_ascii=False, default=str),
     }
 
 

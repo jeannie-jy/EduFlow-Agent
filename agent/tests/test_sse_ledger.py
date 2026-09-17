@@ -5,16 +5,131 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from db.models import Project, SSEEvent, SSEStream
+from db.models import Project, SSEEvent, SSEStream, UsageLedger, User
 from tests.test_db_integration import _make_sqlite_compatible
 
 _make_sqlite_compatible()
+
+
+@pytest.mark.asyncio
+async def test_stream_is_registered_before_client_connects(test_db):
+    from services.sse_ledger import register_sse_stream
+
+    project_id = uuid.uuid4()
+    stream_id = uuid.uuid4()
+    test_db.add(Project(id=project_id, title="Pre-registered stream"))
+    await test_db.flush()
+
+    await register_sse_stream(
+        test_db,
+        stream_id=str(stream_id),
+        project_id=str(project_id),
+        kind="generation",
+    )
+
+    stream = await test_db.get(SSEStream, stream_id)
+    assert stream is not None
+    assert stream.project_id == project_id
+    assert stream.status == "active"
+    assert stream.last_event_id == 0
+
+
+@pytest.mark.asyncio
+async def test_start_generation_returns_a_persisted_stream(test_db):
+    from api.generate import start_generation
+    from schema.project import GenerateRequest
+
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, title="Atomic generation start")
+    test_db.add(project)
+    await test_db.flush()
+
+    result = await start_generation(
+        str(project_id),
+        GenerateRequest(action="modules", modules=["quiz"]),
+        test_db,
+        None,
+        None,
+    )
+
+    stream_id = uuid.UUID(result["stream_url"].split("stream_id=", 1)[1])
+    stream = await test_db.get(SSEStream, stream_id)
+    assert stream is not None
+    assert stream.project_id == project_id
+    assert project.status == "planning"
+
+
+@pytest.mark.asyncio
+async def test_missing_unstarted_stream_releases_quota_and_restores_project(test_db):
+    from api.generate import _recover_or_resume_generation
+    from services.quota import reserve_quota
+
+    user_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    stream_id = uuid.uuid4()
+    quota_key = "generation-that-never-connected"
+    test_db.add(
+        User(
+            id=user_id,
+            email="stale-stream@example.com",
+            nickname="Stale stream",
+            password_hash="test",
+        )
+    )
+    project = Project(
+        id=project_id,
+        title="Stale generation",
+        owner_id=str(user_id),
+        status="planning",
+        dsl_snapshot={
+            "_pending_action": "modules",
+            "_quota_ref": {
+                "resource": "generation",
+                "idempotency_key": quota_key,
+                "stream_id": str(stream_id),
+            },
+        },
+    )
+    test_db.add(project)
+    await test_db.flush()
+    await reserve_quota(
+        test_db,
+        user_id=user_id,
+        resource="generation",
+        idempotency_key=quota_key,
+        details={"project_id": str(project_id), "stream_id": str(stream_id)},
+    )
+
+    result = await _recover_or_resume_generation(
+        test_db,
+        SimpleNamespace(id=user_id),
+        project,
+        project_id=str(project_id),
+    )
+
+    assert result is None
+    assert project.status == "draft"
+    assert "_quota_ref" not in project.dsl_snapshot
+    ledger = list(
+        (
+            await test_db.scalars(
+                select(UsageLedger).where(UsageLedger.user_id == user_id)
+            )
+        ).all()
+    )
+    assert any(
+        isinstance(row.details, dict)
+        and row.details.get("_quota_state") == "released"
+        and row.details.get("_quota_reservation") == quota_key
+        for row in ledger
+    )
 
 
 @pytest.mark.asyncio

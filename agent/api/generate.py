@@ -15,6 +15,7 @@ import json
 import logging
 import statistics
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlencode
 
@@ -48,6 +49,8 @@ from .auth import get_current_user, require_editor
 from .deps import ensure_project_access, parse_project_id
 
 logger = logging.getLogger(__name__)
+
+UNSTARTED_STREAM_GRACE = timedelta(seconds=5)
 
 router = APIRouter(
     prefix="/projects",
@@ -116,17 +119,9 @@ async def _latest_generation_credential_ref(
     """Capture only the credential id/version for a queued workflow."""
     if current_user is None:
         return None
-    from db.models import ProviderCredential
+    from services.provider_credentials import selected_provider_credential
 
-    row = await session.scalar(
-        select(ProviderCredential)
-        .where(
-            ProviderCredential.user_id == current_user.id,
-            ProviderCredential.purpose == "generation",
-            ProviderCredential.status == "active",
-        )
-        .order_by(ProviderCredential.version.desc())
-    )
+    row = await selected_provider_credential(session, current_user.id, "generation")
     if row is None:
         return None
     return {"id": str(row.id), "version": row.version}
@@ -191,12 +186,11 @@ async def _ensure_generation_stream_admission(
     from services.quota import (
         QuotaExceededError,
         acquire_quota_lock,
-        ensure_monthly_reference_cost_capacity,
         quota_limit,
         reserve_quota,
     )
     credential_ref = await _latest_generation_credential_ref(session, current_user)
-    if get_settings().byok_required and credential_ref is None:
+    if credential_ref is None:
         raise HTTPException(status_code=428, detail="A generation provider credential is required")
     rows = list((await session.scalars(select(UsageLedger).where(
         UsageLedger.user_id == current_user.id,
@@ -210,7 +204,6 @@ async def _ensure_generation_stream_admission(
 
     try:
         await acquire_quota_lock(session, user_id=current_user.id, resource="generation")
-        await ensure_monthly_reference_cost_capacity(session, user_id=current_user.id)
         from sqlalchemy import func
         active_count = int(await session.scalar(select(func.count(ProjectModel.id)).where(
             ProjectModel.owner_id == str(current_user.id),
@@ -230,6 +223,7 @@ async def _ensure_generation_stream_admission(
             user_id=current_user.id,
             resource="generation",
             idempotency_key=f"stream:{stream_id}",
+            count_toward_limit=credential_ref is None,
             details={
                 "project_id": project_id,
                 "action": action,
@@ -495,6 +489,70 @@ def _resume_capable_stream(
     )
 
 
+async def _recover_or_resume_generation(
+    session: AsyncSession, current_user, project, *, project_id: str
+) -> str | None:
+    """Resume a live run or retire a reservation whose SSE never started."""
+    if current_user is None or not isinstance(project.dsl_snapshot, dict):
+        return None
+    quota_ref = project.dsl_snapshot.get("_quota_ref")
+    if not isinstance(quota_ref, dict):
+        return None
+    raw_stream_id = quota_ref.get("stream_id")
+    quota_key = quota_ref.get("idempotency_key")
+    if not isinstance(raw_stream_id, str) or not raw_stream_id:
+        return None
+    try:
+        parsed_stream_id = uuid.UUID(raw_stream_id)
+    except ValueError:
+        return None
+
+    from db.models import SSEStream
+    from services.quota import release_quota
+
+    stream = await session.get(SSEStream, parsed_stream_id)
+    now = datetime.now(UTC)
+    created_at = stream.created_at if stream is not None else None
+    if created_at is not None and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    unstarted = (
+        stream is None
+        or (
+            stream.status == "active"
+            and stream.producer_id is None
+            and stream.last_event_id == 0
+            and created_at is not None
+            and now - created_at >= UNSTARTED_STREAM_GRACE
+        )
+    )
+    if not unstarted:
+        if stream is not None and stream.status == "active":
+            return f"/api/projects/{project_id}/generate/stream?stream_id={raw_stream_id}"
+        return None
+
+    if isinstance(quota_key, str) and quota_key:
+        await release_quota(
+            session,
+            user_id=current_user.id,
+            resource="generation",
+            idempotency_key=quota_key,
+        )
+    if stream is not None:
+        stream.status = "completed"
+        stream.completed_at = now
+        stream.producer_id = None
+        stream.lease_expires_at = None
+    snapshot = dict(project.dsl_snapshot)
+    snapshot.pop("_quota_ref", None)
+    project.dsl_snapshot = snapshot
+    if project.status in {"planning", "generating", "reviewing"}:
+        project.status = "draft"
+    logger.warning(
+        "已回收未建立连接的生成流: project=%s | stream=%s", project_id, raw_stream_id
+    )
+    return None
+
+
 @router.post("/{project_id}/generate", status_code=202)
 async def start_generation(
     project_id: str,
@@ -515,6 +573,12 @@ async def start_generation(
 
     ensure_project_access(project, current_user)
     await _ensure_material_processing_consent(session, current_user, body.constraints)
+
+    resumable_stream_url = await _recover_or_resume_generation(
+        session, current_user, project, project_id=project_id
+    )
+    if resumable_stream_url is not None:
+        return {"stream_url": resumable_stream_url}
 
     stream_id = str(uuid.uuid4())
     normalized_idempotency_key = idempotency_key.strip() if idempotency_key else None
@@ -547,26 +611,16 @@ async def start_generation(
         from services.quota import (
             QuotaExceededError,
             acquire_quota_lock,
-            ensure_monthly_reference_cost_capacity,
             quota_limit,
             reserve_quota,
         )
         await acquire_quota_lock(session, user_id=current_user.id, resource="generation")
-        try:
-            await ensure_monthly_reference_cost_capacity(
-                session, user_id=current_user.id
-            )
-        except QuotaExceededError as exc:
-            raise HTTPException(
-                status_code=429,
-                detail={"error": {"code": "QUOTA_EXCEEDED", "message": "Monthly reference cost limit reached",
-                        "details": {"resource": exc.resource, "period": exc.period, "limit_cents": exc.limit}}},
-            ) from exc
         from sqlalchemy import func
         active_count = int(await session.scalar(
             select(func.count(ProjectModel.id))
             .where(
                 ProjectModel.owner_id == str(current_user.id),
+                ProjectModel.id != parse_project_id(project_id),
                 ProjectModel.status.in_(("planning", "generating", "reviewing")),
             )
         ) or 0)
@@ -585,6 +639,7 @@ async def start_generation(
             await reserve_quota(
                 session, user_id=current_user.id, resource="generation",
                 idempotency_key=quota_key,
+                count_toward_limit=generation_credentials[0] is None,
                 details={
                     "project_id": project_id,
                     "action": body.action,
@@ -627,6 +682,16 @@ async def start_generation(
             "stream_id": stream_id,
         }
     project.dsl_snapshot = snap
+
+    # The replay handle must exist before its URL is exposed.  Previously it
+    # was created only when the response body started iterating, leaving a
+    # planning project and reserved quota behind if the browser never opened
+    # the SSE request.
+    from services.sse_ledger import register_sse_stream
+
+    await register_sse_stream(
+        session, stream_id=stream_id, project_id=project_id, kind="generation"
+    )
 
     logger.info("生成启动: project=%s | action=%s", project_id, body.action)
 
@@ -742,7 +807,8 @@ async def generation_stream(
                 session, current_user, project_id=project_id, stream_id=stream_id,
                 status=terminal_status,
             ),
-        )
+        ),
+        ping=15,
     )
 
 
@@ -810,7 +876,8 @@ async def generation_resume_stream(
                 session, current_user, project_id=project_id, stream_id=stream_id,
                 status=terminal_status, quota_ref=quota_ref,
             ),
-        )
+        ),
+        ping=15,
     )
 
 
@@ -848,7 +915,6 @@ async def regenerate_frames(
             status_code=422, detail="Invalid regeneration scope"
         ) from exc
 
-    from config import get_settings
     normalized_idempotency_key = idempotency_key.strip() if idempotency_key else None
     if idempotency_key is not None and not normalized_idempotency_key:
         raise HTTPException(status_code=422, detail="Idempotency-Key must not be blank")
@@ -883,7 +949,7 @@ async def regenerate_frames(
 
     stream_id = str(uuid.uuid4())
     credential_ref = await _latest_generation_credential_ref(session, current_user)
-    if current_user is not None and get_settings().byok_required and credential_ref is None:
+    if current_user is not None and credential_ref is None:
         raise HTTPException(status_code=428, detail="A generation provider credential is required")
     if current_user is not None:
         from sqlalchemy import func
@@ -891,13 +957,11 @@ async def regenerate_frames(
         from services.quota import (
             QuotaExceededError,
             acquire_quota_lock,
-            ensure_monthly_reference_cost_capacity,
             quota_limit,
             reserve_quota,
         )
         try:
             await acquire_quota_lock(session, user_id=current_user.id, resource="generation")
-            await ensure_monthly_reference_cost_capacity(session, user_id=current_user.id)
             active_count = int(await session.scalar(select(func.count(ProjectModel.id)).where(
                 ProjectModel.owner_id == str(current_user.id),
                 ProjectModel.status.in_(("planning", "generating", "reviewing")),
@@ -912,6 +976,7 @@ async def regenerate_frames(
             await reserve_quota(
                 session, user_id=current_user.id, resource="generation",
                 idempotency_key=normalized_idempotency_key or f"regenerate:{project_id}:{stream_id}",
+                count_toward_limit=credential_ref is None,
                 details={
                     "project_id": project_id,
                     "action": "regenerate",
@@ -1007,7 +1072,8 @@ async def regenerate_stream(
                 session, current_user, project_id=project_id, stream_id=stream_id,
                 status=terminal_status,
             ),
-        )
+        ),
+        ping=15,
     )
 
 
@@ -1205,7 +1271,6 @@ async def start_module_generation(
             detail=f"Unknown module(s): {', '.join(unknown)}",
         )
 
-    from config import get_settings
     normalized_idempotency_key = idempotency_key.strip() if idempotency_key else None
     if idempotency_key is not None and not normalized_idempotency_key:
         raise HTTPException(status_code=422, detail="Idempotency-Key must not be blank")
@@ -1232,7 +1297,7 @@ async def start_module_generation(
 
     stream_id = str(uuid.uuid4())
     credential_ref = await _latest_generation_credential_ref(session, current_user)
-    if current_user is not None and get_settings().byok_required and credential_ref is None:
+    if current_user is not None and credential_ref is None:
         raise HTTPException(status_code=428, detail="A generation provider credential is required")
     if current_user is not None:
         from sqlalchemy import func
@@ -1240,7 +1305,6 @@ async def start_module_generation(
         from services.quota import (
             QuotaExceededError,
             acquire_quota_lock,
-            ensure_monthly_reference_cost_capacity,
             quota_limit,
             reserve_quota,
         )
@@ -1257,10 +1321,10 @@ async def start_module_generation(
                     status_code=409,
                     detail={"error": {"code": "CONCURRENCY_LIMIT", "message": "Another generation is already active"}},
                 )
-            await ensure_monthly_reference_cost_capacity(session, user_id=current_user.id)
             await reserve_quota(
                 session, user_id=current_user.id, resource="generation",
                 idempotency_key=normalized_idempotency_key or f"modules:{project_id}:{stream_id}",
+                count_toward_limit=credential_ref is None,
                 details={
                     "project_id": project_id,
                     "action": "modules",
@@ -1329,7 +1393,18 @@ async def module_generation_stream(
     knowledge_graph = snap.get("knowledge_graph", {})
     user_input = snap.get("input_content", snap.get("topic", ""))
     constraints = snap.get("constraints", {})
-    selected_modules = snap.get("_pending_modules", ["frames"])
+    requested_modules = snap.get("_pending_modules", ["frames"])
+    if not isinstance(requested_modules, list):
+        requested_modules = ["frames"]
+    persisted_outputs = snap.get("module_outputs")
+    if not isinstance(persisted_outputs, dict):
+        persisted_outputs = {}
+    # A reconnect must continue the batch from its durable checkpoints instead
+    # of regenerating modules that already completed before the SSE dropped.
+    selected_modules = [
+        module_id for module_id in requested_modules
+        if isinstance(module_id, str) and module_id not in persisted_outputs
+    ]
 
     # 构建 AgentState
     state: AgentState = {
@@ -1339,6 +1414,8 @@ async def module_generation_stream(
         "knowledge_graph": knowledge_graph,
         "constraints": constraints,
         "selected_modules": selected_modules,
+        "module_context_outputs": persisted_outputs,
+        "ensure_frames": not bool(persisted_outputs),
         "status": "generating",
         "reflection_count": 0,
         "revision_history": [],
@@ -1365,7 +1442,8 @@ async def module_generation_stream(
                 session, current_user, project_id=project_id, stream_id=stream_id,
                 status=terminal_status,
             ),
-        )
+        ),
+        ping=15,
     )
 
 
@@ -1440,5 +1518,6 @@ async def single_module_stream(
                 session, current_user, project_id=project_id, stream_id=stream_id,
                 status=terminal_status,
             ),
-        )
+        ),
+        ping=15,
     )

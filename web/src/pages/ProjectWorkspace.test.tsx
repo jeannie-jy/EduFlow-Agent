@@ -50,10 +50,13 @@ describe("ProjectWorkspace", () => {
   it("renders results step for a completed project", async () => {
     renderWorkspace(`/app/project/${PROJECT_ID}`);
 
-    // done 但没有任何产物的历史项目应恢复到模块选择，而不是进入空成果页。
+    // 完成状态是步骤导航的唯一事实来源。即使旧项目没有持久化
+    // module_outputs，也应进入成果页并展示明确的空状态。
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "选择模块" })).toBeInTheDocument();
+      expect(screen.getByText("成果预览")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "尚未生成模块产物" })).toBeInTheDocument();
     });
+    expect(screen.queryByRole("heading", { name: "选择模块" })).not.toBeInTheDocument();
   });
 
   it("restores a persisted waiting-for-approval state after refresh", async () => {

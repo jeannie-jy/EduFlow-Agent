@@ -60,6 +60,7 @@ async def dispatch_modules(
     if (
         ensure_frames
         and "frames" not in selected_modules
+        and "frames" not in dependency_outputs
         and get_generator("frames") is not None
     ):
         selected_modules = list(selected_modules) + ["frames"]
@@ -332,7 +333,69 @@ async def _run_module(mod_id: str, gen, *, semaphore: asyncio.Semaphore, **kwarg
 
 def _sse(event: str, data: dict[str, Any]) -> dict[str, str]:
     """构建 SSE 事件字典（与 generate_service._sse_event 同格式）。"""
-    return {"event": event, "data": json.dumps(data, ensure_ascii=False)}
+    # Module generators are third-party/user-facing extension points. Keep an
+    # unexpected value from aborting the entire scheduler (and therefore
+    # suppressing the terminal event) just because it is not natively JSON
+    # serializable.
+    return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
+
+
+async def persist_module_checkpoint(
+    project_id: str,
+    *,
+    module_id: str,
+    output: Any = None,
+    error: str | None = None,
+    teaching_plan: dict[str, Any] | None = None,
+    knowledge_graph: dict[str, Any] | None = None,
+    selected_modules: list[str] | None = None,
+) -> None:
+    """Persist one module result while a batch is still running.
+
+    The canonical LangGraph module node is intentionally a single graph node,
+    so its final state is only checkpointed after every module finishes. A
+    dropped SSE connection during a long batch would otherwise lose all
+    earlier module results. This best-effort checkpoint makes completed
+    modules visible to a refresh and gives a later recovery run a dependency
+    context to continue from.
+    """
+    try:
+        from api.deps import parse_project_id
+        from db.database import async_session_factory
+        from db.models import Project as ProjectModel
+        from services.project_persistence import merge_dsl_snapshot, persist_frames_to_table
+
+        module_outputs = {} if error else {module_id: output}
+        module_errors = {module_id: error} if error else {}
+        frames_dsl = (
+            output
+            if not error and module_id == "frames" and isinstance(output, dict)
+            and output.get("frames")
+            else None
+        )
+        async with async_session_factory() as db_session:
+            project = await db_session.get(ProjectModel, parse_project_id(project_id))
+            if project is None:
+                return
+            project.dsl_snapshot = merge_dsl_snapshot(
+                project.dsl_snapshot,
+                frames_dsl,
+                teaching_plan=teaching_plan,
+                knowledge_graph=knowledge_graph,
+                selected_modules=selected_modules,
+                module_outputs=module_outputs,
+                module_errors=module_errors,
+            )
+            if frames_dsl is not None:
+                await persist_frames_to_table(project_id, frames_dsl.get("frames", []), db_session)
+            # Do not mark a partial batch as done. The terminal graph event is
+            # still responsible for deciding whether the project succeeded.
+            if project.status not in {"failed", "done"}:
+                project.status = "generating"
+            await db_session.commit()
+    except Exception:
+        # Checkpointing must never take down the active generation stream.
+        logger.exception("模块阶段性结果持久化失败: project=%s module=%s", project_id, module_id)
 
 
 def _pct_for_index(index: int, total: int) -> int:

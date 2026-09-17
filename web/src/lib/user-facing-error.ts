@@ -22,6 +22,14 @@ export function toUserFacingError(error: unknown, context: ErrorContext = "gener
     };
   }
 
+  if (/generation provider credential is required|user generation credential is required|provider credential.*required|credential reference.*unavailable/.test(text)) {
+    return {
+      title: "请先接入自己的 AI 服务",
+      message: "EduFlow 不提供平台共享密钥，生成内容需要使用您自己配置的 API 连接。",
+      suggestion: "请前往“模型接入”，新增并启用一个内容生成连接后重试。",
+    };
+  }
+
   if (/402|insufficient[ _-]?balance|余额|欠费|quota.*exceed|credit/.test(text)) {
     return {
       title: "智能生成额度不足",
@@ -41,6 +49,13 @@ export function toUserFacingError(error: unknown, context: ErrorContext = "gener
       title: "AI 服务暂时繁忙",
       message: "短时间内生成请求较多，服务暂时无法继续处理。",
       suggestion: "请稍等片刻后重新生成。",
+    };
+  }
+  if (/409|concurrency_limit|another generation is already active|并发/.test(text)) {
+    return {
+      title: "已有生成任务正在进行",
+      message: "这个账户当前已有一个生成任务占用运行名额。",
+      suggestion: "请返回正在生成的项目继续查看；如果它已中断，请在原项目中重新生成。",
     };
   }
   if (/timeout|timed out|network|fetch|connection|503|502|504|网络|连接|超时/.test(text)) {
