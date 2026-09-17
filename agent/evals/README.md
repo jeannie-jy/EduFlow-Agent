@@ -76,6 +76,8 @@ fresh checkpoint thread so reruns cannot inherit prior graph state.
 
 ```bash
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 EDUFLOW_EVAL_JUDGE_ENDPOINT=https://api.example.com/v1 \
 EDUFLOW_EVAL_JUDGE_API_KEY=... \
 EDUFLOW_EVAL_JUDGE_MODEL=independent-model \
@@ -92,6 +94,10 @@ python -m evals.runners.run_online \
   --judge-model "$EDUFLOW_EVAL_JUDGE_MODEL" \
   --budget-usd 10
 ```
+
+The candidate and embedding keys above are evaluation-only environment
+variables. They are scoped in memory for the opted-in benchmark process and
+are not application defaults or persisted user credentials.
 
 The manual `Online EduFlowBench Quality` workflow starts isolated dependencies,
 runs this command, uploads the report/artifacts/logs, and always tears the stack
@@ -139,6 +145,8 @@ isolated evaluation database:
 
 ```bash
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 EDUFLOW_EVAL_BOOTSTRAP=1 \
 python -m evals.runners.run_online \
   --dataset evals/datasets/tool_online_cases.jsonl \
@@ -173,6 +181,7 @@ Run a one-case smoke test first, then the full ten-case retrieval evaluation:
 
 ```bash
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 python -m evals.runners.run_retrieval \
   --dataset evals/datasets/retrieval_production_v1.jsonl \
   --limit 1 \
@@ -180,6 +189,7 @@ python -m evals.runners.run_retrieval \
   --output evals/reports/retrieval-production-smoke.json
 
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 python -m evals.runners.run_retrieval \
   --dataset evals/datasets/retrieval_production_v1.jsonl \
   --concurrency 1 \
@@ -206,6 +216,8 @@ Planner–Knowledge–Coder–Quality–Reflection workflow:
 
 ```bash
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 python -m evals.runners.run_rag_groundedness \
   --dataset evals/datasets/retrieval_production_v1.jsonl \
   --limit 1 --concurrency 1 --budget-usd 1 \
@@ -213,6 +225,8 @@ python -m evals.runners.run_rag_groundedness \
   --output evals/reports/rag-groundedness-smoke.json
 
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 python -m evals.runners.run_rag_groundedness \
   --dataset evals/datasets/retrieval_production_v1.jsonl \
   --concurrency 1 --budget-usd 3 \

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from config import get_settings
+from evals.evaluation_credentials import online_eval_credential_scope
 from evals.generators.live_workflow import generate_workflow_case
 from evals.graders.retrieval import grade_retrieval
 from evals.models import EvalCase, load_cases
@@ -169,15 +170,16 @@ def main() -> int:
         cases = cases[: args.limit]
     if not cases:
         parser.error("case selection is empty")
-    report = asyncio.run(evaluate(
-        cases,
-        output=args.output,
-        artifacts_dir=args.artifacts_dir,
-        concurrency=args.concurrency,
-        timeout_seconds=args.timeout_seconds,
-        budget_usd=args.budget_usd,
-        model=args.model,
-    ))
+    with online_eval_credential_scope():
+        report = asyncio.run(evaluate(
+            cases,
+            output=args.output,
+            artifacts_dir=args.artifacts_dir,
+            concurrency=args.concurrency,
+            timeout_seconds=args.timeout_seconds,
+            budget_usd=args.budget_usd,
+            model=args.model,
+        ))
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     return 0 if report["summary"]["groundedness_passed_cases"] == len(cases) else 1
 

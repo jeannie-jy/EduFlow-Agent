@@ -58,11 +58,11 @@ jobs:
       MINIO_PASSWORD: ci-online-tool-minio-password
       LLM_ENDPOINT: ${{ inputs.llm_endpoint }}
       LLM_MODEL: ${{ inputs.llm_model }}
-      LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
+      EDUFLOW_EVAL_LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
       EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}
       EMBEDDING_MODEL: ${{ inputs.embedding_model }}
       EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}
-      EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
+      EDUFLOW_EVAL_EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
       LLM_REQUEST_MAX_COST_USD: ${{ inputs.budget_usd }}
       LLM_INPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_INPUT_COST_PER_MILLION || '0' }}
       LLM_OUTPUT_COST_PER_MILLION: ${{ vars.EDUFLOW_LLM_OUTPUT_COST_PER_MILLION || '0' }}
@@ -72,8 +72,8 @@ jobs:
 
       - name: Require explicit evaluation credentials
         run: |
-          test -n "$LLM_API_KEY"
-          test -n "$EMBEDDING_API_KEY"
+          test -n "$EDUFLOW_EVAL_LLM_API_KEY"
+          test -n "$EDUFLOW_EVAL_EMBEDDING_API_KEY"
           test -n "$EMBEDDING_ENDPOINT"
           test -n "$EMBEDDING_MODEL"
           test "$EMBEDDING_DIMENSION" -eq "$EMBEDDING_DIMENSION" 2>/dev/null
@@ -84,10 +84,20 @@ jobs:
           postgres redis minio agent-api
 
       - name: Seed knowledge embeddings
-        run: docker compose exec -T agent-api python -m scripts.seed_embeddings
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
+            agent-api python -m scripts.seed_embeddings
 
       - name: Verify retrieval health
-        run: docker compose exec -T agent-api python -m scripts.retrieval_health
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
+            agent-api python -m scripts.retrieval_health
 
       - name: Run repeated Tool Calling smoke benchmark
         id: smoke
@@ -96,6 +106,8 @@ jobs:
           docker compose exec -T \
             -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
             -e EDUFLOW_EVAL_BOOTSTRAP=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
             -e GITHUB_SHA \
             agent-api \
             python -m evals.runners.run_online \
@@ -119,6 +131,8 @@ jobs:
           docker compose exec -T \
             -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
             -e EDUFLOW_EVAL_BOOTSTRAP=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
             -e GITHUB_SHA \
             agent-api \
             python -m evals.runners.run_online \

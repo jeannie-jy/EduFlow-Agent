@@ -101,6 +101,8 @@ def test_manual_quality_workflow_uses_production_adapter_and_auditable_outputs()
     assert "EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}" in workflow
     assert "EMBEDDING_MODEL: ${{ inputs.embedding_model }}" in workflow
     assert "EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}" in workflow
+    assert '-e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY"' in workflow
+    assert '-e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY"' in workflow
     assert "--concurrency 1" in workflow
     assert "--budget-usd" in workflow
     assert "evals.generators.live_judge:judge_workflow_case" in workflow

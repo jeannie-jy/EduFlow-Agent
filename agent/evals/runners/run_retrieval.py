@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from config import get_settings
+from evals.evaluation_credentials import online_eval_credential_scope
 from evals.graders.retrieval import grade_retrieval
 from evals.models import EvalCase, load_cases
 from evals.runners.run_offline import _git_sha
@@ -142,7 +143,8 @@ def main() -> int:
         cases = cases[: args.limit]
     if args.concurrency <= 0:
         parser.error("--concurrency must be greater than zero")
-    report = asyncio.run(evaluate(cases, concurrency=args.concurrency))
+    with online_eval_credential_scope():
+        report = asyncio.run(evaluate(cases, concurrency=args.concurrency))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))

@@ -13,38 +13,40 @@ EVAL_NAMESPACE = uuid.UUID("ee000000-0000-4000-8000-000000000050")
 
 async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
     """Generate one teaching artifact without API persistence or HITL pauses."""
+    from evals.evaluation_credentials import online_eval_credential_scope
     from services.generate_service import run_generation_sync_with_usage
 
     started = time.perf_counter()
     project_id = str(uuid.uuid5(EVAL_NAMESPACE, case.case_id))
     thread_id = f"eval:{case.case_id}:{uuid.uuid4().hex}"
-    state, usage = await run_generation_sync_with_usage(
-        project_id,
-        case.topic,
-        constraints={
-            **case.constraints,
-            "difficulty": case.difficulty,
-            "eval_case_id": case.case_id,
-            # Keep benchmark expectations visible to the production Coder so
-            # required concepts are explicitly taught, not merely inferred by
-            # the offline grader after generation.
-            "required_concepts": case.expected.required_concepts,
-            "forbidden_claims": case.expected.forbidden_claims,
-            # Evaluation-only structural expectations. Normal user requests do
-            # not carry these keys and retain their existing planning policy.
-            "min_frames": case.expected.min_frames,
-            "max_frames": case.expected.max_frames,
-            # Keep online Coder responses below common provider completion
-            # ceilings; production requests retain the richer output profile.
-            "eval_output_profile": "compact",
-            "eval_max_frames": min(case.expected.max_frames, 8),
-            # Freeze decoding for comparable online runs. Production requests
-            # do not set this flag and keep their node-specific temperatures.
-            "eval_deterministic": True,
-        },
-        materials=case.materials,
-        thread_id=thread_id,
-    )
+    with online_eval_credential_scope():
+        state, usage = await run_generation_sync_with_usage(
+            project_id,
+            case.topic,
+            constraints={
+                **case.constraints,
+                "difficulty": case.difficulty,
+                "eval_case_id": case.case_id,
+                # Keep benchmark expectations visible to the production Coder so
+                # required concepts are explicitly taught, not merely inferred by
+                # the offline grader after generation.
+                "required_concepts": case.expected.required_concepts,
+                "forbidden_claims": case.expected.forbidden_claims,
+                # Evaluation-only structural expectations. Normal user requests do
+                # not carry these keys and retain their existing planning policy.
+                "min_frames": case.expected.min_frames,
+                "max_frames": case.expected.max_frames,
+                # Keep online Coder responses below common provider completion
+                # ceilings; production requests retain the richer output profile.
+                "eval_output_profile": "compact",
+                "eval_max_frames": min(case.expected.max_frames, 8),
+                # Freeze decoding for comparable online runs. Production requests
+                # do not set this flag and keep their node-specific temperatures.
+                "eval_deterministic": True,
+            },
+            materials=case.materials,
+            thread_id=thread_id,
+        )
     artifact = state.get("dsl")
     if not isinstance(artifact, dict):
         raise TypeError("production workflow returned no DSL artifact")

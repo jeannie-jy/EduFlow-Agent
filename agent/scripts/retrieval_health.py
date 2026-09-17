@@ -12,6 +12,7 @@ import json
 import logging
 import sys
 
+from evals.evaluation_credentials import online_eval_credential_scope
 from services.retrieval import retrieve_knowledge_context
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -35,7 +36,8 @@ async def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(asyncio.run(main()))
+        with online_eval_credential_scope():
+            sys.exit(asyncio.run(main()))
     except Exception as exc:
         logger.error("retrieval health check failed: %s", exc)
         sys.exit(1)
