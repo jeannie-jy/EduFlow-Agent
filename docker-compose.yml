@@ -387,7 +387,9 @@ services:
 
   # ── Object Storage (MinIO S3-compatible) ──────────────────
   minio:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    # The community image was removed from Docker Hub; Quay keeps the same
+    # pinned release and is available to CI without Docker Hub credentials.
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
     ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
     environment:
       - MINIO_ROOT_USER=${MINIO_USER:?Set MINIO_USER in .env}
