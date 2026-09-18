@@ -32,6 +32,17 @@ _ALGORITHM_MARKERS = {
     "bfs": ("bfs", "广度优先"),
     "dfs": ("dfs", "深度优先"),
 }
+_ALGORITHM_NAME_ALIASES = {
+    "dijkstra": "dijkstra",
+    "dijkstras_algorithm": "dijkstra",
+    "bellman_ford": "bellman_ford",
+    "bellmanford": "bellman_ford",
+    "bfs": "bfs",
+    "breadth_first_search": "bfs",
+    "dfs": "dfs",
+    "depth_first_search": "dfs",
+    "generic": "generic",
+}
 
 
 _EDGE_TEXT_RE = re.compile(
@@ -406,6 +417,20 @@ def _infer_algorithm(topic: Any) -> str | None:
     return None
 
 
+def _canonical_algorithm_name(value: Any, *, fallback: str | None = None) -> str | None:
+    """Map model vocabulary to the finite algorithm-trace protocol."""
+    raw = _text(value).strip().casefold()
+    if not raw:
+        return fallback
+    slug = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    canonical = _ALGORITHM_NAME_ALIASES.get(slug)
+    if canonical is not None:
+        return canonical
+    # A known lesson topic is stronger evidence than an invented model enum.
+    # Other algorithms still use the common trace fields through ``generic``.
+    return fallback or "generic"
+
+
 def _queue_entry(value: Any) -> dict[str, Any] | None:
     """Convert supported legacy queue encodings to one canonical object."""
     if isinstance(value, dict):
@@ -458,7 +483,8 @@ def _normalise_algorithm_snapshot(
     if not isinstance(snapshot, dict):
         return snapshot
     result = _normalise_queue_sentinels(snapshot)
-    inferred = result.get("algorithm") or algorithm
+    raw_algorithm = result.get("algorithm")
+    inferred = _canonical_algorithm_name(raw_algorithm, fallback=algorithm)
     # Topic inference alone is not enough to opt every explanatory/comparison
     # frame into the executable protocol.  Only frames that actually carry
     # algorithm state (or explicitly declare ``algorithm``) receive the
@@ -473,7 +499,10 @@ def _normalise_algorithm_snapshot(
     if inferred:
         if result.get("algorithm") != inferred:
             result["algorithm"] = inferred
-            repairs.append("algorithm_alias")
+            if inferred == "generic" and _text(raw_algorithm).strip().casefold() != "generic":
+                repairs.append("unsupported_algorithm_to_generic")
+            else:
+                repairs.append("algorithm_alias")
         if result.get("schema_version") != "algorithm-trace-v1":
             result["schema_version"] = "algorithm-trace-v1"
             repairs.append("algorithm_schema_version")

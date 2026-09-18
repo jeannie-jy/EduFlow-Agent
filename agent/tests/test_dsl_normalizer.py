@@ -200,6 +200,27 @@ def test_normalize_dsl_uses_versioned_algorithm_trace_queue_contract():
     AlgorithmState.model_validate(snapshot)
 
 
+def test_normalize_dsl_maps_unsupported_algorithm_name_to_generic_trace():
+    source = _legacy_dsl()
+    source["topic"] = "二分查找的逐步演示"
+    source["frames"][0]["state_snapshot"] = {
+        "algorithm": "binary_search",
+        "phase": "mechanism",
+        "dist": {},
+        "visited": [],
+        "queue": [],
+        "predecessor": {},
+    }
+
+    normalized = normalize_dsl(source)
+    snapshot = normalized["frames"][0]["state_snapshot"]
+
+    assert snapshot["schema_version"] == "algorithm-trace-v1"
+    assert snapshot["algorithm"] == "generic"
+    assert "unsupported_algorithm_to_generic" in normalized["normalization_report"]["repair_types"]
+    AlgorithmState.model_validate(snapshot)
+
+
 def test_algorithm_trace_schema_rejects_legacy_alias_after_normalization_boundary():
     source = _legacy_dsl()
     source["topic"] = "Dijkstra 最短路径"
