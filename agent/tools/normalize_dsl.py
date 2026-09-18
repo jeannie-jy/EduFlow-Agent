@@ -680,7 +680,39 @@ def _normalise_parameter(parameter: Any) -> dict[str, Any] | None:
     return item
 
 
-def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
+def _normalise_mindmap_node(value: Any, *, repairs: list[str] | None = None) -> dict[str, Any]:
+    """Convert legacy scalar mindmap nodes into the canonical node shape."""
+    if isinstance(value, dict):
+        node = deepcopy(value)
+    else:
+        node = {"name": _text(value)}
+        if repairs is not None:
+            repairs.append("mindmap_scalar_to_node")
+
+    if "name" not in node:
+        node["name"] = _text(node.get("label", node.get("id", "")))
+
+    raw_children = node.get("children", [])
+    if raw_children is None:
+        raw_children = []
+    elif not isinstance(raw_children, list):
+        raw_children = [raw_children]
+        if repairs is not None:
+            repairs.append("mindmap_children_to_list")
+    node["children"] = [
+        _normalise_mindmap_node(child, repairs=repairs)
+        for child in raw_children
+        if child is not None
+    ]
+    return node
+
+
+def _normalise_visual_object(
+    value: Any,
+    index: int,
+    *,
+    repairs: list[str] | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     item = deepcopy(value)
@@ -792,8 +824,28 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
                 if (canonical_edge := _canonical_edge(edge)) is not None:
                     edges.append(canonical_edge)
             item["edges"] = edges
-    elif object_type == "mindmap" and not isinstance(item.get("root"), dict):
-        item["root"] = {"label": _text(item.get("root"), item.get("label", ""))}
+    elif object_type == "mindmap":
+        root = _normalise_mindmap_node(
+            item.get("root", item.get("label", "")),
+            repairs=repairs,
+        )
+        raw_children = item.get("children")
+        if raw_children is None:
+            children = deepcopy(root["children"])
+        elif isinstance(raw_children, list):
+            children = [
+                _normalise_mindmap_node(child, repairs=repairs)
+                for child in raw_children
+                if child is not None
+            ]
+        else:
+            children = [_normalise_mindmap_node(raw_children, repairs=repairs)]
+            if repairs is not None:
+                repairs.append("mindmap_children_to_list")
+        if children and not root["children"]:
+            root["children"] = deepcopy(children)
+        item["root"] = root
+        item["children"] = children
     elif object_type == "code_block":
         if _text(item.get("language"), "text").casefold() in {"pseudocode", "pseudo"}:
             item["language"] = "text"
@@ -895,7 +947,11 @@ def _normalise_frame(
     item["visual_objects"] = [
         normalised
         for index, value in enumerate(visual_objects if isinstance(visual_objects, list) else [])
-        if (normalised := _normalise_visual_object(value, index)) is not None
+        if (normalised := _normalise_visual_object(
+            value,
+            index,
+            repairs=repairs if repairs is not None else [],
+        )) is not None
     ]
     _inject_explicit_graphs(item, repairs=repairs if repairs is not None else [])
     if "state_snapshot" in item:

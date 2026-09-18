@@ -100,6 +100,34 @@ def test_normalize_dsl_preserves_chart_as_renderable_table_or_card():
     RenderScript.model_validate(normalized)
 
 
+def test_normalize_dsl_canonicalizes_scalar_mindmap_children():
+    source = _legacy_dsl()
+    source["frames"][0]["visual_objects"] = [{
+        "id": "mindmap_1",
+        "type": "mindmap",
+        "root": {"label": "不可达与无穷大"},
+        "children": [
+            "不可达节点保持无穷大",
+            {"label": "松弛只更新可达邻居", "children": ["仅处理可达节点"]},
+        ],
+    }]
+
+    normalized = normalize_dsl(source)
+    mindmap = normalized["frames"][0]["visual_objects"][0]
+
+    assert [child["name"] for child in mindmap["children"]] == [
+        "不可达节点保持无穷大",
+        "松弛只更新可达邻居",
+    ]
+    assert mindmap["children"][1]["children"][0]["name"] == "仅处理可达节点"
+    assert mindmap["root"]["children"] == mindmap["children"]
+    assert all(isinstance(child, dict) for child in mindmap["children"])
+    report = normalized["normalization_report"]
+    assert report["applied"] is True
+    assert "mindmap_scalar_to_node" in report["repair_types"]
+    RenderScript.model_validate(normalized)
+
+
 def test_normalize_dsl_canonicalizes_scalar_empty_queue_sentinels():
     source = _legacy_dsl()
     source["frames"][0]["state_snapshot"].update({
