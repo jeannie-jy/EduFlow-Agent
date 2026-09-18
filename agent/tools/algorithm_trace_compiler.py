@@ -6,10 +6,11 @@ state.  This module is the boundary between those concerns:
 
 * an ``events`` list is treated as an operation proposal and checked against
   the deterministic simulator;
-* legacy artifacts without events are aligned to the simulator only when all
-  supplied semantic hints agree with the derived state;
-* a conflicting hint is never silently repaired.  The original snapshot is
-  retained and a hard diagnostic is emitted in the compilation report.
+* legacy artifacts without events are aligned to the simulator whenever the
+  frame can be mapped to a deterministic state;
+* conflicting hints and invalid event proposals are retained only in the
+  compilation warnings.  The deterministic snapshot replaces executable
+  fields so model drift cannot make the final artifact inconsistent.
 
 The compiler migrates the graph algorithms with deterministic simulators
 (Dijkstra, Bellman-Ford, BFS and DFS). Other topics continue through the
@@ -539,15 +540,21 @@ def compile_algorithm_trace(
             continue
         event_issues = _event_issues(snapshot, graph, algorithm=algorithm)
         if event_issues:
-            report["issues"].extend({"frame_id": frame.get("frame_id"), "description": issue} for issue in event_issues)
-            continue
+            # Events are model-authored presentation proposals.  The
+            # deterministic simulator supplies the executable event list in
+            # ``_merge_expected`` below, so an invalid proposal must not leave
+            # an otherwise compilable frame in a hard-failure state.
+            report["warnings"].extend(
+                {"frame_id": frame.get("frame_id"), "description": issue}
+                for issue in event_issues
+            )
         issues = _compatible_hint(snapshot, expected, algorithm=algorithm)
         # visited/queue are derived presentation hints.  The deterministic
         # simulator is authoritative and replaces these fields below; keep a
         # mismatch auditable as a warning instead of turning an otherwise valid
         # trace into a hard failure (e.g. a summary frame emitted after the
-        # final dequeue).  Distances, predecessors and explicit events remain
-        # hard semantic claims.
+        # final dequeue).  Distances, predecessors and explicit events are
+        # replaced by the deterministic state together with those warnings.
         soft_prefixes = ("visited conflicts", "processed conflicts", "queue order conflicts", "queue entries conflict")
         soft_issues = [issue for issue in issues if issue.startswith(soft_prefixes)]
         hard_issues = [issue for issue in issues if issue not in soft_issues]
@@ -556,8 +563,13 @@ def compile_algorithm_trace(
             for issue in soft_issues
         )
         if hard_issues:
-            report["issues"].extend({"frame_id": frame.get("frame_id"), "description": issue} for issue in hard_issues)
-            continue
+            # Distances and predecessors are executable fields too.  Replace
+            # them with the simulator result while preserving the mismatch as
+            # an auditable warning instead of failing the whole generation.
+            report["warnings"].extend(
+                {"frame_id": frame.get("frame_id"), "description": issue}
+                for issue in hard_issues
+            )
         frame["state_snapshot"] = _merge_expected(snapshot, expected)
         report["frames_compiled"] += 1
         if isinstance(snapshot.get("events"), list) and snapshot["events"]:

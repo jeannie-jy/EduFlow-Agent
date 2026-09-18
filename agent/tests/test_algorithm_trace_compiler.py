@@ -69,14 +69,30 @@ def test_compiler_derives_canonical_dijkstra_state_and_events():
     assert final["events"]
 
 
-def test_compiler_does_not_repair_conflicting_semantic_hint():
+def test_compiler_repairs_conflicting_semantic_hint_and_records_warning():
     dsl = _dijkstra_dsl()
     dsl["frames"][1]["state_snapshot"]["dist"]["a"] = 99
     result = compile_algorithm_trace(normalize_dsl(dsl))
 
     frame = result["frames"][1]
-    assert frame["state_snapshot"]["dist"]["a"] == 99
-    assert result["algorithm_trace_compilation"]["issues"]
+    assert frame["state_snapshot"]["dist"]["a"] == 4
+    report = result["algorithm_trace_compilation"]
+    assert report["issues"] == []
+    assert any("dist[a] conflicts" in warning["description"] for warning in report["warnings"])
+
+
+def test_compiler_replaces_invalid_event_proposal_with_simulator_events():
+    dsl = _dijkstra_dsl()
+    dsl["frames"][2]["state_snapshot"]["events"][1]["target"] = "missing"
+    result = compile_algorithm_trace(normalize_dsl(dsl))
+
+    report = result["algorithm_trace_compilation"]
+    assert report["issues"] == []
+    assert any("non-existent edge" in warning["description"] for warning in report["warnings"])
+    assert all(
+        event.get("target") != "missing"
+        for event in result["frames"][2]["state_snapshot"]["events"]
+    )
 
 
 def test_compiler_reads_legacy_nested_bellman_graph_data():
