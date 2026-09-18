@@ -467,6 +467,10 @@ def compile_algorithm_trace(
         if compile_sorting
         else deepcopy(dsl)
     )
+    # Compilation may run more than once as normalization/finalization repairs
+    # model-authored state.  Never carry a report produced for an earlier
+    # interpretation (for example a BFS example later normalized to ``generic``).
+    result.pop("algorithm_trace_compilation", None)
     frames = result["frames"]
     algorithm = _algorithm(result.get("topic"), frames)
     if algorithm not in {"dijkstra", "bellman_ford", "bfs", "dfs"}:

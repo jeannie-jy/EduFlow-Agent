@@ -156,3 +156,28 @@ def test_compiler_migrates_bfs_and_dfs_traversal_state():
         snapshot = result["frames"][0]["state_snapshot"]
         assert snapshot["algorithm"] == algorithm
         assert snapshot["visited"] == order[:1]
+
+
+def test_compiler_clears_stale_report_after_trace_is_normalized_to_generic():
+    dsl = {
+        "topic": "讲解队列",
+        "frames": [{
+            "frame_id": "f_001",
+            "title": "BFS 是队列的应用",
+            "visual_objects": [{"id": "queue", "type": "array", "cells": []}],
+            "state_snapshot": {
+                "schema_version": "algorithm-trace-v1",
+                "algorithm": "generic",
+                "queue": [],
+            },
+        }],
+        "algorithm_trace_compilation": {
+            "applied": False,
+            "algorithm": "bfs",
+            "issues": ["primary graph with executable edges was not found"],
+        },
+    }
+
+    result = compile_algorithm_trace(normalize_dsl(dsl))
+
+    assert "algorithm_trace_compilation" not in result
