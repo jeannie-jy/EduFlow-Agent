@@ -16,6 +16,7 @@ from .algorithm_trace_compiler import compile_algorithm_trace
 from .design_parameters import (
     design_parameters,
 )
+from .finalize_dsl import finalize_dsl
 from .generate_asset import (
     generate_asset,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "compile_sorting_trace",
     # design_parameters
     "design_parameters",
+    "finalize_dsl",
     # generate_asset
     "generate_asset",
     # normalize_dsl

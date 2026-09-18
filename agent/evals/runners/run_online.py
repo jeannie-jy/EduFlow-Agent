@@ -173,6 +173,7 @@ async def run_online_cases(
                         "case_id": case.case_id,
                         "raw_coder_output": metadata.get("raw_coder_output", {}),
                         "normalization_report": metadata.get("normalization_report", {}),
+                        "finalization_report": metadata.get("finalization_report", {}),
                         "normalized_artifact": artifact,
                         "final_decision": result.get("final_decision", {}),
                     }
@@ -325,6 +326,29 @@ async def run_online_cases(
         summary["normalization_repair_count"] = repair_count
         summary["normalization_repair_rate"] = round(
             repaired_cases / len(normalization_reports), 4
+        )
+    finalization_reports = [
+        item.get("generator_metadata", {}).get("finalization_report")
+        for item in results
+        if isinstance(item.get("generator_metadata"), dict)
+    ]
+    finalization_reports = [
+        report for report in finalization_reports if isinstance(report, dict) and report
+    ]
+    if finalization_reports:
+        fallback_cases = sum(
+            report.get("mode") in {"targeted_fallback", "artifact_fallback"}
+            for report in finalization_reports
+        )
+        summary["finalization_case_count"] = len(finalization_reports)
+        summary["finalization_fallback_case_count"] = fallback_cases
+        summary["finalization_fallback_rate"] = round(
+            fallback_cases / len(finalization_reports), 4
+        )
+        summary["finalization_repair_count"] = sum(
+            int(report.get("repair_count", 0))
+            for report in finalization_reports
+            if isinstance(report.get("repair_count", 0), (int, float))
         )
     compilation_reports = [
         item.get("generator_metadata", {}).get("algorithm_trace_compilation")

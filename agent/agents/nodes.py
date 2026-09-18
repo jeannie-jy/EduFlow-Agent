@@ -18,9 +18,7 @@ from copy import deepcopy
 from typing import Any
 
 from config import get_settings
-from tools.algorithm_trace_compiler import compile_algorithm_trace
-from tools.normalize_dsl import normalize_dsl
-from tools.validate_dsl import stabilize_algorithm_trace
+from tools.finalize_dsl import finalize_dsl
 
 from .llm_client import call_llm_structured
 from .prompts import (
@@ -1359,12 +1357,32 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                     "attributes": {"type": "object"},
                                     # 卡片
                                     "title": {"type": "string"},
-                                    "content": {"type": "object"},
+                                    "content": {"type": "string", "maxLength": 1200},
                                     # 时间线
                                     "events": {"type": "array", "maxItems": 16},
                                     # 思维导图
-                                    "root": {"type": "string"},
-                                    "children": {"type": "array", "maxItems": 16},
+                                    "root": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "label": {"type": "string"},
+                                        },
+                                    },
+                                    "children": {
+                                        "type": "array",
+                                        "maxItems": 16,
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "label": {"type": "string"},
+                                                "children": {
+                                                    "type": "array",
+                                                    "items": {"type": "object"},
+                                                },
+                                            },
+                                        },
+                                    },
                                     # 通用
                                     "position": {"type": "object"},
                                     "style": {"type": "object"},
@@ -1642,16 +1660,15 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             state.get("locked_frame_ids", []),
         )
 
-    # Keep the persisted artifact on the same canonical contract as the
-    # Pydantic RenderScript schema.  This also handles aliases emitted by
-    # older prompts without weakening deterministic validation.
-    dsl = normalize_dsl(dsl)
-    dsl = stabilize_algorithm_trace(dsl)
-    dsl = compile_algorithm_trace(
+    dsl = _sanitize_eval_forbidden_claims(dsl, constraints=constraints)
+    # Never expose a model-authored artifact directly.  The final boundary
+    # canonicalizes legacy shapes, compiles executable algorithm state and
+    # deterministically replaces an irreparable frame with renderable text.
+    dsl = finalize_dsl(
         dsl,
         compile_sorting=not bool(regeneration_scope),
+        required_concepts=_required_concepts(constraints),
     )
-    dsl = _sanitize_eval_forbidden_claims(dsl, constraints=constraints)
 
     frame_count = len(dsl["frames"])
     logger.info("Coder: 完成 | frames=%d", frame_count)
@@ -1902,6 +1919,9 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         # it records whether state came from model events or graph replay and
         # exposes any rejected semantic hint without weakening the gate.
         quality_report["algorithm_trace_compilation"] = compilation_report
+    finalization_report = dsl.get("finalization_report")
+    if isinstance(finalization_report, dict):
+        quality_report["finalization"] = finalization_report
 
     logger.info("Quality: 完成 | overall=%.2f | blocking=%s | issues=%d | llm=%s",
                 final_overall, is_blocking, len(issues), "yes" if llm_scores else "no")
@@ -1915,6 +1935,28 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
 # ============================================================================
 # Reflection Node (Phase 1: 基础实现)
 # ============================================================================
+
+
+def _reflection_issue_frame_ids(
+    issues: list[Any],
+    frames: list[dict[str, Any]],
+) -> set[str]:
+    """Resolve explicit frame ids and Pydantic ``frames.N`` paths."""
+    frame_ids: set[str] = set()
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        explicit = issue.get("frame_id")
+        if explicit:
+            frame_ids.add(str(explicit))
+        description = str(issue.get("description", ""))
+        for match in re.finditer(r"frames(?:\.|\[)(\d+)", description):
+            index = int(match.group(1))
+            if 0 <= index < len(frames):
+                frame_id = frames[index].get("frame_id")
+                if frame_id:
+                    frame_ids.add(str(frame_id))
+    return frame_ids
 
 
 async def reflection_node(state: AgentState) -> dict[str, Any]:
@@ -1941,13 +1983,15 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
     # truncation.  The repair only needs the failing issues and the affected
     # frame excerpts; the durable state remains the source of truth.
     if compact_eval:
-        issue_frame_ids = {
-            str(issue.get("frame_id"))
-            for issue in quality_report.get("issues", [])
-            if isinstance(issue, dict) and issue.get("frame_id")
-        }
+        dsl_frames = [
+            frame for frame in dsl.get("frames", []) if isinstance(frame, dict)
+        ]
+        issue_frame_ids = _reflection_issue_frame_ids(
+            quality_report.get("issues", []),
+            dsl_frames,
+        )
         candidate_frames = [
-            frame for frame in dsl.get("frames", [])
+            frame for frame in dsl_frames
             if not issue_frame_ids or str(frame.get("frame_id")) in issue_frame_ids
         ][:4]
         current_dsl_for_prompt = {
@@ -2068,9 +2112,14 @@ async def reflection_node(state: AgentState) -> dict[str, Any]:
     if not updated_frames_map and accepted_insertions == 0:
         new_dsl = dsl
     else:
-        new_dsl = normalize_dsl({**dsl, "frames": new_frames})
-        new_dsl = stabilize_algorithm_trace(new_dsl)
-        new_dsl = compile_algorithm_trace(new_dsl)
+        candidate_dsl = _sanitize_eval_forbidden_claims(
+            {**dsl, "frames": new_frames},
+            constraints=constraints,
+        )
+        new_dsl = finalize_dsl(
+            candidate_dsl,
+            required_concepts=_required_concepts(constraints),
+        )
 
     # 更新修订历史
     history = state.get("revision_history", [])

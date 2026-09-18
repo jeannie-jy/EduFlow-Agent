@@ -729,6 +729,18 @@ class TestCoderNode:
 # ============================================================================
 
 
+def test_reflection_resolves_pydantic_frame_paths_for_targeted_repair():
+    from agents.nodes import _reflection_issue_frame_ids
+
+    frames = [{"frame_id": f"f_{index:03d}"} for index in range(1, 9)]
+    issues = [{
+        "type": "schema_error",
+        "description": "frames.7.visual_objects.0.mindmap.children.0 invalid",
+    }]
+
+    assert _reflection_issue_frame_ids(issues, frames) == {"f_008"}
+
+
 class TestQualityNode:
     """Quality Agent 节点测试。"""
 

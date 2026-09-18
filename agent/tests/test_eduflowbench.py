@@ -452,6 +452,11 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
             "usage": {"input": 10, "output": 20},
             "cost_usd": 0.01,
             "metadata": {
+                "finalization_report": {
+                    "applied": False,
+                    "mode": "canonical",
+                    "repair_count": 0,
+                },
                 "quality_report": {
                     "overall_score": 0.8,
                     "normalization": {
@@ -477,6 +482,8 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
     ] == 0.8
     assert report["summary"]["normalization_repaired_cases"] == 4
     assert report["summary"]["normalization_repair_count"] == 8
+    assert report["summary"]["finalization_case_count"] == 4
+    assert report["summary"]["finalization_fallback_case_count"] == 0
     # Each case writes the normalized artifact plus an audit bundle containing
     # raw output, normalization metadata and the final decision.
     assert len(list(tmp_path.glob("*.json"))) == 8
@@ -485,6 +492,7 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
         "case_id",
         "raw_coder_output",
         "normalization_report",
+        "finalization_report",
         "normalized_artifact",
         "final_decision",
     }

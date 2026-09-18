@@ -54,11 +54,12 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
     # deterministic sorting compiler here so the model never becomes the
     # source of truth for intermediate or final array states.
     if case.oracle is not None and case.oracle.kind == "sorted_array":
-        from tools.algorithm_trace_compiler import compile_algorithm_trace
+        from tools.finalize_dsl import finalize_dsl
 
-        artifact = compile_algorithm_trace(
+        artifact = finalize_dsl(
             artifact,
             algorithm_input=case.oracle.input,
+            required_concepts=case.expected.required_concepts,
         )
     # The production graph intentionally has deterministic fallbacks for user
     # experience.  An online benchmark must not count those fallbacks as a
@@ -84,6 +85,7 @@ async def generate_workflow_case(case: EvalCase) -> dict[str, Any]:
         "metadata": {
             "raw_coder_output": state.get("raw_coder_output") or {},
             "normalization_report": artifact.get("normalization_report") or {},
+            "finalization_report": artifact.get("finalization_report") or {},
             "quality_report": state.get("quality_report") or {},
             "algorithm_trace_compilation": artifact.get("algorithm_trace_compilation") or {},
             "sorting_trace_compilation": artifact.get("sorting_trace_compilation") or {},
