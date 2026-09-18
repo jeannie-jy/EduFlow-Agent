@@ -534,6 +534,18 @@ def _normalise_algorithm_snapshot(
         for alias in ("prev", "predecessors", "parents", "parent"):
             result.pop(alias, None)
 
+    if canonical_algorithm and "edge_scan" in result:
+        raw_edge_scan = result.get("edge_scan")
+        scan_items = raw_edge_scan if isinstance(raw_edge_scan, list) else [raw_edge_scan]
+        canonical_scan = [
+            entry
+            for item in scan_items
+            if (entry := _edge_scan_entry(item)) is not None
+        ]
+        if canonical_scan != raw_edge_scan:
+            repairs.append("edge_scan_to_canonical_objects")
+        result["edge_scan"] = canonical_scan
+
     queue_key = next((key for key in _QUEUE_STATE_KEYS if key in result), None)
     if queue_key is not None and canonical_algorithm:
         raw_queue = result.get(queue_key)

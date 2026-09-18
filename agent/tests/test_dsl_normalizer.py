@@ -221,6 +221,29 @@ def test_normalize_dsl_maps_unsupported_algorithm_name_to_generic_trace():
     AlgorithmState.model_validate(snapshot)
 
 
+def test_normalize_dsl_strips_model_extensions_from_edge_scan_entries():
+    source = _legacy_dsl()
+    source["topic"] = "Bellman-Ford 负权边"
+    source["frames"][0]["state_snapshot"] = {
+        "algorithm": "bellman_ford",
+        "phase": "round",
+        "dist": {"A": 0, "B": 4},
+        "visited": [],
+        "queue": [],
+        "predecessor": {"A": None, "B": "A"},
+        "edge_scan": [
+            {"source": "A", "target": "B", "weight": 4, "relaxed": False},
+        ],
+    }
+
+    normalized = normalize_dsl(source)
+    snapshot = normalized["frames"][0]["state_snapshot"]
+
+    assert snapshot["edge_scan"] == [{"source": "A", "target": "B", "weight": 4}]
+    assert "edge_scan_to_canonical_objects" in normalized["normalization_report"]["repair_types"]
+    AlgorithmState.model_validate(snapshot)
+
+
 def test_algorithm_trace_schema_rejects_legacy_alias_after_normalization_boundary():
     source = _legacy_dsl()
     source["topic"] = "Dijkstra 最短路径"
