@@ -13,6 +13,7 @@ from evals.graders.llm_judge import (
     JUDGE_PROMPT_VERSION,
     JudgeResult,
     build_judge_request,
+    normalize_judge_payload,
 )
 from evals.models import EvalCase
 
@@ -109,6 +110,7 @@ async def judge_workflow_case(
             "deterministic_passed": bool(deterministic.get("passed")),
         }
     )
+    payload = normalize_judge_payload(payload)
     judge = JudgeResult.model_validate(payload).validated_criteria()
     input_tokens = response.usage.prompt_tokens if response.usage else 0
     output_tokens = response.usage.completion_tokens if response.usage else 0

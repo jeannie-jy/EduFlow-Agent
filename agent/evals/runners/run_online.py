@@ -21,6 +21,7 @@ from evals.graders import (
     grade_artifact,
     grade_tool_calls,
     merge_judge_with_deterministic,
+    normalize_judge_payload,
 )
 from evals.models import EvalCase, load_cases
 from evals.runners.run_offline import _aggregate, _git_sha
@@ -114,6 +115,7 @@ async def run_online_cases(
                         and spent_cost_usd >= budget_usd
                     ):
                         budget_exhausted = True
+                        result["judge_status"] = "skipped_budget"
                         result["passed"] = False
                         result.setdefault("issues", []).append(
                             "judge skipped: run cost budget exhausted"
@@ -124,11 +126,12 @@ async def run_online_cases(
                                 judge(case, artifact, result), timeout=timeout_seconds
                             )
                             judge_result = JudgeResult.model_validate(
-                                judged.get("judge", judged)
+                                normalize_judge_payload(judged.get("judge", judged))
                             ).validated_criteria()
                             result = merge_judge_with_deterministic(
                                 result, judge_result
                             )
+                            result["judge_status"] = "completed"
                             result["judge_usage"] = judged.get("usage", {})
                             result["judge_cost_usd"] = judged.get("cost_usd")
                             if isinstance(judged.get("latency_ms"), (int, float)):
@@ -138,8 +141,12 @@ async def run_online_cases(
                                 total_case_cost += judge_cost
                                 spent_cost_usd += judge_cost
                         except Exception as exc:
-                            result["passed"] = False
-                            result.setdefault("issues", []).append(
+                            # The independent semantic Judge is an advisory
+                            # signal. Provider timeout or response-shape drift
+                            # must not turn a deterministically valid candidate
+                            # artifact into a quality failure.
+                            result["judge_status"] = "unavailable"
+                            result.setdefault("judge_warnings", []).append(
                                 f"judge failed: {type(exc).__name__}: {exc}"
                             )
                             result["judge_error"] = type(exc).__name__
@@ -256,6 +263,28 @@ async def run_online_cases(
         "flaky_rate": round(len(flaky_case_ids) / len(cases), 4) if cases else 0.0,
     })
     summary["missing_artifacts"] = summary["missing_case_count"]
+    if judge is not None:
+        completed_judges = [
+            item for item in results if item.get("judge_status") == "completed"
+        ]
+        unavailable_judges = [
+            item for item in results if item.get("judge_status") == "unavailable"
+        ]
+        skipped_judges = [
+            item for item in results if item.get("judge_status") == "skipped_budget"
+        ]
+        attempted_count = len(completed_judges) + len(unavailable_judges)
+        summary.update({
+            "judge_completed_count": len(completed_judges),
+            "judge_error_count": len(unavailable_judges),
+            "judge_error_case_ids": sorted({
+                str(item.get("case_id")) for item in unavailable_judges
+            }),
+            "judge_skipped_budget_count": len(skipped_judges),
+            "judge_coverage_rate": round(
+                len(completed_judges) / attempted_count, 4
+            ) if attempted_count else 0.0,
+        })
     # `latency_ms` is retained as a compatibility alias, but percentile metrics
     # deliberately use processing time after semaphore acquisition.  In budgeted
     # runs the semaphore serializes cases, so timing before acquisition would

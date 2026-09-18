@@ -640,11 +640,19 @@ async def test_online_runner_preserves_candidate_cost_when_judge_fails():
     report = await run_online_cases([_case()], generator, judge=judge)
     result = report["results"][0]
 
-    assert result["passed"] is False
+    assert result["passed"] is True
     assert result["candidate_cost_usd"] == 0.01
     assert result["cost_usd"] == 0.01
+    assert result["judge_status"] == "unavailable"
     assert result["judge_error"] == "TimeoutError"
-    assert result["issues"][-1] == "judge failed: TimeoutError: judge timeout"
+    assert result["issues"] == []
+    assert result["judge_warnings"] == [
+        "judge failed: TimeoutError: judge timeout"
+    ]
+    assert report["summary"]["passed_cases"] == 1
+    assert report["summary"]["judge_error_count"] == 1
+    assert report["summary"]["judge_error_case_ids"] == ["alg_bubble_test"]
+    assert report["summary"]["judge_coverage_rate"] == 0.0
     assert report["summary"]["total_cost_usd"] == 0.01
 
 

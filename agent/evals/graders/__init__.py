@@ -2,7 +2,11 @@
 
 from .deterministic import grade_artifact
 from .human_calibration import calibration_report
-from .llm_judge import JudgeResult, merge_judge_with_deterministic
+from .llm_judge import (
+    JudgeResult,
+    merge_judge_with_deterministic,
+    normalize_judge_payload,
+)
 from .retrieval import grade_retrieval
 from .tools import grade_tool_calls
 
@@ -13,4 +17,5 @@ __all__ = [
     "grade_retrieval",
     "grade_tool_calls",
     "merge_judge_with_deterministic",
+    "normalize_judge_payload",
 ]

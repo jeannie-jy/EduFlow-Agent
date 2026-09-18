@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -39,6 +40,36 @@ class JudgeResult(BaseModel):
                 f"judge criteria mismatch: missing={sorted(missing)}, unknown={sorted(unknown)}"
             )
         return self
+
+
+def normalize_judge_payload(payload: Any) -> dict[str, Any]:
+    """Repair harmless metadata nesting drift in an otherwise valid judge reply.
+
+    Some JSON-mode providers place top-level result metadata inside ``criteria``.
+    Those fields are not rubric criteria and would otherwise be parsed as
+    ``CriterionScore`` values.  Move only contract-defined metadata; unknown
+    criteria remain untouched so ``validated_criteria`` still rejects them.
+    """
+
+    if not isinstance(payload, dict):
+        raise TypeError("judge payload must be an object")
+    result = deepcopy(payload)
+    criteria = result.get("criteria")
+    if not isinstance(criteria, dict):
+        return result
+    criteria = dict(criteria)
+    for field in (
+        "case_id",
+        "prompt_version",
+        "judge_model",
+        "overall_score",
+        "deterministic_passed",
+    ):
+        nested = criteria.pop(field, None)
+        if field not in result and nested is not None:
+            result[field] = nested
+    result["criteria"] = criteria
+    return result
 
 
 def build_judge_request(case: dict[str, Any], artifact: dict[str, Any]) -> dict[str, Any]:
