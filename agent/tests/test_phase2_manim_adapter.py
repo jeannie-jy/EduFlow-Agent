@@ -108,6 +108,56 @@ class TestMappingTables:
 class TestManimScriptGenerator:
     """脚本生成器测试。"""
 
+    def test_table_cells_are_stringified_for_manim_text(self):
+        """Numeric/None table cells must not crash Manim Text at render time."""
+        dsl = {
+            "project_id": "table_values",
+            "topic": "Table values",
+            "frames": [
+                {
+                    "frame_id": "f_001",
+                    "title": "Distance table",
+                    "visual_objects": [
+                        {
+                            "id": "dist",
+                            "type": "table",
+                            "headers": ["vertex", "distance"],
+                            "rows": [["A", 0], ["B", None]],
+                        }
+                    ],
+                    "animations": [],
+                }
+            ],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "[['vertex', 'distance'], ['A', '0'], ['B', '—']]" in script
+
+    def test_table_without_headers_is_rectangular(self):
+        dsl = {
+            "project_id": "table_rows",
+            "topic": "Table rows",
+            "frames": [
+                {
+                    "frame_id": "f_001",
+                    "title": "Rows",
+                    "visual_objects": [
+                        {
+                            "id": "rows",
+                            "type": "table",
+                            "rows": [[1, 2], [3]],
+                        }
+                    ],
+                    "animations": [],
+                }
+            ],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "[['1', '2'], ['3', '']]" in script
+
     def test_generate_empty_dsl(self, empty_dsl):
         gen = ManimScriptGenerator(empty_dsl)
         script = gen.generate()

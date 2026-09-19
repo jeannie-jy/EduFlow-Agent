@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from adapters.manim_validator import has_errors, validate_script
+from adapters.manim_adapter import convert_dsl_to_manim
 
 GOLDEN_DIR = Path(__file__).parent / "fixtures" / "manim_golden"
 
@@ -55,3 +56,40 @@ def test_golden_script_renders_mp4(script_path: Path, tmp_path):
     ]
     assert mp4s, f"{script_path.name} 渲染完成但未产出 MP4"
     assert max(p.stat().st_size for p in mp4s) > 0, f"{script_path.name} 的 MP4 为空文件"
+
+
+def test_generated_numeric_table_renders_mp4(tmp_path):
+    """Generated algorithm tables may contain ints/None, not only strings."""
+    dsl = {
+        "project_id": "numeric-table",
+        "topic": "Numeric table",
+        "frames": [
+            {
+                "frame_id": "f_001",
+                "title": "Distance",
+                "visual_objects": [
+                    {
+                        "id": "dist",
+                        "type": "table",
+                        "headers": ["vertex", "distance"],
+                        "rows": [["A", 0], ["B", None]],
+                    }
+                ],
+                "animations": [],
+            }
+        ],
+    }
+    script_path = tmp_path / "main.py"
+    script_path.write_text(convert_dsl_to_manim(dsl)["main.py"], encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "manim", str(script_path), "-ql",
+         "--format=mp4", f"--media_dir={tmp_path / 'videos'}"],
+        capture_output=True, text=True, timeout=600,
+    )
+    assert result.returncode == 0, f"numeric table 渲染失败:\n{result.stderr[-3000:]}"
+    mp4s = [
+        p for p in tmp_path.rglob("*.mp4")
+        if "partial_movie_files" not in str(p)
+    ]
+    assert mp4s and max(p.stat().st_size for p in mp4s) > 0

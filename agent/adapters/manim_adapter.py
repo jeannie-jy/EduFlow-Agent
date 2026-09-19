@@ -522,11 +522,12 @@ class ManimScriptGenerator:
                     )
 
             elif obj_type == "table":
-                rows_data = vo.get("rows", [])
+                rows_data = vo.get("rows", []) or []
                 headers = vo.get("headers", [])
+                table_data = _normalize_table_data(headers, rows_data)
                 code_lines.append(
                     f"        {var_name} = Table("
-                    f"[{headers!r}] + {rows_data!r}, element_to_mobject=Text, "
+                    f"{table_data!r}, element_to_mobject=Text, "
                     "element_to_mobject_config={'font': EDUFLOW_CJK_FONT}"
                     f").scale(0.5).move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
@@ -778,6 +779,37 @@ def _has_cjk(s: str) -> bool:
         ):
             return True
     return False
+
+
+def _stringify_table_row(row: Any) -> list[str]:
+    """Convert a DSL table row to values accepted by Manim ``Text``.
+
+    Manim's ``Table`` forwards every cell to ``element_to_mobject``.  The
+    generated exporter uses ``Text`` there, whose constructor expects a
+    string and calls ``.find`` on it.  Algorithm DSLs commonly provide
+    numeric distances/weights (and ``None`` for infinity), so passing the
+    raw values makes the render fail with ``AttributeError: 'int' object has
+    no attribute 'find'``.  Normalising at generation time keeps the
+    generated script self-contained and preserves readable infinity cells.
+    """
+    if isinstance(row, (list, tuple)):
+        values = row
+    else:
+        values = [row]
+    return ["—" if value is None else str(value) for value in values]
+
+
+def _normalize_table_data(headers: Any, rows: Any) -> list[list[str]]:
+    """Build a rectangular, non-empty table for Manim's ``Table`` mobject."""
+    normalized_headers = _stringify_table_row(headers) if headers else []
+    if not isinstance(rows, (list, tuple)):
+        rows = [rows] if rows is not None else []
+    normalized_rows = [_stringify_table_row(row) for row in rows]
+    table_data = ([normalized_headers] if normalized_headers else []) + normalized_rows
+    if not table_data:
+        return [[""]]
+    width = max(len(row) for row in table_data)
+    return [row + [""] * (width - len(row)) for row in table_data]
 
 
 def _strip_latex(s: str) -> str:
