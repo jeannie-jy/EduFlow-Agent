@@ -249,3 +249,8 @@ result.
 - Online model generation and LLM judging use an explicit opt-in runner or a separately and manually dispatched workflow.
 - Every report records model, prompt, workflow, and source versions.
 - Generated reports are build artifacts and are not committed unless selected as a release baseline.
+
+Selected immutable evidence is indexed under
+[`release_baselines/`](release_baselines/README.md). Each baseline records its
+Git revision, dataset hash, model configuration, gate results, limitations, and
+checksums for the committed raw reports.
