@@ -158,6 +158,55 @@ class TestManimScriptGenerator:
 
         assert "[['1', '2'], ['3', '']]" in script
 
+    def test_missing_positions_use_readable_frame_layout(self):
+        dsl = {
+            "project_id": "layout",
+            "topic": "Layout",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [
+                    {"id": "left", "type": "node"},
+                    {"id": "right", "type": "code_block", "code": "x = 1"},
+                ],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "move_to(np.array([-3.0, 0.0, 0]))" in script
+        assert "move_to(np.array([3.0, 0.0, 0]))" in script
+
+    def test_graph_objects_render_structure_and_state(self):
+        dsl = {
+            "project_id": "graph",
+            "topic": "Graph",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{
+                    "id": "g",
+                    "type": "graph",
+                    "nodes": [{"id": "A", "label": "A"}, {"id": "B", "label": "B"}],
+                    "edges": [{"source": "A", "target": "B", "weight": 2}],
+                }],
+                "state_snapshot": {
+                    "source": "A",
+                    "visited": ["A"],
+                    "queue": [{"vertex": "B", "priority": 2}],
+                    "dist": {"A": 0, "B": None},
+                },
+                "animations": [{"type": "appear", "target": "g"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "g_0 = VGroup()" in script
+        assert "g_0_edge_0 = Arrow" in script
+        assert "d=∞" in script
+        assert "fill_color='#2ECC71'" in script
+        compile(script, "<generated-manim>", "exec")
+
     def test_generate_empty_dsl(self, empty_dsl):
         gen = ManimScriptGenerator(empty_dsl)
         script = gen.generate()
@@ -190,6 +239,7 @@ class TestManimScriptGenerator:
         assert "next_section" in script, "应包含 next_section 调用"
         assert "f_001" in script
         assert "f_002" in script
+        assert "FadeOut(*self.mobjects), run_time=0.25" in script
 
     def test_narration_generates_subtitle(self, minimal_dsl):
         gen = ManimScriptGenerator(minimal_dsl)
@@ -197,6 +247,24 @@ class TestManimScriptGenerator:
         assert "subtitle.to_edge(DOWN)" in script
         assert "FadeIn(subtitle)" in script
         assert "FadeOut(subtitle)" in script
+
+    def test_long_narration_subtitle_is_wrapped_and_scaled(self):
+        dsl = {
+            "project_id": "subtitle",
+            "topic": "Subtitle",
+            "frames": [{
+                "frame_id": "f_001",
+                "narration": "这是一个很长的字幕内容，用于验证视频字幕会自动换行并限制在画布内部，不会因为文字太长而跑出边框。",
+                "visual_objects": [],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "\\n" in script
+        assert "subtitle.scale_to_fit_width(12.5)" in script
+        assert "subtitle.scale_to_fit_height(1.25)" in script
 
     def test_special_characters_in_topic(self):
         """话题包含特殊字符应被安全处理。"""

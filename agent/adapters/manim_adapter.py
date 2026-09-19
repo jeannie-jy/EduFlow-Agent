@@ -63,7 +63,7 @@ MOBJECT_MAP: dict[str, dict[str, Any]] = {
     },
     "graph": {
         "class": "Graph",
-        "import": "from manim import Graph, Text",
+        "import": "from manim import Arrow, Circle, Graph, Text, VGroup",
         "args": "",
         "needs_label": False,  # Graph 自带标签
     },
@@ -158,6 +158,19 @@ MANIM_X_LIMITS = (-7.0, 7.0)
 MANIM_Y_LIMITS = (-4.0, 4.0)
 MAX_GENERATED_LABEL_CHARS = 20
 MAX_GENERATED_NARRATION_CHARS = 200
+MAX_SUBTITLE_LINE_CHARS = 32
+MAX_SUBTITLE_HEIGHT = 1.25
+
+
+def _wrap_subtitle_text(text: str, width: int = MAX_SUBTITLE_LINE_CHARS) -> str:
+    """Wrap narration into bounded lines so subtitles stay inside the frame."""
+    normalized = " ".join(str(text).split())
+    if not normalized:
+        return ""
+    return "\n".join(
+        normalized[index : index + width]
+        for index in range(0, len(normalized), width)
+    )
 
 
 def _map_dsl_position(position: dict[str, Any]) -> tuple[float, float]:
@@ -169,6 +182,58 @@ def _map_dsl_position(position: dict[str, Any]) -> tuple[float, float]:
     if not math.isfinite(float(raw_x)) or not math.isfinite(float(raw_y)):
         raise ValueError("position x/y must be finite")
     return float(raw_x) / 100.0 - 3.0, (float(raw_y) / 100.0 - 2.0) * -1
+
+
+def _position_is_default(position: Any) -> bool:
+    """Return whether a position is the schema's implicit (0, 0) value."""
+    if not isinstance(position, dict):
+        return True
+    return position.get("x", 0) == 0 and position.get("y", 0) == 0
+
+
+def _auto_layout_centers(object_count: int) -> list[tuple[float, float]]:
+    """Place frame objects in a small, readable grid when DSL positions are absent."""
+    if object_count <= 0:
+        return []
+    if object_count == 1:
+        return [(0.0, 0.0)]
+    if object_count == 2:
+        return [(-3.0, 0.0), (3.0, 0.0)]
+
+    columns = 2 if object_count <= 4 else 3
+    rows = math.ceil(object_count / columns)
+    x_slots = [
+        -3.2 + (6.4 * index / max(columns - 1, 1))
+        for index in range(columns)
+    ]
+    y_slots = [
+        2.0 - (4.0 * index / max(rows - 1, 1))
+        for index in range(rows)
+    ]
+    return [
+        (x_slots[index % columns], y_slots[index // columns])
+        for index in range(object_count)
+    ]
+
+
+def _frame_uses_auto_layout(frame: dict[str, Any]) -> bool:
+    """Detect frames where all objects inherited the default position."""
+    objects = frame.get("visual_objects", [])
+    return bool(objects) and all(
+        _position_is_default(visual_object.get("position"))
+        for visual_object in objects
+    )
+
+
+def _resolve_frame_centers(frame: dict[str, Any]) -> list[tuple[float, float]]:
+    """Resolve explicit DSL positions or deterministic fallback grid positions."""
+    objects = frame.get("visual_objects", [])
+    if _frame_uses_auto_layout(frame):
+        return _auto_layout_centers(len(objects))
+    return [
+        _map_dsl_position(visual_object.get("position") or {})
+        for visual_object in objects
+    ]
 
 
 def _estimated_object_bounds(
@@ -209,6 +274,8 @@ def _estimated_object_bounds(
         formula = str(visual_object.get("latex", ""))
         half_width = min(6.0, max(0.6, len(formula) * 0.045))
         half_height = 0.45
+    elif obj_type == "graph":
+        half_width, half_height = 3.0, 2.1
 
     label = str(visual_object.get("label") or "")
     if label:
@@ -249,11 +316,21 @@ def validate_render_layout(dsl: dict[str, Any]) -> list[dict[str, Any]]:
                 },
             ))
 
-        for object_index, visual_object in enumerate(frame.get("visual_objects", [])):
+        visual_objects = frame.get("visual_objects", [])
+        auto_centers = (
+            _auto_layout_centers(len(visual_objects))
+            if _frame_uses_auto_layout(frame)
+            else None
+        )
+        for object_index, visual_object in enumerate(visual_objects):
             object_id = str(visual_object.get("id", f"object_{object_index}"))
             position = visual_object.get("position") or {}
             try:
-                center = _map_dsl_position(position)
+                center = (
+                    auto_centers[object_index]
+                    if auto_centers is not None
+                    else _map_dsl_position(position)
+                )
             except ValueError as exc:
                 frame_issues.append((
                     "invalid-position",
@@ -421,6 +498,11 @@ class ManimScriptGenerator:
         prev_objects: dict[str, str] = {}
 
         for i, frame in enumerate(self.frames):
+            if i > 0:
+                # Every frame is a complete snapshot.  Remove the previous
+                # snapshot before drawing the next one; otherwise tables,
+                # code blocks and graphs accumulate on top of each other.
+                lines.append("        self.play(FadeOut(*self.mobjects), run_time=0.25)")
             fid = frame.get("frame_id", f"f_{i:03d}")
             lines.append(f"        # ── {fid}: {frame.get('title', 'Untitled')} ──")
             lines.append(f"        self.next_section(name={fid!r})")
@@ -437,12 +519,16 @@ class ManimScriptGenerator:
             narration = frame.get("narration", "")
             if narration:
                 safe_narration = " ".join(str(narration).split())[:MAX_GENERATED_NARRATION_CHARS]
+                subtitle_text = _wrap_subtitle_text(safe_narration)
                 lines.append(f'        # Narration: "{safe_narration}"')
                 lines.append(
-                    f"        subtitle = Text({safe_narration!r}, "
-                    "font=EDUFLOW_CJK_FONT, font_size=24, color=WHITE)"
+                    f"        subtitle = Text({subtitle_text!r}, "
+                    "font=EDUFLOW_CJK_FONT, font_size=24, line_spacing=0.75, color=WHITE)"
                 )
+                lines.append("        subtitle.scale_to_fit_width(12.5)")
+                lines.append(f"        subtitle.scale_to_fit_height({MAX_SUBTITLE_HEIGHT})")
                 lines.append("        subtitle.to_edge(DOWN)")
+                lines.append("        subtitle.shift(UP * 0.25)")
                 lines.append("        self.play(FadeIn(subtitle), run_time=0.5)")
                 lines.append("        self.wait(2)")
                 lines.append("        self.play(FadeOut(subtitle), run_time=0.3)")
@@ -469,7 +555,13 @@ class ManimScriptGenerator:
         obj_vars: dict[str, str] = {}
         code_lines: list[str] = []
 
-        for vo in frame.get("visual_objects", []):
+        visual_objects = frame.get("visual_objects", [])
+        auto_centers = (
+            _auto_layout_centers(len(visual_objects))
+            if _frame_uses_auto_layout(frame)
+            else None
+        )
+        for object_index, vo in enumerate(visual_objects):
             vo_id = vo.get("id", "unknown")
             safe_id = "".join(
                 char if char.isalnum() or char == "_" else "_"
@@ -480,7 +572,11 @@ class ManimScriptGenerator:
             var_name = f"{safe_id}_{frame_idx}"
 
             position = vo.get("position", {})
-            raw_x, raw_y = _map_dsl_position(position)
+            raw_x, raw_y = (
+                auto_centers[object_index]
+                if auto_centers is not None
+                else _map_dsl_position(position)
+            )
             x = max(MANIM_X_LIMITS[0], min(MANIM_X_LIMITS[1], raw_x))
             y = max(MANIM_Y_LIMITS[0], min(MANIM_Y_LIMITS[1], raw_y))
 
@@ -520,6 +616,93 @@ class ManimScriptGenerator:
                         "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, UP, buff=0.1)"
                     )
+
+            elif obj_type == "graph":
+                # Render graph structure explicitly instead of falling back to
+                # a single Circle.  This keeps vertices/edges visible even
+                # when the DSL omits per-node canvas coordinates, and colors
+                # vertices/relaxed edges from the algorithm state snapshot.
+                nodes = vo.get("nodes", []) or []
+                if not isinstance(nodes, list):
+                    nodes = []
+                graph_edges = vo.get("edges", []) or vo.get("graph_edges", []) or []
+                if not isinstance(graph_edges, list):
+                    graph_edges = []
+                snapshot = _graph_state_snapshot(frame)
+                event_edges = _graph_event_edges(snapshot)
+                node_centers = _graph_node_centers(nodes, (x, y))
+                node_vars: dict[str, str] = {}
+                code_lines.append(f"        {var_name} = VGroup()")
+
+                for node_index, node in enumerate(nodes):
+                    if not isinstance(node, dict):
+                        node = {"id": node}
+                    node_id = str(node.get("id", node_index))
+                    safe_node_id = "".join(
+                        char if char.isalnum() or char == "_" else "_"
+                        for char in node_id
+                    ) or f"node_{node_index}"
+                    if safe_node_id[0].isdigit():
+                        safe_node_id = f"node_{safe_node_id}"
+                    node_var = f"{var_name}_{safe_node_id}"
+                    node_vars[node_id] = node_var
+                    node_x, node_y = node_centers.get(node_id, (x, y))
+                    node_color = _graph_node_color(snapshot, node_id)
+                    node_label = str(node.get("label") or node_id)[:MAX_GENERATED_LABEL_CHARS]
+                    distances = snapshot.get("dist") or snapshot.get("distances") or {}
+                    distance_suffix = ""
+                    if isinstance(distances, dict) and node_id in distances:
+                        distance = distances.get(node_id)
+                        distance_suffix = f"\\nd={('∞' if distance is None else distance)}"
+                    code_lines.append(
+                        f"        {node_var} = Circle(radius=0.42, color={node_color!r}, "
+                        f"fill_color={node_color!r}, fill_opacity=0.8).move_to(np.array([{node_x:.2f}, {node_y:.2f}, 0]))"
+                    )
+                    code_lines.append(
+                        f"        {node_var}_label = Text({(node_label + distance_suffix)!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=16, color=WHITE)"
+                        f".scale_to_fit_width(0.72).move_to({node_var})"
+                    )
+                    code_lines.append(
+                        f"        {node_var}_group = VGroup({node_var}, {node_var}_label)"
+                    )
+                    code_lines.append(f"        {var_name}.add({node_var}_group)")
+
+                for edge_index, edge in enumerate(graph_edges):
+                    if not isinstance(edge, dict):
+                        continue
+                    source = str(edge.get("source", ""))
+                    target = str(edge.get("target", ""))
+                    if source not in node_centers or target not in node_centers:
+                        continue
+                    edge_color = "#F59E0B" if (source, target) in event_edges else "#94A3B8"
+                    start_x, start_y = node_centers[source]
+                    end_x, end_y = node_centers[target]
+                    directed = edge.get("directed", True)
+                    edge_class = "Arrow" if directed else "Line"
+                    edge_var = f"{var_name}_edge_{edge_index}"
+                    code_lines.append(
+                        f"        {edge_var} = {edge_class}(start=np.array([{start_x:.2f}, {start_y:.2f}, 0]), "
+                        f"end=np.array([{end_x:.2f}, {end_y:.2f}, 0]), buff=0.48, color={edge_color!r}, stroke_width=3)"
+                    )
+                    code_lines.append(f"        {var_name}.add({edge_var})")
+                    if edge.get("weight") is not None:
+                        mid_x = (start_x + end_x) / 2
+                        mid_y = (start_y + end_y) / 2
+                        weight = str(edge.get("weight"))[:12]
+                        code_lines.append(
+                            f"        {edge_var}_weight = Text({weight!r}, font=EDUFLOW_CJK_FONT, "
+                            f"font_size=14, color={edge_color!r}).move_to(np.array([{mid_x:.2f}, {mid_y:.2f}, 0]))"
+                        )
+                        code_lines.append(f"        {var_name}.add({edge_var}_weight)")
+
+                if label:
+                    code_lines.append(
+                        f"        {var_name}_title = Text({str(label)[:MAX_GENERATED_LABEL_CHARS]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=18, color=WHITE)"
+                        f".next_to({var_name}, UP, buff=0.15)"
+                    )
+                    code_lines.append(f"        {var_name}.add({var_name}_title)")
 
             elif obj_type == "table":
                 rows_data = vo.get("rows", []) or []
@@ -810,6 +993,74 @@ def _normalize_table_data(headers: Any, rows: Any) -> list[list[str]]:
         return [[""]]
     width = max(len(row) for row in table_data)
     return [row + [""] * (width - len(row)) for row in table_data]
+
+
+def _graph_node_centers(
+    nodes: list[dict[str, Any]], center: tuple[float, float]
+) -> dict[str, tuple[float, float]]:
+    """Return stable circular positions for graph vertices around ``center``."""
+    node_ids = [str(node.get("id", index)) for index, node in enumerate(nodes)]
+    if not node_ids:
+        return {}
+    if len(node_ids) == 1:
+        return {node_ids[0]: center}
+    radius = min(2.35, max(1.35, 0.42 * len(node_ids)))
+    return {
+        node_id: (
+            center[0] + radius * math.cos(math.pi / 2 + 2 * math.pi * index / len(node_ids)),
+            center[1] + radius * math.sin(math.pi / 2 + 2 * math.pi * index / len(node_ids)),
+        )
+        for index, node_id in enumerate(node_ids)
+    }
+
+
+def _graph_state_snapshot(frame: dict[str, Any]) -> dict[str, Any]:
+    snapshot = frame.get("state_snapshot")
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _graph_state_ids(snapshot: dict[str, Any], key: str) -> set[str]:
+    values = snapshot.get(key) or []
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    ids: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("vertex", value.get("id", value.get("target")))
+        if value is not None:
+            ids.add(str(value))
+    return ids
+
+
+def _graph_node_color(snapshot: dict[str, Any], node_id: str) -> str:
+    """Color vertices from algorithm state so each frame shows progress."""
+    visited = _graph_state_ids(snapshot, "visited")
+    queue = _graph_state_ids(snapshot, "queue")
+    selected = str(snapshot.get("current") or snapshot.get("selected") or "")
+    source = str(snapshot.get("source") or snapshot.get("start") or "")
+    if node_id == selected:
+        return "#F59E0B"  # current choice/event
+    if node_id in visited:
+        return "#2ECC71"  # finalized/visited
+    if node_id in queue:
+        return "#F1C40F"  # frontier/queue
+    if node_id == source:
+        return "#4A90D9"  # source vertex
+    return "#64748B"
+
+
+def _graph_event_edges(snapshot: dict[str, Any]) -> set[tuple[str, str]]:
+    events = snapshot.get("events") or []
+    if not isinstance(events, list):
+        return set()
+    return {
+        (str(event.get("source")), str(event.get("target")))
+        for event in events
+        if isinstance(event, dict)
+        and event.get("source") is not None
+        and event.get("target") is not None
+        and event.get("operation") in {"relax", "scan", "select"}
+    }
 
 
 def _strip_latex(s: str) -> str:
