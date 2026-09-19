@@ -207,7 +207,7 @@ def _auto_layout_centers(object_count: int) -> list[tuple[float, float]]:
         for index in range(columns)
     ]
     y_slots = [
-        2.0 - (4.0 * index / max(rows - 1, 1))
+        1.35 - (2.35 * index / max(rows - 1, 1))
         for index in range(rows)
     ]
     return [
