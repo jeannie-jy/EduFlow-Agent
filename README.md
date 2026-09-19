@@ -23,15 +23,15 @@
 
 > **v1.0.0 — 发布前质量与安全验收**
 >
-> 前后端回归、真实视频渲染、安全边界、故障恢复、对象存储迁移与公开部署保护门禁已完成工程化验收；真实在线模型质量评测仍需显式凭据与成本授权。
+> 后端回归、真实视频渲染、安全边界、故障恢复、对象存储迁移与公开部署保护门禁已完成工程化验收；前端当前仍有 1 项 AppShell 导航测试待修复；EduFlowBench v1 核心案例已完成一次带显式凭据和成本授权的在线质量基线，人工校准与真实 Tool Calling 评测仍待完成。
 **本次更新 (v1.0.0)：**
-- **前端回归修复**：补齐新建项目页模块目录的 MSW 接口模拟，`npm run verify` 全绿（42 个测试文件 / 302 项测试）。
-- **后端质量基线**：常规非在线、非渲染回归通过 `1174 passed，1 skipped，6 deselected`。
+- **前端回归状态**：当前 Vitest 收集 44 个测试文件 / 313 项测试；仍有 1 项 AppShell 导航测试待修复，前端不再宣称全绿。
+- **后端质量基线**：常规非在线、非渲染回归通过 `1204 passed，1 skipped，6 deselected`。
 - **真实视频验收**：Manim/FFmpeg golden smoke、确定性布局审计（重叠/越界/文本截断）、双 Worker 并行与 Redis/PostgreSQL/MinIO 故障恢复验证通过。
 - **渲染安全加固**：无网络/无凭据 Sandbox、脚本摘要校验、路径与 symlink 越界拒绝、超时/OOM/工作区配额、恶意脚本、容器中断重启及孤儿 claim 回收验证通过。
 - **公开部署保护**：公开视频默认关闭；生产环境未完成任务级隔离与安全审批时 fail-closed。
 - **迁移可靠性**：本地 PostgreSQL/MinIO 历史数据迁移演练通过；补充部分上传失败时的对象补偿机制。
-- **发布验收边界**：真实 Tool Calling Bench、50 案例独立 Judge、至少 20% 人工校准尚未运行；本版本不宣称真实模型质量、成功率或成本。
+- **在线质量基线**：EduFlowBench v1 核心 50 案例完成生产工作流评测，确定性门禁通过 `50/50`，独立 Judge 完成 `50/50`；结果已归档，人工校准和真实 Tool Calling Bench 仍待运行，因此不将该结果扩展为完整语义质量或 Tool 选择率结论。
 
 **历史版本：**
 - **v0.8.0 — 模块化生成主线 + 可靠性加固**：10 种模块化教学产物、任务化视频导出、真实后端会话、素材治理、成果版本追踪与关键操作审计
@@ -309,10 +309,10 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端常规本地回归：**1174 passed，1 skipped，6 deselected**（真实 Manim 渲染和显式授权的在线评测按环境单独执行；symlink 能力按平台单独跳过）。
-- 前端门禁：**42 files / 302 tests**，TypeScript、生产构建与 gzip Bundle Budget 通过；路由拆分后主入口由 1,342.14 kB 降至 547.38 kB（-59.2%）。
+- 后端常规本地回归：**1204 passed，1 skipped，6 deselected**（真实 Manim 渲染和显式授权的在线评测按环境单独执行；symlink 能力按平台单独跳过）。
+- 前端测试当前收集：**44 files / 313 tests**；TypeScript、生产构建与 gzip Bundle Budget 的历史门禁数据保留，当前仍有 1 项 AppShell 导航测试失败，需修复后再宣称 `npm run verify` 全绿。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
-- 上述数字是离线工程与数据集事实；真实模型质量、Tool 选择率、成本和延迟报告仍待显式凭据与成本授权，不以 fixture 分数替代。
+- EduFlowBench 核心 50 例在线基线已记录确定性通过率、独立 Judge、成本与延迟；Tool 选择率和至少 20% 人工校准仍待完成，不以 fixture 分数替代真实模型结论。
 
 ## 文档索引
 
@@ -330,6 +330,7 @@ python -m scripts.seed_embeddings
 | [当前与目标架构](docs/architecture.md) | 运行架构、目标演进图与 Agent 时序 |
 | [故障案例矩阵](docs/failure-cases.md) | 已验证故障、防护和仍待运行的压力测试 |
 | [故障注入基线](agent/evals/reports/fault-injection-v0.8.md) | 可复现故障场景、验证入口与外部环境待测项 |
+| [EduFlowBench v1 在线质量基线](agent/evals/release_baselines/README.md) | 50 例正式评测、Smoke、成本/延迟、Judge 观察与证据边界 |
 | [ADR 0004：受控 Tool Runtime](docs/adr/0004-bounded-tool-runtime.md) | 只读能力面、身份注入、预算与 MCP 边界取舍 |
 | [ADR 0005：持久化执行与事件流](docs/adr/0005-durable-execution-and-streams.md) | Checkpoint、lease、迟到写拒绝与 SSE 重放设计 |
 | [安全威胁模型](docs/security/threat-model.md) | 上传、Prompt/Tool、解析、代码执行与下载的边界及剩余风险 |

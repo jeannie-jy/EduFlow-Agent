@@ -104,8 +104,9 @@ runs this command, uploads the report/artifacts/logs, and always tears the stack
 down. `live_judge` uses separately configured endpoint/key/model values, validates
 all seven rubric dimensions, treats the candidate artifact as bounded untrusted
 data, and cannot override deterministic failures. It records candidate and Judge
-Token/cost separately. A report is not publishable until this independent Judge
-run and the required human calibration have actually completed.
+Token/cost separately. A formal report may be retained as a release baseline
+after the independent Judge run completes; a publishable semantic-quality claim
+still requires blinded human calibration.
 
 Prepare a deterministic blinded review sheet for at least 20% of the completed
 core run. Candidate/Judge identities and Judge scores are omitted from this file:
