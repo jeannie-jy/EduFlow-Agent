@@ -207,6 +207,90 @@ class TestManimScriptGenerator:
         assert "fill_color='#2ECC71'" in script
         compile(script, "<generated-manim>", "exec")
 
+    def test_array_renders_readable_cells_and_semantic_highlights(self):
+        dsl = {
+            "project_id": "array",
+            "topic": "Bubble sort",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{
+                    "id": "arr",
+                    "type": "array",
+                    "label": "待排序数组",
+                    "cells": [
+                        {"value": 5, "highlight": True},
+                        {"value": 1},
+                        {"value": 8, "sorted": True},
+                    ],
+                }],
+                "animations": [{"type": "appear", "target": "arr"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "arr_0_cell_0_box = Square" in script
+        assert "fill_color='#F4D03F'" in script
+        assert "fill_color='#2ECC71'" in script
+        assert "arr_0.arrange(RIGHT, buff=0.08)" in script
+        assert "FadeIn(arr_0)" in script
+        compile(script, "<generated-manim>", "exec")
+
+    def test_array_falls_back_to_state_snapshot_values(self):
+        dsl = {
+            "project_id": "array-state",
+            "topic": "Bubble sort",
+            "frames": [{
+                "frame_id": "f_001",
+                "state_snapshot": {"array": [5, 1, 4]},
+                "visual_objects": [{"id": "arr", "type": "array", "cells": []}],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "Text('5'" in script
+        assert "Text('1'" in script
+        assert "Text('4'" in script
+
+    def test_objects_without_appear_animation_are_still_rendered(self):
+        dsl = {
+            "project_id": "no-blank-frame",
+            "topic": "Dijkstra",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{
+                    "id": "dist",
+                    "type": "table",
+                    "headers": ["vertex", "distance"],
+                    "rows": [["A", 0]],
+                }],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "self.play(FadeIn(dist_0), run_time=0.35)" in script
+
+    def test_highlight_only_animation_adds_object_before_indicate(self):
+        dsl = {
+            "project_id": "highlight",
+            "topic": "Graph",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{"id": "node", "type": "node"}],
+                "animations": [{"type": "highlight", "target": "node"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        fade_index = script.index("self.play(FadeIn(node_0), run_time=0.35)")
+        indicate_index = script.index("self.play(Indicate(node_0")
+        assert fade_index < indicate_index
+
     def test_generate_empty_dsl(self, empty_dsl):
         gen = ManimScriptGenerator(empty_dsl)
         script = gen.generate()

@@ -742,6 +742,61 @@ class ManimScriptGenerator:
                     )
                     code_lines.append(f"        {var_name}.add({var_name}_title)")
 
+            elif obj_type == "array":
+                cells = vo.get("cells") or []
+                if not isinstance(cells, list):
+                    cells = []
+                if not cells:
+                    snapshot_values = _graph_state_snapshot(frame).get("array") or []
+                    if isinstance(snapshot_values, list):
+                        cells = [{"value": value} for value in snapshot_values]
+                code_lines.append(f"        {var_name} = VGroup()")
+                for cell_index, raw_cell in enumerate(cells):
+                    cell = raw_cell if isinstance(raw_cell, dict) else {"value": raw_cell}
+                    value = cell.get("value", cell.get("label", ""))
+                    highlighted = bool(
+                        cell.get("highlight")
+                        or cell.get("active")
+                        or cell.get("comparing")
+                    )
+                    completed = bool(
+                        cell.get("sorted")
+                        or cell.get("complete")
+                        or cell.get("finalized")
+                    )
+                    fill_color = "#2ECC71" if completed else ("#F4D03F" if highlighted else color)
+                    text_color = "#111827" if highlighted else "#FFFFFF"
+                    cell_var = f"{var_name}_cell_{cell_index}"
+                    code_lines.append(
+                        f"        {cell_var}_box = Square(side_length=0.82, "
+                        f"color={fill_color!r}, fill_color={fill_color!r}, "
+                        "fill_opacity=0.82, stroke_width=2)"
+                    )
+                    code_lines.append(
+                        f"        {cell_var}_text = Text({str(value)[:16]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=24, "
+                        f"color={text_color!r}).scale_to_fit_width(0.62)"
+                        f".move_to({cell_var}_box)"
+                    )
+                    code_lines.append(
+                        f"        {cell_var} = VGroup({cell_var}_box, {cell_var}_text)"
+                    )
+                    code_lines.append(f"        {var_name}.add({cell_var})")
+                if cells:
+                    code_lines.append(
+                        f"        {var_name}.arrange(RIGHT, buff=0.08)"
+                        f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
+                    )
+                if label:
+                    code_lines.append(
+                        f"        {var_name}_title = Text({str(label)[:MAX_GENERATED_LABEL_CHARS]!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=18, color=WHITE)"
+                        f".next_to({var_name}, UP, buff=0.18)"
+                    )
+                    code_lines.append(
+                        f"        {var_name} = VGroup({var_name}, {var_name}_title)"
+                    )
+
             elif obj_type == "table":
                 rows_data = vo.get("rows", []) or []
                 headers = vo.get("headers", [])
@@ -824,7 +879,20 @@ class ManimScriptGenerator:
         lines: list[str],
     ) -> None:
         """为帧的每个动画生成 Manim play 语句。"""
-        for anim in frame.get("animations", []):
+        animations = frame.get("animations", [])
+        explicit_appear_targets = {
+            animation.get("target")
+            for animation in animations
+            if animation.get("type") in {"appear", "enqueue", "schedule", "lock"}
+        }
+        # A visual object is a frame's declarative content, not an optional
+        # side effect of its animation list.  Frames produced without an
+        # explicit appear animation used to render as blank screens.
+        for object_id, var_name in obj_vars.items():
+            if object_id not in explicit_appear_targets:
+                lines.append(f"        self.play(FadeIn({var_name}), run_time=0.35)")
+
+        for anim in animations:
             anim_type = anim.get("type", "appear")
             target_id = anim.get("target", "")
             duration = anim.get("duration_ms", 500) / 1000.0
