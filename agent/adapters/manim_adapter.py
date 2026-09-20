@@ -415,11 +415,12 @@ def validate_render_layout(dsl: dict[str, Any]) -> list[dict[str, Any]]:
 class ManimScriptGenerator:
     """将 RenderScript DSL 生成完整的 Manim Python 脚本。"""
 
-    def __init__(self, dsl: dict[str, Any]):
+    def __init__(self, dsl: dict[str, Any], *, include_subtitles: bool = True):
         self.dsl = dsl
         self.project_id = dsl.get("project_id", "unknown")
         self.topic = dsl.get("topic", "EduFlow Export")
         self.frames = dsl.get("frames", [])
+        self.include_subtitles = include_subtitles
 
     def generate(self) -> str:
         """生成完整的 Manim 脚本字符串。"""
@@ -443,6 +444,25 @@ class ManimScriptGenerator:
             '# The render image installs this family; selecting it explicitly avoids',
             '# Pango choosing a Latin-only default and rendering CJK as tofu boxes.',
             'EDUFLOW_CJK_FONT = "Noto Sans CJK SC"',
+            "",
+            "def eduflow_fit_to_safe_area(mobject, center, max_width, max_height):",
+            '    """Fit and clamp a visual inside its assigned content slot."""',
+            "    if mobject.width > max_width:",
+            "        mobject.scale_to_fit_width(max_width)",
+            "    if mobject.height > max_height:",
+            "        mobject.scale_to_fit_height(max_height)",
+            "    mobject.move_to(center)",
+            "    left, right = mobject.get_left()[0], mobject.get_right()[0]",
+            "    bottom, top = mobject.get_bottom()[1], mobject.get_top()[1]",
+            "    if left < -6.35:",
+            "        mobject.shift(RIGHT * (-6.35 - left))",
+            "    if right > 6.35:",
+            "        mobject.shift(LEFT * (right - 6.35))",
+            "    if top > 2.65:",
+            "        mobject.shift(DOWN * (top - 2.65))",
+            "    if bottom < -2.35:",
+            "        mobject.shift(UP * (-2.35 - bottom))",
+            "    return mobject",
         ]
 
         # 收集需要的动画类
@@ -507,6 +527,16 @@ class ManimScriptGenerator:
             lines.append(f"        # ── {fid}: {frame.get('title', 'Untitled')} ──")
             lines.append(f"        self.next_section(name={fid!r})")
 
+            title = " ".join(str(frame.get("title") or "").split())
+            if title:
+                lines.append(
+                    f"        frame_title = Text({title[:80]!r}, font=EDUFLOW_CJK_FONT, "
+                    "font_size=30, weight=BOLD, color=WHITE)"
+                )
+                lines.append("        frame_title.scale_to_fit_width(12.0)")
+                lines.append("        frame_title.to_edge(UP, buff=0.25)")
+                lines.append("        self.play(FadeIn(frame_title), run_time=0.25)")
+
             # 生成 visual objects 创建代码
             obj_vars, obj_code = self._generate_objects_for_frame(frame, prev_objects, i)
             for code_line in obj_code:
@@ -517,18 +547,22 @@ class ManimScriptGenerator:
 
             # 生成 narration（作为字幕）
             narration = frame.get("narration", "")
-            if narration:
+            if narration and self.include_subtitles:
                 safe_narration = " ".join(str(narration).split())[:MAX_GENERATED_NARRATION_CHARS]
                 subtitle_text = _wrap_subtitle_text(safe_narration)
                 lines.append(f'        # Narration: "{safe_narration}"')
                 lines.append(
-                    f"        subtitle = Text({subtitle_text!r}, "
+                    f"        subtitle_text = Text({subtitle_text!r}, "
                     "font=EDUFLOW_CJK_FONT, font_size=24, line_spacing=0.75, color=WHITE)"
                 )
-                lines.append("        subtitle.scale_to_fit_width(12.5)")
-                lines.append(f"        subtitle.scale_to_fit_height({MAX_SUBTITLE_HEIGHT})")
-                lines.append("        subtitle.to_edge(DOWN)")
-                lines.append("        subtitle.shift(UP * 0.25)")
+                lines.append("        subtitle_text.scale_to_fit_width(11.8)")
+                lines.append(f"        subtitle_text.scale_to_fit_height({MAX_SUBTITLE_HEIGHT})")
+                lines.append("        subtitle_text.to_edge(DOWN, buff=0.3)")
+                lines.append(
+                    "        subtitle_bg = BackgroundRectangle(subtitle_text, "
+                    "color=BLACK, fill_opacity=0.72, buff=0.18)"
+                )
+                lines.append("        subtitle = VGroup(subtitle_bg, subtitle_text)")
                 lines.append("        self.play(FadeIn(subtitle), run_time=0.5)")
                 lines.append("        self.wait(2)")
                 lines.append("        self.play(FadeOut(subtitle), run_time=0.3)")
@@ -587,6 +621,7 @@ class ManimScriptGenerator:
             label = vo.get("label", "")
             obj_type = vo.get("type", "node")
             mobject_info = MOBJECT_MAP.get(obj_type, MOBJECT_MAP["node"])
+            display_var = var_name
 
             # 根据类型生成创建代码
             if obj_type == "node":
@@ -601,6 +636,7 @@ class ManimScriptGenerator:
                         f".next_to({var_name}, DOWN, buff=0.1)"
                     )
                     code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
+                    display_var = f"{var_name}_group"
 
             elif obj_type == "edge":
                 directed = vo.get("directed", True)
@@ -616,6 +652,8 @@ class ManimScriptGenerator:
                         "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, UP, buff=0.1)"
                     )
+                    code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
+                    display_var = f"{var_name}_group"
 
             elif obj_type == "graph":
                 # Render graph structure explicitly instead of falling back to
@@ -763,8 +801,18 @@ class ManimScriptGenerator:
                         "font=EDUFLOW_CJK_FONT, font_size=16)"
                         f".next_to({var_name}, DOWN)"
                     )
+                    code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
+                    display_var = f"{var_name}_group"
 
-            obj_vars[vo_id] = var_name
+            columns = 1 if len(visual_objects) == 1 else (2 if len(visual_objects) <= 4 else 3)
+            rows = max(1, math.ceil(len(visual_objects) / columns))
+            slot_width = 12.0 / columns - 0.45
+            slot_height = 4.65 / rows - 0.25
+            code_lines.append(
+                f"        eduflow_fit_to_safe_area({display_var}, "
+                f"np.array([{x:.2f}, {y:.2f}, 0]), {slot_width:.2f}, {slot_height:.2f})"
+            )
+            obj_vars[vo_id] = display_var
 
         return obj_vars, code_lines
 
@@ -902,7 +950,13 @@ def _ms_to_srt_time(ms: int) -> str:
 # ============================================================================
 
 
-def convert_dsl_to_manim(dsl: dict[str, Any]) -> dict[str, str]:
+def convert_dsl_to_manim(
+    dsl: dict[str, Any],
+    *,
+    quality: str = "h",
+    fps: int = 30,
+    include_subtitles: bool = True,
+) -> dict[str, str]:
     """将 DSL 转换为完整的 Manim 工程文件集合。
 
     Returns:
@@ -912,11 +966,16 @@ def convert_dsl_to_manim(dsl: dict[str, Any]) -> dict[str, str]:
             "subtitles.srt": str, # 字幕文件
         }
     """
-    generator = ManimScriptGenerator(dsl)
+    generator = ManimScriptGenerator(dsl, include_subtitles=include_subtitles)
     main_py = generator.generate()
 
-    config = generate_render_config(dsl)
-    subtitles = generate_subtitles_srt(dsl)
+    config = generate_render_config(
+        dsl,
+        quality=quality,
+        fps=fps,
+        include_subtitles=include_subtitles,
+    )
+    subtitles = generate_subtitles_srt(dsl) if include_subtitles else ""
 
     return {
         "main.py": main_py,

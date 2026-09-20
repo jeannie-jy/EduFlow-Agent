@@ -491,13 +491,20 @@ async def _do_export_async(
 
         settings = get_settings()
         script_mode = getattr(settings, "manim_script_mode", "deterministic")
+        quality = config.get("quality", "h")
+        fps = config.get("fps", 30)
+        include_subtitles = config.get("include_subtitles", True)
         used_deterministic = script_mode != "llm"
         if script_mode == "llm":
             try:
                 from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
 
                 files = await convert_dsl_to_manim_llm(
-                    dsl, dsl.get("teaching_plan")
+                    dsl,
+                    dsl.get("teaching_plan"),
+                    quality=quality,
+                    fps=fps,
+                    include_subtitles=include_subtitles,
                 )
             except Exception:
                 logger.exception(
@@ -506,12 +513,22 @@ async def _do_export_async(
                 )
                 from adapters.manim_adapter import convert_dsl_to_manim
 
-                files = convert_dsl_to_manim(dsl)
+                files = convert_dsl_to_manim(
+                    dsl,
+                    quality=quality,
+                    fps=fps,
+                    include_subtitles=include_subtitles,
+                )
                 used_deterministic = True
         else:
             from adapters.manim_adapter import convert_dsl_to_manim
 
-            files = convert_dsl_to_manim(dsl)
+            files = convert_dsl_to_manim(
+                dsl,
+                quality=quality,
+                fps=fps,
+                include_subtitles=include_subtitles,
+            )
 
         issues = validate_script(files["main.py"])
         if has_errors(issues) and not used_deterministic:
@@ -538,7 +555,12 @@ async def _do_export_async(
 
             from adapters.manim_adapter import convert_dsl_to_manim
 
-            files = convert_dsl_to_manim(dsl)
+            files = convert_dsl_to_manim(
+                dsl,
+                quality=quality,
+                fps=fps,
+                include_subtitles=include_subtitles,
+            )
             used_deterministic = True
             issues = validate_script(files["main.py"])
 
@@ -574,8 +596,6 @@ async def _do_export_async(
         _try_update_redis_status(r, job_id, "rendering", progress=30)
 
         # 3. 将已校验脚本交给无网络、无凭证的沙箱容器。
-        quality = config.get("quality", "h")
-        fps = config.get("fps", 30)
         artifacts: list[dict] = []
 
         _try_update_redis_status(r, job_id, "rendering", progress=50)
@@ -601,7 +621,12 @@ async def _do_export_async(
 
             from adapters.manim_adapter import convert_dsl_to_manim
 
-            files = convert_dsl_to_manim(dsl)
+            files = convert_dsl_to_manim(
+                dsl,
+                quality=quality,
+                fps=fps,
+                include_subtitles=include_subtitles,
+            )
             for src_name in ["main.py", "render_config.json", "subtitles.srt"]:
                 src = scripts_dir / src_name
                 src.write_text(files[src_name], encoding="utf-8")

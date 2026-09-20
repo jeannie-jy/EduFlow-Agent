@@ -176,6 +176,25 @@ class TestSuccessPath:
         assert set(files) == {"main.py", "render_config.json", "subtitles.srt"}
         assert not has_errors(validate_script(files["main.py"]))
 
+    async def test_render_options_are_forwarded_to_prompt_and_manifest(self, mocker):
+        import json
+
+        mock = _mock_call_llm(mocker, [{"content": GOOD_SCRIPT}])
+        files = await convert_dsl_to_manim_llm(
+            _minimal_dsl(),
+            quality="m",
+            fps=24,
+            include_subtitles=False,
+        )
+        user_message = mock.await_args.kwargs["user_message"]
+        config = json.loads(files["render_config.json"])
+
+        assert '\"include_subtitles\": false' in user_message
+        assert config["quality"] == "m"
+        assert config["fps"] == 24
+        assert config["include_subtitles"] is False
+        assert files["subtitles.srt"] == ""
+
     async def test_auto_injects_undefined_font_size(self, mocker):
         """白名单命中：font_size 自动注入模块级常量，无需 LLM 重试。"""
         mock = _mock_call_llm(mocker, [{"content": FONT_SIZE_BUG_SCRIPT}])

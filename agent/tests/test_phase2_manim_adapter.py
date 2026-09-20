@@ -244,7 +244,8 @@ class TestManimScriptGenerator:
     def test_narration_generates_subtitle(self, minimal_dsl):
         gen = ManimScriptGenerator(minimal_dsl)
         script = gen.generate()
-        assert "subtitle.to_edge(DOWN)" in script
+        assert "subtitle_text.to_edge(DOWN, buff=0.3)" in script
+        assert "BackgroundRectangle(subtitle_text" in script
         assert "FadeIn(subtitle)" in script
         assert "FadeOut(subtitle)" in script
 
@@ -263,8 +264,39 @@ class TestManimScriptGenerator:
         script = ManimScriptGenerator(dsl).generate()
 
         assert "\\n" in script
-        assert "subtitle.scale_to_fit_width(12.5)" in script
-        assert "subtitle.scale_to_fit_height(1.25)" in script
+        assert "subtitle_text.scale_to_fit_width(11.8)" in script
+        assert "subtitle_text.scale_to_fit_height(1.25)" in script
+
+    def test_subtitles_can_be_disabled(self, minimal_dsl):
+        script = ManimScriptGenerator(
+            minimal_dsl,
+            include_subtitles=False,
+        ).generate()
+
+        assert "subtitle_text = Text" not in script
+        assert "BackgroundRectangle(subtitle_text" not in script
+
+    def test_visuals_are_fitted_to_safe_content_slots(self):
+        dsl = {
+            "project_id": "safe-layout",
+            "topic": "Safe layout",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "Two panels",
+                "visual_objects": [
+                    {"id": "graph", "type": "graph", "nodes": [{"id": "A"}]},
+                    {"id": "table", "type": "table", "rows": [["x", "y"]]},
+                ],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "def eduflow_fit_to_safe_area" in script
+        assert "eduflow_fit_to_safe_area(graph_0" in script
+        assert "eduflow_fit_to_safe_area(table_0" in script
+        assert "frame_title.to_edge(UP, buff=0.25)" in script
 
     def test_special_characters_in_topic(self):
         """话题包含特殊字符应被安全处理。"""
@@ -662,6 +694,23 @@ class TestConvertDSLToManim:
         config = json.loads(config_str)
         assert "frame_count" in config
         assert "quality" in config
+
+    def test_converter_honors_render_options(self, minimal_dsl):
+        import json
+
+        result = convert_dsl_to_manim(
+            minimal_dsl,
+            quality="m",
+            fps=24,
+            include_subtitles=False,
+        )
+        config = json.loads(result["render_config.json"])
+
+        assert config["quality"] == "m"
+        assert config["fps"] == 24
+        assert config["include_subtitles"] is False
+        assert result["subtitles.srt"] == ""
+        assert "subtitle_text = Text" not in result["main.py"]
 
     def test_subtitles_is_string(self, minimal_dsl):
         result = convert_dsl_to_manim(minimal_dsl)
