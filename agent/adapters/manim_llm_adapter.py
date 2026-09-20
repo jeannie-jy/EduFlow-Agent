@@ -482,7 +482,11 @@ async def convert_dsl_to_manim_llm(
     Raises:
         ManimCodeValidationError: LLM 调用或校验失败（携带失败脚本供调试）
     """
-    from adapters.manim_validator import has_errors, validate_script
+    from adapters.manim_validator import (
+        has_errors,
+        validate_script,
+        validate_teaching_contract,
+    )
 
     user_message = _build_user_message(
         dsl,
@@ -536,12 +540,24 @@ async def convert_dsl_to_manim_llm(
 
         # ── 校验 ──
         issues = validate_script(main_py)
+        issues.extend(validate_teaching_contract(
+            main_py,
+            expected_frames=len(dsl.get("frames", [])),
+            include_subtitles=include_subtitles,
+            has_narration=any(frame.get("narration") for frame in dsl.get("frames", [])),
+        ))
         if has_errors(issues):
             # 自动修复：undefined-name 命中白名单 → 模块级注入默认常量后复检
             patched = _inject_undefined_constants(main_py, issues)
             if patched != main_py:
                 main_py = patched
                 issues = validate_script(main_py)
+                issues.extend(validate_teaching_contract(
+                    main_py,
+                    expected_frames=len(dsl.get("frames", [])),
+                    include_subtitles=include_subtitles,
+                    has_narration=any(frame.get("narration") for frame in dsl.get("frames", [])),
+                ))
         if not has_errors(issues):
             if issues:
                 for i in issues:

@@ -54,6 +54,141 @@ def has_errors(issues: list[dict]) -> bool:
     return any(i["severity"] == "error" for i in issues)
 
 
+def validate_teaching_contract(
+    script: str,
+    *,
+    expected_frames: int,
+    include_subtitles: bool,
+    has_narration: bool,
+) -> list[dict[str, Any]]:
+    """Validate the visual contract that static API checks cannot express.
+
+    Creative scripts are accepted only when their sections can be inspected as
+    independent teaching frames.  This deliberately prefers the deterministic
+    fallback over a runnable script that accumulates objects or clips captions.
+    """
+    issues: list[dict[str, Any]] = []
+    if expected_frames <= 0:
+        return issues
+
+    section_matches = list(re.finditer(r"self\.next_section\s*\(", script))
+    if len(section_matches) < expected_frames:
+        issues.append({
+            "rule": "missing-frame-sections",
+            "severity": "error",
+            "line": None,
+            "detail": (
+                f"脚本需要至少 {expected_frames} 个 next_section 分段，"
+                f"实际只有 {len(section_matches)} 个；无法验证逐帧布局和清理"
+            ),
+        })
+    for index in range(len(section_matches) - 1):
+        segment_start = section_matches[index].end()
+        segment_end = section_matches[index + 1].start()
+        segment = script[segment_start:segment_end]
+        if not re.search(
+            r"(?:FadeOut\s*\(|self\.(?:clear|remove)\s*\()",
+            segment,
+        ):
+            line = script[:section_matches[index + 1].start()].count("\n") + 1
+            issues.append({
+                "rule": "missing-frame-cleanup",
+                "severity": "error",
+                "line": line,
+                "detail": (
+                    f"第 {index + 1} 个教学帧进入下一帧前没有 FadeOut/"
+                    "clear/remove，旧组件可能持续叠加"
+                ),
+            })
+
+    lowered = script.lower()
+    if include_subtitles and has_narration:
+        if "backgroundrectangle" not in lowered:
+            issues.append({
+                "rule": "subtitle-background-missing",
+                "severity": "error",
+                "line": None,
+                "detail": "开启字幕时必须使用 BackgroundRectangle 提供统一字幕底板",
+            })
+        if "scale_to_fit_width" not in lowered:
+            issues.append({
+                "rule": "subtitle-width-unbounded",
+                "severity": "error",
+                "line": None,
+                "detail": "开启字幕时必须限制字幕宽度，防止文字越过画布边缘",
+            })
+    elif not include_subtitles and re.search(
+        r"\b(?:subtitle|caption|narration)(?:_\w+)?\s*=\s*(?:Text|Paragraph)\s*\(",
+        script,
+        re.IGNORECASE,
+    ):
+        issues.append({
+            "rule": "subtitles-disabled",
+            "severity": "error",
+            "line": None,
+            "detail": "include_subtitles=false 时脚本仍创建了字幕对象",
+        })
+
+    issues.extend(_check_literal_move_to_bounds(script))
+    return issues
+
+
+def _numeric_literal(node: ast.AST) -> float | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return float(node.value)
+    if (
+        isinstance(node, ast.UnaryOp)
+        and isinstance(node.op, ast.USub)
+        and isinstance(node.operand, ast.Constant)
+        and isinstance(node.operand.value, (int, float))
+    ):
+        return -float(node.operand.value)
+    return None
+
+
+def _check_literal_move_to_bounds(script: str) -> list[dict[str, Any]]:
+    """Reject literal move_to coordinates outside the full-frame safe margin."""
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return []
+
+    issues: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "move_to"
+            and node.args
+        ):
+            continue
+        arg = node.args[0]
+        if (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Attribute)
+            and arg.func.attr == "array"
+            and arg.args
+        ):
+            arg = arg.args[0]
+        if not isinstance(arg, (ast.List, ast.Tuple)) or len(arg.elts) < 2:
+            continue
+        x = _numeric_literal(arg.elts[0])
+        y = _numeric_literal(arg.elts[1])
+        if x is None or y is None:
+            continue
+        if abs(x) > 6.35 or abs(y) > 3.65:
+            issues.append({
+                "rule": "literal-position-out-of-bounds",
+                "severity": "error",
+                "line": getattr(node, "lineno", None),
+                "detail": (
+                    f"move_to 坐标 ({x:g}, {y:g}) 超出视频安全区 "
+                    "x∈[-6.35,6.35], y∈[-3.65,3.65]"
+                ),
+            })
+    return issues
+
+
 # ═══════════════════════════════════════════════════════════════
 # 各项检查
 # ═══════════════════════════════════════════════════════════════
