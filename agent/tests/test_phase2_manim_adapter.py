@@ -207,7 +207,7 @@ class TestManimScriptGenerator:
         assert "fill_color='#2ECC71'" in script
         compile(script, "<generated-manim>", "exec")
 
-    def test_graph_traversal_frame_animates_visited_nodes_in_order(self):
+    def test_graph_traversal_frame_renders_final_state_without_replaying_history(self):
         dsl = {
             "project_id": "graph-motion",
             "topic": "BFS",
@@ -236,10 +236,8 @@ class TestManimScriptGenerator:
 
         script = ManimScriptGenerator(dsl).generate()
 
-        a = script.index("primary_graph_0_A.animate.set_fill('#2ECC71'")
-        b = script.index("primary_graph_0_B.animate.set_fill('#2ECC71'")
-        c = script.index("primary_graph_0_C.animate.set_fill('#2ECC71'")
-        assert a < b < c
+        assert script.count("fill_color='#2ECC71'") == 3
+        assert ".animate.set_fill('#2ECC71'" not in script
 
     def test_graph_keeps_full_height_when_support_panels_are_stacked(self):
         dsl = {
@@ -377,7 +375,38 @@ class TestManimScriptGenerator:
         assert "next_section" in script, "应包含 next_section 调用"
         assert "f_001" in script
         assert "f_002" in script
-        assert "FadeOut(*self.mobjects), run_time=0.25" in script
+        assert "FadeOut(*self.mobjects), run_time=0.25" not in script
+        assert "Transform(frame_title_0, frame_title_1)" in script
+
+    def test_stable_objects_transform_instead_of_full_scene_reset(self):
+        dsl = {
+            "project_id": "persistent",
+            "topic": "Dijkstra",
+            "frames": [
+                {
+                    "frame_id": "f_001",
+                    "title": "选择 A",
+                    "visual_objects": [{"id": "graph", "type": "graph", "nodes": [{"id": "A"}]}],
+                    "state_snapshot": {"current": "A", "visited": []},
+                    "animations": [],
+                },
+                {
+                    "frame_id": "f_002",
+                    "title": "确定 A",
+                    "visual_objects": [{"id": "graph", "type": "graph", "nodes": [{"id": "A"}]}],
+                    "state_snapshot": {"current": "A", "visited": ["A"]},
+                    "animations": [{"type": "highlight", "target": "graph"}],
+                },
+            ],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "Transform(graph_0, graph_1), run_time=0.45" in script
+        assert "FadeIn(graph_1)" not in script
+        assert "FadeOut(*self.mobjects), run_time=0.25" not in script
+        assert "Indicate(graph_0, color=YELLOW)" in script
+        compile(script, "<generated-manim>", "exec")
 
     def test_narration_generates_subtitle(self, minimal_dsl):
         gen = ManimScriptGenerator(minimal_dsl)
@@ -436,9 +465,9 @@ class TestManimScriptGenerator:
         assert "def eduflow_fit_to_safe_area" in script
         assert "eduflow_fit_to_safe_area(graph_0" in script
         assert "eduflow_fit_to_safe_area(table_0" in script
-        assert "frame_title.to_edge(UP, buff=0.25)" in script
+        assert "frame_title_0.to_edge(UP, buff=0.25)" in script
         assert "font_size=22, weight=SEMIBOLD" in script
-        assert "eduflow_shrink_to_fit(frame_title, 11.2, 0.55)" in script
+        assert "eduflow_shrink_to_fit(frame_title_0, 11.2, 0.55)" in script
 
     def test_special_characters_in_topic(self):
         """话题包含特殊字符应被安全处理。"""

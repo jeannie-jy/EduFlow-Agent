@@ -87,7 +87,7 @@ def validate_teaching_contract(
         segment_end = section_matches[index + 1].start()
         segment = script[segment_start:segment_end]
         if not re.search(
-            r"(?:FadeOut\s*\(|self\.(?:clear|remove)\s*\()",
+            r"(?:(?:Replacement)?Transform\s*\(|FadeOut\s*\(|self\.(?:clear|remove)\s*\()",
             segment,
         ):
             line = script[:section_matches[index + 1].start()].count("\n") + 1
@@ -96,8 +96,8 @@ def validate_teaching_contract(
                 "severity": "error",
                 "line": line,
                 "detail": (
-                    f"第 {index + 1} 个教学帧进入下一帧前没有 FadeOut/"
-                    "clear/remove，旧组件可能持续叠加"
+                    f"第 {index + 1} 个教学帧进入下一帧前没有 Transform/"
+                    "FadeOut/clear/remove，对象生命周期不可验证"
                 ),
             })
 

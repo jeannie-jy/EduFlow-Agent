@@ -578,26 +578,34 @@ class ManimScriptGenerator:
         lines.append("")
 
         prev_objects: dict[str, str] = {}
+        prev_title: str | None = None
 
         for i, frame in enumerate(self.frames):
-            if i > 0:
-                # Every frame is a complete snapshot.  Remove the previous
-                # snapshot before drawing the next one; otherwise tables,
-                # code blocks and graphs accumulate on top of each other.
-                lines.append("        self.play(FadeOut(*self.mobjects), run_time=0.25)")
             fid = frame.get("frame_id", f"f_{i:03d}")
             lines.append(f"        # ── {fid}: {frame.get('title', 'Untitled')} ──")
             lines.append(f"        self.next_section(name={fid!r})")
 
             title = " ".join(str(frame.get("title") or "").split())
+            title_var: str | None = None
             if title:
+                title_var = f"frame_title_{i}"
                 lines.append(
-                    f"        frame_title = Text({title[:32]!r}, font=EDUFLOW_CJK_FONT, "
+                    f"        {title_var} = Text({title[:32]!r}, font=EDUFLOW_CJK_FONT, "
                     "font_size=22, weight=SEMIBOLD, color=WHITE)"
                 )
-                lines.append("        eduflow_shrink_to_fit(frame_title, 11.2, 0.55)")
-                lines.append("        frame_title.to_edge(UP, buff=0.25)")
-                lines.append("        self.play(FadeIn(frame_title), run_time=0.25)")
+                lines.append(f"        eduflow_shrink_to_fit({title_var}, 11.2, 0.55)")
+                lines.append(f"        {title_var}.to_edge(UP, buff=0.25)")
+            if prev_title and title_var:
+                lines.append(f"        self.play(Transform({prev_title}, {title_var}), run_time=0.25)")
+                current_title = prev_title
+            elif prev_title:
+                lines.append(f"        self.play(FadeOut({prev_title}), run_time=0.2)")
+                current_title = None
+            elif title_var:
+                lines.append(f"        self.play(FadeIn({title_var}), run_time=0.25)")
+                current_title = title_var
+            else:
+                current_title = None
 
             # 生成 visual objects 创建代码
             obj_vars, obj_code, object_followups = self._generate_objects_for_frame(
@@ -606,9 +614,15 @@ class ManimScriptGenerator:
             for code_line in obj_code:
                 lines.append(code_line)
 
-            # 生成 animations
-            self._generate_animations_for_frame(frame, obj_vars, prev_objects, lines)
-            lines.extend(object_followups)
+            if i == 0:
+                # The opening scene establishes the persistent teaching stage.
+                self._generate_animations_for_frame(frame, obj_vars, {}, lines)
+                lines.extend(object_followups)
+                active_objects = dict(obj_vars)
+            else:
+                active_objects = self._transition_objects(
+                    frame, obj_vars, prev_objects, lines
+                )
 
             # 生成 narration（作为字幕）
             narration = frame.get("narration", "")
@@ -645,13 +659,54 @@ class ManimScriptGenerator:
             lines.append(f"        self.wait({wait_time:.1f})")
             lines.append("")
 
-            prev_objects = {**prev_objects, **obj_vars}
+            prev_objects = active_objects
+            prev_title = current_title
 
         lines.append("        # End of scene")
         lines.append('        self.play(FadeOut(*self.mobjects), run_time=1)')
         lines.append("        self.wait(0.5)")
 
         return "\n".join(lines)
+
+    def _transition_objects(
+        self,
+        frame: dict[str, Any],
+        new_objects: dict[str, str],
+        previous_objects: dict[str, str],
+        lines: list[str],
+    ) -> dict[str, str]:
+        """Morph stable semantic objects and only fade true additions/removals."""
+        active: dict[str, str] = {}
+        for object_id, previous_var in previous_objects.items():
+            if object_id not in new_objects:
+                lines.append(f"        self.play(FadeOut({previous_var}), run_time=0.25)")
+
+        for object_id, new_var in new_objects.items():
+            previous_var = previous_objects.get(object_id)
+            if previous_var:
+                lines.append(
+                    f"        self.play(Transform({previous_var}, {new_var}), run_time=0.45)"
+                )
+                active[object_id] = previous_var
+            else:
+                lines.append(f"        self.play(FadeIn({new_var}), run_time=0.35)")
+                active[object_id] = new_var
+
+        # The Transform above carries value, color, geometry and table changes.
+        # Semantic emphasis is therefore limited to the focus action instead
+        # of replaying the full traversal history on every scene.
+        for animation in frame.get("animations", []):
+            if animation.get("type") not in {
+                "highlight", "compare", "transform", "relax_edge", "split", "merge",
+            }:
+                continue
+            target = active.get(animation.get("target"))
+            if target:
+                duration = animation.get("duration_ms", 500) / 1000.0
+                lines.append(
+                    f"        self.play(Indicate({target}, color=YELLOW), run_time={duration:.1f})"
+                )
+        return active
 
     def _generate_objects_for_frame(
         self, frame: dict, prev_objects: dict, frame_idx: int
@@ -758,12 +813,7 @@ class ManimScriptGenerator:
                     node_var = f"{var_name}_{safe_node_id}"
                     node_vars[node_id] = node_var
                     node_x, node_y = node_centers.get(node_id, (x, y))
-                    source_id = str(snapshot.get("source") or snapshot.get("start") or "")
-                    node_color = (
-                        "#4A90D9"
-                        if animate_progress and node_id == source_id
-                        else ("#64748B" if animate_progress else _graph_node_color(snapshot, node_id))
-                    )
+                    node_color = _graph_node_color(snapshot, node_id)
                     node_label = str(node.get("label") or node_id)[:MAX_GENERATED_LABEL_CHARS]
                     distances = snapshot.get("dist") or snapshot.get("distances") or {}
                     distance_suffix = ""
@@ -824,19 +874,11 @@ class ManimScriptGenerator:
                     code_lines.append(f"        {var_name}.add({var_name}_title)")
 
                 if animate_progress:
-                    for visited_id in _graph_state_ids_in_order(snapshot, "visited"):
-                        visited_var = node_vars.get(visited_id)
-                        if visited_var:
-                            followup_lines.append(
-                                f"        self.play({visited_var}.animate.set_fill('#2ECC71', opacity=0.9)"
-                                ".set_stroke('#2ECC71', width=3), run_time=0.28)"
-                            )
                     current_id = str(snapshot.get("current") or snapshot.get("selected") or "")
                     current_var = node_vars.get(current_id)
                     if current_var:
                         followup_lines.append(
-                            f"        self.play({current_var}.animate.set_fill('#F59E0B', opacity=0.95)"
-                            ".set_stroke('#F59E0B', width=3), run_time=0.25)"
+                            f"        self.play(Indicate({current_var}, color='#F59E0B'), run_time=0.25)"
                         )
 
             elif obj_type == "array":

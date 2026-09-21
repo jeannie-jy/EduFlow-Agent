@@ -32,6 +32,29 @@ class Demo(Scene):
     assert not has_errors(issues)
 
 
+def test_contract_accepts_persistent_scene_transform():
+    script = """
+from manim import *
+class Demo(Scene):
+    def construct(self):
+        self.next_section(name="one")
+        graph = VGroup(Text("A"))
+        self.add(graph)
+        self.play(Transform(graph, VGroup(Text("B"))))
+        self.next_section(name="two")
+        self.add(Text("done"))
+"""
+
+    issues = validate_teaching_contract(
+        script,
+        expected_frames=2,
+        include_subtitles=False,
+        has_narration=False,
+    )
+
+    assert "missing-frame-cleanup" not in {issue["rule"] for issue in issues}
+
+
 def test_contract_rejects_missing_sections_cleanup_and_subtitle_bounds():
     script = """
 from manim import *
