@@ -76,6 +76,8 @@ fresh checkpoint thread so reruns cannot inherit prior graph state.
 
 ```bash
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 EDUFLOW_EVAL_JUDGE_ENDPOINT=https://api.example.com/v1 \
 EDUFLOW_EVAL_JUDGE_API_KEY=... \
 EDUFLOW_EVAL_JUDGE_MODEL=independent-model \
@@ -93,13 +95,18 @@ python -m evals.runners.run_online \
   --budget-usd 10
 ```
 
+The candidate and embedding keys above are evaluation-only environment
+variables. They are scoped in memory for the opted-in benchmark process and
+are not application defaults or persisted user credentials.
+
 The manual `Online EduFlowBench Quality` workflow starts isolated dependencies,
 runs this command, uploads the report/artifacts/logs, and always tears the stack
 down. `live_judge` uses separately configured endpoint/key/model values, validates
 all seven rubric dimensions, treats the candidate artifact as bounded untrusted
 data, and cannot override deterministic failures. It records candidate and Judge
-Token/cost separately. A report is not publishable until this independent Judge
-run and the required human calibration have actually completed.
+Token/cost separately. A formal report may be retained as a release baseline
+after the independent Judge run completes; a publishable semantic-quality claim
+still requires blinded human calibration.
 
 Prepare a deterministic blinded review sheet for at least 20% of the completed
 core run. Candidate/Judge identities and Judge scores are omitted from this file:
@@ -139,6 +146,8 @@ isolated evaluation database:
 
 ```bash
 EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
 EDUFLOW_EVAL_BOOTSTRAP=1 \
 python -m evals.runners.run_online \
   --dataset evals/datasets/tool_online_cases.jsonl \
@@ -161,9 +170,88 @@ called by default CI. Set the repository variables
 report keeps Token counts but its LLM cost estimate is zero. Embedding-provider
 cost is not included in that LLM estimate.
 
+### Production RAG retrieval benchmark
+
+`retrieval_production_v1.jsonl` is a small, auditable retrieval set aligned to
+the seeded production knowledge corpus. Its gold IDs are stable `source_key`
+values rather than database UUIDs, so a fresh evaluation database produces the
+same labels after reseeding. It also includes one explicit no-evidence case to
+measure abstention instead of rewarding an unrelated hit.
+
+Run a one-case smoke test first, then the full ten-case retrieval evaluation:
+
+```bash
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
+python -m evals.runners.run_retrieval \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --limit 1 \
+  --concurrency 1 \
+  --output evals/reports/retrieval-production-smoke.json
+
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
+python -m evals.runners.run_retrieval \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --concurrency 1 \
+  --output evals/reports/retrieval-production-v1.json
+```
+
+The runner records Recall@K, Precision@K, MRR, abstention pass rate, and
+retrieval-only mean/p50/p95 latency. It calls the embedding provider and is
+therefore intentionally opt-in; `--concurrency 1` avoids provider rate-limit
+noise and makes latency comparisons reproducible. These metrics evaluate
+retrieval and abstention only, not end-to-end generated teaching quality.
+
+### End-to-end RAG groundedness benchmark
+
+The retrieval-only run does not prove that evidence reaches the generated DSL.
+`run_rag_groundedness` executes the production LangGraph workflow, checks the
+normal deterministic artifact contract, and then verifies that the relevant
+retrieved `source_id` values survive into `knowledge_graph.sources`. It reports
+retrieval recall/precision/MRR, citation coverage/correctness, evidence
+propagation, abstention, latency, and candidate cost.
+
+Run one case before the full set because each case executes the complete
+Planner–Knowledge–Coder–Quality–Reflection workflow:
+
+```bash
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
+python -m evals.runners.run_rag_groundedness \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --limit 1 --concurrency 1 --budget-usd 1 \
+  --artifacts-dir evals/reports/rag-groundedness-smoke-artifacts \
+  --output evals/reports/rag-groundedness-smoke.json
+
+EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+EDUFLOW_EVAL_LLM_API_KEY=... \
+EDUFLOW_EVAL_EMBEDDING_API_KEY=... \
+python -m evals.runners.run_rag_groundedness \
+  --dataset evals/datasets/retrieval_production_v1.jsonl \
+  --concurrency 1 --budget-usd 3 \
+  --artifacts-dir evals/reports/rag-groundedness-v1-artifacts \
+  --output evals/reports/rag-groundedness-v1.json
+```
+
+To rerun only the explicit no-evidence case, use `--offset 9 --limit 1`.
+Unknown/private-topic requests are an intentional grounding boundary: the
+retriever ignores generated objective expansions, and the Coder emits a small
+deterministic evidence-boundary artifact instead of inventing topic facts.
+
+This is an end-to-end grounding check, not a claim of factual accuracy across
+the open world; the dataset size and corpus version must be reported with any
+result.
+
 ## Evaluation policy
 
 - Deterministic failures are blocking and cannot be overwritten by an LLM judge.
 - Online model generation and LLM judging use an explicit opt-in runner or a separately and manually dispatched workflow.
 - Every report records model, prompt, workflow, and source versions.
 - Generated reports are build artifacts and are not committed unless selected as a release baseline.
+
+Selected immutable evidence is indexed under
+[`release_baselines/`](release_baselines/README.md). Each baseline records its
+Git revision, dataset hash, model configuration, gate results, limitations, and
+checksums for the committed raw reports.

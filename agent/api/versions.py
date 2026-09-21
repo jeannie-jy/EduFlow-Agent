@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,8 +23,8 @@ from db.models import User
 from schema.project import CreateVersionRequest
 from services.dsl_diff import diff_dsl_versions
 
-from .auth import require_editor
-from .deps import parse_project_id, safe_project_uuid
+from .auth import get_current_user, require_editor
+from .deps import ensure_project_access, parse_project_id, safe_project_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def save_version(
         version=max_ver + 1,
         dsl_snapshot=deepcopy(compacted_dsl),
         change_summary=change_summary
-        or f"Auto-saved at {datetime.now(timezone.utc).isoformat()}",
+        or f"Auto-saved at {datetime.now(UTC).isoformat()}",
     )
     session.add(version)
     await session.flush()
@@ -83,6 +83,7 @@ async def create_version(
     project_id: str,
     body: CreateVersionRequest,
     session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
     _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """手动保存当前 DSL 为新版本。"""
@@ -91,6 +92,7 @@ async def create_version(
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
     if not project.dsl_snapshot:
         raise HTTPException(status_code=400, detail="Project has no DSL to save")
 
@@ -106,6 +108,7 @@ async def create_version(
 async def list_versions(
     project_id: str,
     session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """获取项目的所有历史版本。"""
     from db.models import Project, ProjectVersion
@@ -113,6 +116,7 @@ async def list_versions(
     project = await session.get(Project, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     query = (
         select(ProjectVersion)
@@ -141,6 +145,7 @@ async def get_version(
     project_id: str,
     vid: str,
     session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """获取指定版本的完整 DSL。"""
     from db.models import Project, ProjectVersion
@@ -154,6 +159,7 @@ async def get_version(
     project = await session.get(Project, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     return {
         "id": str(v.id),
@@ -171,6 +177,7 @@ async def diff_version(
     vid: str,
     to_version_id: str | None = Query(default=None),
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """Compare one saved version with another version or the current project DSL."""
     from db.models import Project as ProjectModel
@@ -182,6 +189,10 @@ async def diff_version(
     source = await session.get(ProjectVersion, source_uuid)
     if source is None or str(source.project_id) != project_id:
         raise HTTPException(status_code=404, detail="Version not found")
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     if to_version_id:
         target_uuid = safe_project_uuid(to_version_id)
@@ -197,9 +208,6 @@ async def diff_version(
             "version": target.version,
         }
     else:
-        project = await session.get(ProjectModel, parse_project_id(project_id))
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found")
         target_dsl = project.dsl_snapshot
         target_ref = {"type": "current", "id": project_id}
 
@@ -215,6 +223,7 @@ async def restore_version(
     project_id: str,
     vid: str,
     session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
     _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """恢复到指定版本（将 DSL 替换为该版本的快照）。"""
@@ -224,6 +233,7 @@ async def restore_version(
     project = await session.get(ProjectModel, parse_project_id(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     vid_uuid = safe_project_uuid(vid)
     if vid_uuid is None:

@@ -67,6 +67,42 @@ async def test_live_judge_validates_rubric_and_records_usage(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_live_judge_repairs_top_level_metadata_nested_in_criteria(monkeypatch):
+    from evals.generators.live_judge import judge_workflow_case
+
+    monkeypatch.setenv("EDUFLOW_EVAL_JUDGE_ENDPOINT", "https://judge.example/v1")
+    monkeypatch.setenv("EDUFLOW_EVAL_JUDGE_API_KEY", "judge-secret")
+    monkeypatch.setenv("EDUFLOW_EVAL_JUDGE_MODEL", "independent-judge")
+    criteria = {
+        name: {"score": 4, "reason": "meets rubric"}
+        for name in JUDGE_CRITERIA
+    }
+    criteria["overall_score"] = 4.4
+    criteria["deterministic_passed"] = True
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+            "criteria": criteria,
+        })))],
+        usage=None,
+    )
+    with (
+        patch("evals.generators.live_judge._get_client", return_value=object()),
+        patch(
+            "services.llm_gateway.execute_llm_call",
+            AsyncMock(return_value=response),
+        ),
+    ):
+        result = await judge_workflow_case(
+            _case(),
+            {"topic": "冒泡排序", "frames": [{"frame_id": "f1"}]},
+            {"passed": True},
+        )
+
+    assert result["judge"]["overall_score"] == 4.4
+    assert set(result["judge"]["criteria"]) == set(JUDGE_CRITERIA)
+
+
+@pytest.mark.asyncio
 async def test_live_judge_requires_separate_configuration(monkeypatch):
     from evals.generators import live_judge
 

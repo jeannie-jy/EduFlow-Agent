@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from api.auth import (
     LoginRequest,
@@ -31,13 +31,14 @@ def _disable_external_rate_limiter():
 
 @pytest_asyncio.fixture
 async def auth_db():
-    from db.models import AuditEvent, AuthSession, User
+    from db.models import AuditEvent, AuthSession, User, UserConsent
 
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as connection:
         await connection.run_sync(User.__table__.create)
         await connection.run_sync(AuthSession.__table__.create)
         await connection.run_sync(AuditEvent.__table__.create)
+        await connection.run_sync(UserConsent.__table__.create)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
@@ -61,6 +62,7 @@ async def test_register_issues_httponly_cookie_and_me_resolves_session(auth_db):
             email="  Learner@Example.com ",
             nickname="Learner",
             password="secure-pass-42",
+            accepted_terms=True,
         ),
         _request(),
         response,
@@ -74,7 +76,7 @@ async def test_register_issues_httponly_cookie_and_me_resolves_session(auth_db):
     resolved = await get_current_user(morsel.value, auth_db)
 
     assert user_data["email"] == "learner@example.com"
-    assert user_data["role"] == "teacher"
+    assert user_data["role"] == "student"
     assert resolved is not None
     assert str(resolved.id) == user_data["id"]
     assert morsel["httponly"] is True
@@ -94,6 +96,7 @@ async def test_login_rejects_wrong_password(auth_db):
             email="owner@example.com",
             nickname="Owner",
             password="secure-pass-42",
+            accepted_terms=True,
         ),
         _request("127.0.0.2"),
         Response(),
@@ -116,9 +119,8 @@ async def test_missing_cookie_is_rejected_when_auth_is_required():
     with patch(
         "api.auth.get_settings",
         return_value=MagicMock(auth_required=True),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await get_current_user(None, MagicMock())
+    ), pytest.raises(HTTPException) as exc:
+        await get_current_user(None, MagicMock())
     assert exc.value.status_code == 401
 
 
@@ -138,12 +140,11 @@ async def test_process_fallback_rate_limiter_blocks_after_limit():
 
 
 @pytest.mark.asyncio
-async def test_student_cannot_use_editor_role_dependency():
+async def test_student_can_create_owned_learning_content():
     from api.auth import require_editor
 
-    with pytest.raises(HTTPException) as caught:
-        await require_editor(MagicMock(role="student"))
-    assert caught.value.status_code == 403
+    student = MagicMock(role="student")
+    assert await require_editor(student) is student
 
 
 @pytest.mark.asyncio

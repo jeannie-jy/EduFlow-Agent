@@ -1,8 +1,10 @@
 """EduFlowBench dataset and deterministic grader tests."""
 
+import json
 from pathlib import Path
 
 import pytest
+
 from evals.graders import grade_artifact
 from evals.graders.human_calibration import calibration_report
 from evals.graders.llm_judge import (
@@ -21,6 +23,7 @@ from evals.runners.run_online import _report_exit_code, run_online_cases
 DATASET = Path(__file__).parents[1] / "evals" / "datasets" / "eduflowbench_v1.jsonl"
 INJECTION_DATASET = DATASET.with_name("injection_cases.jsonl")
 RETRIEVAL_DATASET = DATASET.with_name("retrieval_cases.jsonl")
+PRODUCTION_RETRIEVAL_DATASET = DATASET.with_name("retrieval_production_v1.jsonl")
 TOOL_ONLINE_DATASET = DATASET.with_name("tool_online_cases.jsonl")
 CASE_SCHEMA = DATASET.parents[1] / "schemas" / "case.schema.json"
 
@@ -101,6 +104,41 @@ def test_online_tool_dataset_targets_real_registry_contract():
         for tool in case.tools.expected_tools
     }
     assert expected == {"knowledge_search", "material_lookup", "get_project_context"}
+
+
+def test_production_retrieval_dataset_uses_stable_source_keys():
+    cases = load_cases(PRODUCTION_RETRIEVAL_DATASET)
+    assert len(cases) == 10
+    assert all(case.retrieval is not None for case in cases)
+    assert all(
+        case.retrieval.relevant_document_ids
+        for case in cases
+        if not case.retrieval.must_abstain_without_evidence
+    )
+    abstention_cases = [
+        case for case in cases if case.retrieval.must_abstain_without_evidence
+    ]
+    assert len(abstention_cases) == 1
+    assert abstention_cases[0].retrieval.relevant_document_ids == ["sentinel-no-match"]
+
+
+def test_rag_groundedness_requires_source_propagation():
+    from evals.runners.run_rag_groundedness import _grade_groundedness
+
+    case = load_cases(PRODUCTION_RETRIEVAL_DATASET)[0]
+    base_result = {
+        "passed": True,
+        "generator_metadata": {
+            "retrieval": {
+                "status": "ok",
+                "sources": [{"source_id": "algo-dijkstra-constraints"}],
+            },
+            "artifact_source_ids": ["algo-dijkstra-constraints"],
+        },
+    }
+    assert _grade_groundedness(case, base_result)["passed"] is True
+    base_result["generator_metadata"]["artifact_source_ids"] = []
+    assert _grade_groundedness(case, base_result)["passed"] is False
 
 
 @pytest.mark.asyncio
@@ -413,7 +451,20 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
             "artifact": _artifact(),
             "usage": {"input": 10, "output": 20},
             "cost_usd": 0.01,
-            "metadata": {"quality_report": {"overall_score": 0.8}},
+            "metadata": {
+                "finalization_report": {
+                    "applied": False,
+                    "mode": "canonical",
+                    "repair_count": 0,
+                },
+                "quality_report": {
+                    "overall_score": 0.8,
+                    "normalization": {
+                        "applied": True,
+                        "repair_count": 2,
+                    },
+                }
+            },
         }
 
     cases = [
@@ -429,7 +480,23 @@ async def test_online_runner_is_bounded_and_collects_engineering_metrics(tmp_pat
     assert report["results"][0]["generator_metadata"]["quality_report"][
         "overall_score"
     ] == 0.8
-    assert len(list(tmp_path.glob("*.json"))) == 4
+    assert report["summary"]["normalization_repaired_cases"] == 4
+    assert report["summary"]["normalization_repair_count"] == 8
+    assert report["summary"]["finalization_case_count"] == 4
+    assert report["summary"]["finalization_fallback_case_count"] == 0
+    # Each case writes the normalized artifact plus an audit bundle containing
+    # raw output, normalization metadata and the final decision.
+    assert len(list(tmp_path.glob("*.json"))) == 8
+    audit = json.loads((tmp_path / "alg_online_0.audit.json").read_text(encoding="utf-8"))
+    assert set(audit) == {
+        "case_id",
+        "raw_coder_output",
+        "normalization_report",
+        "finalization_report",
+        "normalized_artifact",
+        "final_decision",
+    }
+    assert audit["final_decision"]["passed"] is True
 
 
 @pytest.mark.asyncio
@@ -573,9 +640,46 @@ async def test_online_runner_preserves_candidate_cost_when_judge_fails():
     report = await run_online_cases([_case()], generator, judge=judge)
     result = report["results"][0]
 
-    assert result["passed"] is False
+    assert result["passed"] is True
     assert result["candidate_cost_usd"] == 0.01
     assert result["cost_usd"] == 0.01
+    assert result["judge_status"] == "unavailable"
     assert result["judge_error"] == "TimeoutError"
-    assert result["issues"][-1] == "judge failed: TimeoutError: judge timeout"
+    assert result["issues"] == []
+    assert result["judge_warnings"] == [
+        "judge failed: TimeoutError: judge timeout"
+    ]
+    assert report["summary"]["passed_cases"] == 1
+    assert report["summary"]["judge_error_count"] == 1
+    assert report["summary"]["judge_error_case_ids"] == ["alg_bubble_test"]
+    assert report["summary"]["judge_coverage_rate"] == 0.0
     assert report["summary"]["total_cost_usd"] == 0.01
+
+
+@pytest.mark.asyncio
+async def test_online_runner_repeats_cases_and_reports_flaky_rate(tmp_path):
+    calls = 0
+
+    async def flaky_generator(_case):
+        nonlocal calls
+        calls += 1
+        artifact = _artifact()
+        if calls == 2:
+            artifact["frames"][-1]["state_snapshot"]["array"] = [3, 2, 1]
+        return {"artifact": artifact, "cost_usd": 0.01}
+
+    report = await run_online_cases(
+        [_case()],
+        flaky_generator,
+        artifacts_dir=tmp_path,
+        repetitions=3,
+    )
+
+    assert [result["passed"] for result in report["results"]] == [True, False, True]
+    assert report["summary"]["attempt_count"] == 3
+    assert report["summary"]["repetition_count"] == 3
+    assert report["summary"]["flaky_case_count"] == 1
+    assert report["summary"]["flaky_rate"] == 1.0
+    assert _report_exit_code(report) == 1
+    assert _report_exit_code(report, fail_on_flaky=True) == 1
+    assert len(list(tmp_path.glob("*.json"))) == 6

@@ -72,7 +72,7 @@ agent/
 │
 ├── db/                       # 数据库层
 │   ├── database.py           # AsyncSession 工厂
-│   └── models.py             # SQLAlchemy ORM 模型（20 张表；知识库表单独迁移）
+│   └── models.py             # SQLAlchemy ORM 模型（28 张表；知识库表单独迁移）
 │
 ├── services/                 # 业务服务层
 │   ├── generate_service.py   # SSE 流式生成编排（调用 LangGraph + 推送进度 + 统一持久化）
@@ -124,7 +124,7 @@ agent/
 │   ├── test_phase2_reliability.py # 生成器可靠性（畸形输出/失败落库/字段白名单）
 │   └── ...
 │
-└── alembic/                  # 20 个数据库迁移（当前 20 张 ORM 表 + knowledge_base）
+└── alembic/                  # Alembic 数据库迁移（当前 28 张 ORM 表 + knowledge_base）
 ```
 
 ## Agent 协作流程
@@ -185,7 +185,9 @@ agent/
 | `POST` | `/api/knowledge/search` | 语义检索（pgvector） |
 | `GET` | `/api/knowledge/templates` | 知识点模板列表 |
 | `POST` | `/api/materials/upload` | 上传课件文件 |
+| `GET` | `/api/materials` | 当前用户课件列表（仅元数据） |
 | `POST` | `/api/materials/{id}/parse` | 解析文件内容 |
+| `DELETE` | `/api/materials/{id}` | 删除当前用户课件 |
 | `GET/DELETE` | `/api/background-jobs/{job_id}` | 查询或取消持久化后台任务 |
 | `GET` | `/api/projects/{id}/workflow-runs` | 查询项目工作流运行记录 |
 | `GET` | `/api/projects/{id}/workflow-runs/{run_id}` | 查询节点级 Trace、模型和成本 |
@@ -198,6 +200,12 @@ agent/
 | `POST` | `/api/projects/{id}/versions/{vid}/restore` | 恢复版本 |
 | `GET` | `/api/metrics` | 进程与数据库运营指标（JSON） |
 | `GET` | `/api/metrics/prometheus` | Prometheus exposition 指标 |
+| `GET/POST` | `/api/me/consents` | 查询/记录模型材料处理同意（只记录策略版本与时间） |
+| `GET` | `/api/me/provider-credentials` | 查看本人凭据元数据（不返回明文） |
+| `POST` | `/api/me/provider-credentials` | 新增/轮换本人供应商凭据 |
+| `POST` | `/api/me/provider-credentials/{id}/validate` | 验证本人凭据 |
+| `DELETE` | `/api/me/provider-credentials/{id}` | 撤销本人凭据 |
+| `GET` | `/api/me/usage` | 查看本人资源、Token 与参考费用用量 |
 
 完整契约见[开发任务与接口规范](../docs/开发任务与接口规范.md)。
 
@@ -207,11 +215,14 @@ agent/
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `LLM_API_KEY` | — | DeepSeek API Key（**必填**） |
-| `LLM_ENDPOINT` | `https://api.deepseek.com/v1` | LLM API 地址 |
-| `LLM_MODEL` | `deepseek-v4-flash` | 模型名称；结构化生成默认关闭 thinking 并使用 JSON mode |
-| `EMBEDDING_API_KEY` | — | OpenAI API Key |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | 嵌入模型 |
+| `BYOK_REQUIRED` | `true`（不可关闭） | 强制用户配置自己的模型凭据；平台不提供全局 Key 回退 |
+| `CREDENTIAL_KMS_BACKEND` | `local`（仅开发） | 生产使用内网 HTTPS KMS Bridge；数据库只保存信封密文 |
+| `METRICS_ACCESS_TOKEN` | — | 生产/预发布指标端点的内部抓取令牌；不得暴露给浏览器 |
+| `LLM_API_KEY` | — | 已停用；用户在“模型接入”中提交生成凭据 |
+| `LLM_ENDPOINT` / `LLM_MODEL` | — | 供应商默认值；实际地址和模型来自用户当前连接 |
+| `EMBEDDING_API_KEY` | — | 已停用；未配置用户 Embedding 连接时降级为关键词检索 |
+| `EMBEDDING_MODEL` | `text-embedding-v4` | 本地兼容模型；生产使用服务端固定的百炼模型 |
+| `EMBEDDING_DIMENSION` | `1024` | pgvector 向量维度，必须匹配 Embedding 服务返回值 |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | 数据库连接 |
 | `REDIS_URL` | `redis://localhost:6379` | Redis 连接 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
@@ -236,7 +247,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-最近一次常规本地后端回归为 **1107 passed，6 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。前端最近一次为 **41 files / 297 tests**，TypeScript、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
+最近一次 Python 3.12 常规本地后端回归为 **1241 passed，1 failed，1 skipped，8 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）；失败项为持久化 SSE 后台生产者测试。前端最近一次为 **44 files / 316 tests**，TypeScript、测试、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
 
 ## 数据流
 

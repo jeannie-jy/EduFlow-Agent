@@ -12,8 +12,13 @@ from services.llm_gateway import (
     execute_llm_call_with_fallback,
     reset_gateway_state,
 )
-from services.telemetry import reset_telemetry, telemetry_snapshot
-from services.telemetry import LLMBudgetExceededError, charge_llm_budget, llm_budget_scope
+from services.telemetry import (
+    LLMBudgetExceededError,
+    charge_llm_budget,
+    llm_budget_scope,
+    reset_telemetry,
+    telemetry_snapshot,
+)
 
 
 def _settings(**overrides):

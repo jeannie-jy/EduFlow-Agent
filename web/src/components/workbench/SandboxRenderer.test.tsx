@@ -21,10 +21,7 @@ describe("SandboxRenderer", () => {
     );
 
     const frame = await screen.findByTitle("交互推演");
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".eduflow-demo__stage"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".eduflow-demo__timeline-item.is-current"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".eduflow-demo {"));
-    expect(frame).toHaveAttribute("srcdoc", expect.not.stringContaining("cdn.tailwindcss.com"));
+    expect(frame).toHaveAttribute("src", "/sandbox.html");
     expect(frame.className).toContain("min-h-[760px]");
   });
 
@@ -38,12 +35,7 @@ describe("SandboxRenderer", () => {
     );
 
     const frame = await screen.findByTitle("交互推演");
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".grid-cols-2"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".gap-4"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".p-6"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining(".rounded-xl"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining('data-sandbox-action="primary"'));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining('data-sandbox-controls="true"'));
+    expect(frame).toHaveAttribute("src", "/sandbox.html");
   });
 
   it("shows a stable user-facing error when runtime compilation fails", async () => {

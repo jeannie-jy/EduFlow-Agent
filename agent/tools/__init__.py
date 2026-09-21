@@ -12,6 +12,16 @@ Agent-facing Function Calling definitions and execution live in
 ``services.tool_runtime``; this package retains deterministic internal tools.
 """
 
+from .algorithm_trace_compiler import compile_algorithm_trace
+from .design_parameters import (
+    design_parameters,
+)
+from .finalize_dsl import finalize_dsl
+from .generate_asset import (
+    generate_asset,
+)
+from .normalize_dsl import normalize_dsl
+from .sorting_trace_compiler import compile_sorting_trace
 from .validate_dsl import (
     check_algorithm_invariants,
     check_state_consistency,
@@ -19,25 +29,19 @@ from .validate_dsl import (
     validate_dsl_schema,
 )
 
-from .generate_asset import (
-    generate_asset,
-)
-
-from .design_parameters import (
-    design_parameters,
-)
-from .normalize_dsl import normalize_dsl
-
 __all__ = [
-    # validate_dsl
-    "validate_dsl_schema",
-    "check_state_consistency",
     "check_algorithm_invariants",
-    "stabilize_algorithm_trace",
-    # generate_asset
-    "generate_asset",
+    "check_state_consistency",
+    "compile_algorithm_trace",
+    "compile_sorting_trace",
     # design_parameters
     "design_parameters",
+    "finalize_dsl",
+    # generate_asset
+    "generate_asset",
     # normalize_dsl
     "normalize_dsl",
+    "stabilize_algorithm_trace",
+    # validate_dsl
+    "validate_dsl_schema",
 ]

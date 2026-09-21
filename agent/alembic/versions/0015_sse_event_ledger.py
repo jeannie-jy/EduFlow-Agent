@@ -7,8 +7,9 @@ Revises: 0014_material_parse_jobs
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0015_sse_event_ledger"
 down_revision: str | None = "0014_material_parse_jobs"

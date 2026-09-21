@@ -13,6 +13,21 @@ on:
         required: true
         default: deepseek-chat
         type: string
+      embedding_endpoint:
+        description: OpenAI-compatible embedding endpoint
+        required: true
+        default: https://llm-ffgi4szc2den5n8v.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        type: string
+      embedding_model:
+        description: Embedding model identifier
+        required: true
+        default: text-embedding-v4
+        type: string
+      embedding_dimension:
+        description: Embedding vector dimension used by pgvector
+        required: true
+        default: "1024"
+        type: string
       judge_endpoint:
         description: Independent judge OpenAI-compatible endpoint
         required: true
@@ -32,6 +47,11 @@ on:
         required: true
         default: "50"
         type: string
+      smoke_repetitions:
+        description: Number of repetitions per smoke case before the formal run
+        required: true
+        default: "3"
+        type: string
 
 concurrency:
   group: online-quality-bench-${{ github.ref }}
@@ -47,8 +67,11 @@ jobs:
       MINIO_PASSWORD: ci-online-quality-minio-password
       LLM_ENDPOINT: ${{ inputs.llm_endpoint }}
       LLM_MODEL: ${{ inputs.llm_model }}
-      LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
-      EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
+      EDUFLOW_EVAL_LLM_API_KEY: ${{ secrets.EDUFLOW_EVAL_LLM_API_KEY }}
+      EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}
+      EMBEDDING_MODEL: ${{ inputs.embedding_model }}
+      EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}
+      EDUFLOW_EVAL_EMBEDDING_API_KEY: ${{ secrets.EDUFLOW_EVAL_EMBEDDING_API_KEY }}
       EDUFLOW_EVAL_JUDGE_ENDPOINT: ${{ inputs.judge_endpoint }}
       EDUFLOW_EVAL_JUDGE_MODEL: ${{ inputs.judge_model }}
       EDUFLOW_EVAL_JUDGE_API_KEY: ${{ secrets.EDUFLOW_EVAL_JUDGE_API_KEY }}
@@ -63,22 +86,78 @@ jobs:
 
       - name: Require explicit evaluation credentials
         run: |
-          test -n "$LLM_API_KEY"
-          test -n "$EMBEDDING_API_KEY"
+          test -n "$EDUFLOW_EVAL_LLM_API_KEY"
+          test -n "$EDUFLOW_EVAL_EMBEDDING_API_KEY"
           test -n "$EDUFLOW_EVAL_JUDGE_API_KEY"
+          test -n "$EMBEDDING_ENDPOINT"
+          test -n "$EMBEDDING_MODEL"
+          test "$EMBEDDING_DIMENSION" -eq "$EMBEDDING_DIMENSION" 2>/dev/null
           test "$LLM_MODEL" != "$EDUFLOW_EVAL_JUDGE_MODEL"
+          echo "Embedding endpoint: $EMBEDDING_ENDPOINT"
+          echo "Embedding model: $EMBEDDING_MODEL"
+          echo "Embedding dimension: $EMBEDDING_DIMENSION"
 
       - name: Start isolated workflow dependencies
         run: >-
           docker compose up -d --build --wait --wait-timeout 180
           postgres redis minio agent-api
 
-      - name: Run production LangGraph quality benchmark
-        id: benchmark
+      - name: Seed knowledge embeddings
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
+            agent-api python -m scripts.seed_embeddings
+
+      - name: Verify retrieval health
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
+            agent-api python -m scripts.retrieval_health
+
+      - name: Run repeated smoke benchmark
+        id: smoke
         continue-on-error: true
         run: |
           docker compose exec -T \
             -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
+            -e GITHUB_SHA \
+            -e EDUFLOW_EVAL_JUDGE_ENDPOINT \
+            -e EDUFLOW_EVAL_JUDGE_MODEL \
+            -e EDUFLOW_EVAL_JUDGE_API_KEY \
+            -e EDUFLOW_EVAL_JUDGE_INPUT_COST_PER_MILLION \
+            -e EDUFLOW_EVAL_JUDGE_OUTPUT_COST_PER_MILLION \
+            agent-api \
+            python -m evals.runners.run_online \
+              --dataset evals/datasets/eduflowbench_v1.jsonl \
+              --generator evals.generators.live_workflow:generate_workflow_case \
+              --output /tmp/quality-smoke-report.json \
+              --artifacts-dir /tmp/quality-smoke-artifacts \
+              --concurrency 1 \
+              --timeout-seconds 300 \
+              --model "$LLM_MODEL" \
+              --prompt-version workflow-v2 \
+              --judge-generator evals.generators.live_judge:judge_workflow_case \
+              --judge-model "$EDUFLOW_EVAL_JUDGE_MODEL" \
+              --limit 3 \
+              --repetitions "${{ inputs.smoke_repetitions }}" \
+              --fail-on-flaky \
+              --budget-usd "${{ inputs.budget_usd }}"
+
+      - name: Run production LangGraph quality benchmark
+        id: benchmark
+        continue-on-error: true
+        if: steps.smoke.outcome == 'success'
+        run: |
+          docker compose exec -T \
+            -e EDUFLOW_ALLOW_ONLINE_EVAL=1 \
+            -e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY" \
+            -e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY" \
             -e GITHUB_SHA \
             -e EDUFLOW_EVAL_JUDGE_ENDPOINT \
             -e EDUFLOW_EVAL_JUDGE_MODEL \
@@ -103,6 +182,8 @@ jobs:
       - name: Collect benchmark report and diagnostics
         if: always()
         run: |
+          docker compose cp agent-api:/tmp/quality-smoke-report.json quality-smoke-report.json || true
+          docker compose cp agent-api:/tmp/quality-smoke-artifacts quality-smoke-artifacts || true
           docker compose cp agent-api:/tmp/quality-online-report.json quality-online-report.json || true
           docker compose cp agent-api:/tmp/quality-online-artifacts quality-online-artifacts || true
           docker compose ps --all > compose-ps.txt
@@ -116,6 +197,8 @@ jobs:
           path: |
             quality-online-report.json
             quality-online-artifacts/
+            quality-smoke-report.json
+            quality-smoke-artifacts/
             compose-ps.txt
             agent-api.log
           if-no-files-found: warn
@@ -126,5 +209,5 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
       - name: Enforce benchmark result
-        if: steps.benchmark.outcome != 'success'
+        if: steps.smoke.outcome != 'success' || steps.benchmark.outcome != 'success'
         run: exit 1

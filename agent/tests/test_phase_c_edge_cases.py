@@ -14,14 +14,13 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ============================================================================
 # Setup — 复用 Phase C 模块的注册逻辑
 # ============================================================================
 
 
 def _ensure_quiz_and_comparison():
-    from generators.registry import register_generator, has_generator
+    from generators.registry import has_generator, register_generator
     if not has_generator("quiz"):
         from generators.quiz_generator import QuizGenerator
         register_generator(QuizGenerator())
@@ -89,7 +88,7 @@ class TestQuizPerQuestionType:
         issues = gen_quiz.validate({"questions": [q]})
         # missing correct_answer for true_false is not flagged (optional field)
         # but it's a quality concern
-        warnings = [i for i in issues if i["severity"] in ("warn", "medium")]
+        [i for i in issues if i["severity"] in ("warn", "medium")]
         # accept either no issue or a warn about missing explanation context
         assert isinstance(issues, list)
 

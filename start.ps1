@@ -1,4 +1,4 @@
-# EduFlow-Agent 一键启动脚本 (Windows PowerShell)
+﻿# EduFlow-Agent 一键启动脚本 (Windows PowerShell)
 # 用法: .\start.ps1 [-Infra] [-Backend] [-Frontend] [-Video] [-All]
 param(
     [switch]$Infra,
@@ -24,10 +24,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 if (-not (Test-Path ".env")) {
     Write-Host "[!] 未找到 .env 文件，从 .env.example 复制..." -ForegroundColor Yellow
     Copy-Item ".env.example" ".env"
-    Write-Host "[!] 请编辑 .env 填入 API Key，然后重新运行" -ForegroundColor Yellow
-    Write-Host "    LLM_API_KEY=your-deepseek-api-key" -ForegroundColor Yellow
-    Write-Host "    EMBEDDING_API_KEY=your-openai-api-key" -ForegroundColor Yellow
-    exit 1
+    Write-Host "[i] 模型密钥不写入 .env；启动后请由用户在“模型接入”页面配置。" -ForegroundColor Cyan
 }
 
 # ── 2. 启动基础设施（Docker）────────────────────────────────
@@ -158,4 +155,4 @@ if ($Video) {
     Write-Host "  视频: Worker + 隔离沙箱已启用" -ForegroundColor Green
 }
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "`n提示: 在 .env 中配置 LLM_API_KEY 后即可使用 Agent 功能" -ForegroundColor Gray
+Write-Host "`n提示: 登录后请在“模型接入”页面配置并启用自己的 API 连接" -ForegroundColor Gray

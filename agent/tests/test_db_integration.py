@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -47,9 +47,7 @@ def _make_sqlite_compatible():
 
     for table in Base.metadata.tables.values():
         for col in table.columns:
-            if isinstance(col.type, JSONB):
-                col.type = types.JSON()
-            elif isinstance(col.type, ARRAY):
+            if isinstance(col.type, (JSONB, ARRAY)):
                 col.type = types.JSON()
             elif isinstance(col.type, PG_UUID):
                 col.type = types.Uuid(as_uuid=True)
@@ -707,7 +705,7 @@ class TestExportJobCRUD:
 
         job.status = "completed"
         job.progress_pct = 100.0
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         await db_session.flush()
 
         result = await db_session.execute(

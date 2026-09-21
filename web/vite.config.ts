@@ -14,6 +14,14 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, "index.html"),
+        sandbox: path.resolve(__dirname, "sandbox.html"),
+      },
+    },
+  },
   server: {
     host: "0.0.0.0",
     proxy: {

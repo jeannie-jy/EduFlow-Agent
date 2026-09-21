@@ -1,5 +1,5 @@
 import { AudienceSection } from "./components/AudienceSection";
-import { getAuthState } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { CapabilitySection } from "./components/CapabilitySection";
 import { FinalActionSection } from "./components/FinalActionSection";
 import { HeroSection } from "./components/HeroSection";
@@ -8,7 +8,9 @@ import { SiteHeader } from "./components/SiteHeader";
 import { TemplateSection } from "./components/TemplateSection";
 
 export function LandingPage() {
-  const isAuthenticated = getAuthState()?.isAuthenticated ?? false;
+  const { state, status } = useAuth();
+  // Do not advertise a workspace while the cached identity is being checked.
+  const isAuthenticated = status === "ready" && state?.isAuthenticated === true;
 
   return (
     <div className="landing-page min-h-screen bg-background text-foreground">

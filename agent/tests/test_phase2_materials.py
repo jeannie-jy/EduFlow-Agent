@@ -291,6 +291,8 @@ class TestUploadSecurity:
         session.flush = AsyncMock()
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
+        session.scalar = AsyncMock(return_value=0)
+        session.get = AsyncMock(return_value=None)
         user = MagicMock(id=uuid.uuid4())
         upload = UploadFile(filename="lesson.txt", file=io.BytesIO("队列".encode()))
 
@@ -317,6 +319,8 @@ class TestUploadSecurity:
         store = MagicMock(put_file=AsyncMock(), delete=AsyncMock())
         session = MagicMock(
             add=MagicMock(),
+            scalar=AsyncMock(return_value=0),
+            get=AsyncMock(return_value=None),
             flush=AsyncMock(),
             commit=AsyncMock(side_effect=RuntimeError("commit failed")),
             rollback=AsyncMock(),

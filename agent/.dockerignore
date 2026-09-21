@@ -7,8 +7,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .cache/
+.pytest-tmp/
 .coverage
 htmlcov/
 tests/
 evals/reports/
-data/
+# Keep the read-only template catalog in the image, but exclude runtime data.
+data/*
+!data/seed_knowledge.json

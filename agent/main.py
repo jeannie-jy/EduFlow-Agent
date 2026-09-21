@@ -8,20 +8,37 @@ FastAPI 应用，负责：
 
 from __future__ import annotations
 
-import logging
 import asyncio
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+import logging
+import secrets
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from db.database import get_readonly_session
 
 logger = logging.getLogger(__name__)
+
+
+async def require_metrics_access(request: Request) -> None:
+    """Keep operational metrics off the public surface in deployed environments."""
+    settings = get_settings()
+    if settings.environment not in {"staging", "production"}:
+        return
+    supplied = request.headers.get("x-metrics-token", "")
+    if not supplied:
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            supplied = authorization[7:].strip()
+    expected = settings.metrics_access_token
+    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+        # Do not advertise an operational endpoint to unauthenticated clients.
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 # ── Lifespan ──────────────────────────────────────────────────
@@ -31,6 +48,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期：启动时配置日志，关闭时释放资源。"""
     settings = get_settings()
+    from config import validate_runtime_settings
+    validate_runtime_settings(settings)
     _setup_logging(settings)
     logger.info("EduFlow-Agent 启动 | log_level=%s format=%s", settings.log_level, settings.log_format)
 
@@ -42,35 +61,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 注册模块生成器（Phase A: 模块化生成器架构）
     try:
-        import generators.mindmap_generator   # noqa: F401 — 触发 register_generator
-        import generators.card_generator      # noqa: F401
-        import generators.frames_generator    # noqa: F401
-        import generators.video_generator     # noqa: F401
-        import generators.quiz_generator      # noqa: F401
-        import generators.comparison_generator  # noqa: F401
-        import generators.misconception_generator  # noqa: F401
-        import generators.pathway_generator  # noqa: F401
-        import generators.sandbox_generator  # noqa: F401
-        import generators.interactive_demo_generator  # noqa: F401
+        import generators.card_generator
+        import generators.comparison_generator
+        import generators.frames_generator
+        import generators.interactive_demo_generator
+        import generators.mindmap_generator
+        import generators.misconception_generator
+        import generators.pathway_generator
+        import generators.quiz_generator
+        import generators.sandbox_generator
+        import generators.video_generator  # noqa: F401
         from generators.registry import list_generators
         logger.info("已注册 %d 个模块生成器", len(list_generators()))
     except Exception as exc:
         logger.warning("模块生成器注册失败: %s", exc)
 
-    from services.material_retention import run_material_retention
+    if settings.environment in {"staging", "production"}:
+        # Readiness must never advertise a healthy deployment whose durable
+        # interrupt/resume store has silently fallen back to process memory.
+        from agents.graph import get_graph_async
+
+        await get_graph_async()
 
     retention_stop = asyncio.Event()
-    retention_task = asyncio.create_task(run_material_retention(retention_stop))
+    retention_task = None
+    if settings.run_maintenance:
+        from services.material_retention import run_material_retention
+
+        retention_task = asyncio.create_task(run_material_retention(retention_stop))
 
     # DB engine、Redis 与 LLM client 均按首次使用惰性建立连接。
     yield
 
     retention_stop.set()
-    retention_task.cancel()
-    try:
-        await retention_task
-    except asyncio.CancelledError:
-        pass
+    if retention_task is not None:
+        retention_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await retention_task
 
     # 关闭 Agent checkpointer 连接
     try:
@@ -116,25 +143,34 @@ def create_app() -> FastAPI:
         description="面向计算机科学教育的自主 Agent 教学推演系统",
         version=settings.app_version,
         lifespan=lifespan,
+        docs_url="/docs" if settings.expose_api_docs else None,
+        redoc_url="/redoc" if settings.expose_api_docs else None,
+        openapi_url="/openapi.json" if settings.expose_api_docs else None,
     )
 
-    # CORS — MVP 阶段允许本地开发来源
+    from services.otel import configure_otel
+
+    configure_otel(app)
+
+    allowed_origins = [settings.public_origin.rstrip("/")]
+    if settings.environment in {"development", "test"}:
+        allowed_origins.extend([
+            "http://localhost:5173", "http://localhost:3000",
+            "http://127.0.0.1:5173", "http://127.0.0.1:3000",
+        ])
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=list(dict.fromkeys(allowed_origins)),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "Idempotency-Key"],
+        allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-CSRF-Token"],
     )
 
     # 请求日志与 request_id 追踪
     from api.middleware import RequestLoggingMiddleware
     app.add_middleware(RequestLoggingMiddleware)
+    from api.middleware import SecurityMiddleware
+    app.add_middleware(SecurityMiddleware)
 
     # 全局异常处理程序（统一错误响应格式）
     from api.error_handlers import register_error_handlers
@@ -164,12 +200,16 @@ async def readiness_checks() -> dict[str, str]:
     """Probe dependencies needed to accept generation and export work."""
     from sqlalchemy import text
 
+    timeout_seconds = get_settings().readiness_timeout_seconds
     checks: dict[str, str] = {}
     try:
-        from db.database import async_session_factory
+        async def probe_database() -> None:
+            from db.database import async_session_factory
 
-        async with async_session_factory() as session:
-            await session.execute(text("SELECT 1"))
+            async with async_session_factory() as session:
+                await session.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(probe_database(), timeout=timeout_seconds)
         checks["database"] = "ok"
     except Exception as exc:
         logger.warning("readiness database check failed: %s", exc)
@@ -181,7 +221,9 @@ async def readiness_checks() -> dict[str, str]:
         redis_client = await _get_redis()
         if redis_client is None:
             raise ConnectionError("redis client unavailable")
-        pong = await __import__("asyncio").to_thread(redis_client.ping)
+        pong = await asyncio.wait_for(
+            asyncio.to_thread(redis_client.ping), timeout=timeout_seconds
+        )
         checks["redis"] = "ok" if pong else "unavailable"
     except Exception as exc:
         logger.warning("readiness redis check failed: %s", exc)
@@ -190,7 +232,9 @@ async def readiness_checks() -> dict[str, str]:
     try:
         from services.artifact_store import get_artifact_store
 
-        await get_artifact_store().ready()
+        await asyncio.wait_for(
+            get_artifact_store().ready(), timeout=timeout_seconds
+        )
         checks["artifact_store"] = "ok"
     except Exception as exc:
         logger.warning("readiness artifact store check failed: %s", exc)
@@ -210,6 +254,7 @@ async def readiness_check(response: Response) -> dict[str, object]:
 @app.get("/api/metrics", tags=["system"])
 async def process_metrics(
     session: AsyncSession = Depends(get_readonly_session),
+    _metrics_access: None = Depends(require_metrics_access),
 ) -> dict[str, object]:
     """Process telemetry plus cross-process aggregates from durable state."""
     from services.operational_metrics import operational_metrics_snapshot
@@ -223,7 +268,11 @@ async def process_metrics(
 @app.get("/api/metrics/prometheus", tags=["system"], response_class=PlainTextResponse)
 async def prometheus_metrics(
     session: AsyncSession = Depends(get_readonly_session),
+    _metrics_access: None = Depends(require_metrics_access),
 ) -> str:
-    from services.operational_metrics import operational_metrics_snapshot, prometheus_text
+    from services.operational_metrics import (
+        operational_metrics_snapshot,
+        prometheus_text,
+    )
 
     return prometheus_text(await operational_metrics_snapshot(session))

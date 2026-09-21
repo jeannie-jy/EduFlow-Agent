@@ -55,7 +55,7 @@ class EvalExpectation(BaseModel):
     final_state: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_frame_range(self) -> "EvalExpectation":
+    def validate_frame_range(self) -> EvalExpectation:
         if self.min_frames > self.max_frames:
             raise ValueError("min_frames must not exceed max_frames")
         unknown_claims = set(self.forbidden_claim_scopes) - set(self.forbidden_claims)

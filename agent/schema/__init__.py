@@ -1,5 +1,14 @@
 """Schema 模块对外导出。"""
 
+from .algorithm_trace import (
+    AlgorithmEvent,
+    AlgorithmName,
+    AlgorithmPhase,
+    AlgorithmState,
+    QueueEntry,
+    is_algorithm_snapshot,
+    validate_algorithm_snapshot,
+)
 from .dsl import (
     Animation,
     AnimationType,
@@ -57,7 +66,6 @@ from .dsl import (
     VisualObject,
     VisualObjectType,
 )
-
 from .project import (
     ErrorResponse,
     ExportArtifact,
@@ -91,6 +99,10 @@ from .project import (
 )
 
 __all__ = [
+    "AlgorithmEvent",
+    "AlgorithmName",
+    "AlgorithmPhase",
+    "AlgorithmState",
     "Animation",
     "AnimationType",
     "AppearAnimation",
@@ -158,6 +170,7 @@ __all__ = [
     "ProjectListResponse",
     "ProjectStatus",
     "QualityStatus",
+    "QueueEntry",
     "RecomputeRequest",
     "RegenerateRequest",
     "RelaxEdgeAnimation",
@@ -175,4 +188,6 @@ __all__ = [
     "UpdateValueAnimation",
     "VisualObject",
     "VisualObjectType",
+    "is_algorithm_snapshot",
+    "validate_algorithm_snapshot",
 ]

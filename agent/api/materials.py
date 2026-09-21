@@ -14,7 +14,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -49,6 +49,37 @@ MAX_PPTX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 MAX_PPTX_COMPRESSION_RATIO = 200
 
 
+@router.get("")
+async def list_materials(
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+) -> dict:
+    """列出当前用户可选入项目的课件材料，不返回材料正文。"""
+    from sqlalchemy import select
+
+    query = select(Material).order_by(Material.created_at.desc())
+    if current_user is None:
+        # Keep anonymous local-development materials isolated from accounts.
+        query = query.where(Material.owner_id.is_(None))
+    else:
+        query = query.where(Material.owner_id == current_user.id)
+
+    rows = list((await session.scalars(query)).all())
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "filename": row.original_filename,
+                "type": Path(row.stored_filename).suffix.lower().lstrip("."),
+                "size_bytes": row.size_bytes,
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.post("/upload", status_code=201)
 async def upload_material(
     file: UploadFile = File(...),
@@ -79,6 +110,18 @@ async def upload_material(
         raise HTTPException(
             status_code=400, detail="文件内容与扩展名不匹配或文件已损坏"
         )
+    if current_user is not None:
+        from services.quota import QuotaExceededError, ensure_material_capacity
+        try:
+            await ensure_material_capacity(
+                session, user_id=current_user.id, incoming_bytes=len(contents)
+            )
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=413,
+                detail={"error": {"code": "QUOTA_EXCEEDED", "message": "Material storage quota exceeded",
+                        "details": {"resource": exc.resource, "limit": exc.limit}}},
+            ) from exc
 
     material_id = uuid.uuid4()
     safe_filename = f"uploaded_{material_id.hex[:8]}{suffix}"
@@ -98,7 +141,7 @@ async def upload_material(
         media_type=ALLOWED_EXTENSIONS[suffix],
         size_bytes=len(contents),
         status="uploaded",
-        expires_at=datetime.now(timezone.utc)
+        expires_at=datetime.now(UTC)
         + timedelta(days=settings.material_retention_days),
     )
     session.add(material)

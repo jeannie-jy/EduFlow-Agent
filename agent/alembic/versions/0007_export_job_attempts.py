@@ -7,8 +7,9 @@ Revises: 0006_audit_events
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0007_export_job_attempts"
 down_revision: str | None = "0006_audit_events"

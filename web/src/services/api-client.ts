@@ -7,6 +7,8 @@
  * - 超时控制
  */
 
+import { expirePersistedAuthState } from "@/lib/auth-events";
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // ============================================================================
@@ -26,12 +28,13 @@ export class ApiError extends Error {
   status: number;
   details?: unknown;
 
-  constructor(status: number, body: ApiErrorBody) {
-    super(body.error.message);
+  constructor(status: number, body: ApiErrorBody | undefined) {
+    const error = body?.error;
+    super(error?.message ?? `HTTP ${status}`);
     this.name = "ApiError";
-    this.code = body.error.code;
+    this.code = error?.code ?? "HTTP_ERROR";
     this.status = status;
-    this.details = body.error.details;
+    this.details = error?.details;
   }
 }
 
@@ -55,6 +58,16 @@ export class TimeoutError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+async function parseApiError(response: Response): Promise<ApiError> {
+  try {
+    return new ApiError(response.status, (await response.json()) as ApiErrorBody);
+  } catch {
+    return new ApiError(response.status, {
+      error: { code: "UNKNOWN", message: `HTTP ${response.status}: ${response.statusText}` },
+    });
+  }
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -71,6 +84,13 @@ async function request<T>(
   if (body !== undefined && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
+  if (method === "POST") {
+    headers["Idempotency-Key"] = crypto.randomUUID();
+  }
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    const csrf = document.cookie.split("; ").find((item) => item.startsWith("eduflow_csrf="));
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice("eduflow_csrf=".length));
+  }
 
   try {
     const res = await fetch(url, {
@@ -82,15 +102,9 @@ async function request<T>(
     });
 
     if (!res.ok) {
-      let errorBody: ApiErrorBody;
-      try {
-        errorBody = await res.json();
-      } catch {
-        throw new ApiError(res.status, {
-          error: { code: "UNKNOWN", message: `HTTP ${res.status}: ${res.statusText}` },
-        });
-      }
-      throw new ApiError(res.status, errorBody);
+      const error = await parseApiError(res);
+      if (res.status === 401) expirePersistedAuthState();
+      throw error;
     }
 
     // 204 No Content
@@ -139,8 +153,8 @@ export const api = {
     return request<T>("PATCH", path, body, { timeoutMs });
   },
 
-  delete<T>(path: string, timeoutMs?: number) {
-    return request<T>("DELETE", path, undefined, { timeoutMs });
+  delete<T>(path: string, body?: unknown, timeoutMs?: number) {
+    return request<T>("DELETE", path, body, { timeoutMs });
   },
 
   /**
@@ -160,6 +174,8 @@ export const api = {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
+    const csrf = document.cookie.split("; ").find((item) => item.startsWith("eduflow_csrf="));
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice("eduflow_csrf=".length));
 
     const res = await fetch(url, {
       method: "POST",
@@ -170,15 +186,9 @@ export const api = {
     });
 
     if (!res.ok) {
-      let errorBody: ApiErrorBody;
-      try {
-        errorBody = await res.json();
-      } catch {
-        throw new ApiError(res.status, {
-          error: { code: "UNKNOWN", message: `HTTP ${res.status}: ${res.statusText}` },
-        });
-      }
-      throw new ApiError(res.status, errorBody);
+      const error = await parseApiError(res);
+      if (res.status === 401) expirePersistedAuthState();
+      throw error;
     }
 
     return res;

@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Any
 
-from tools.normalize_dsl import normalize_dsl
+from tools.finalize_dsl import finalize_dsl
 
 from .base import BaseGenerator
 from .registry import register_generator
@@ -83,10 +83,30 @@ FRAMES_OUTPUT_SCHEMA: dict[str, Any] = {
                                 "state": {"type": "string"},
                                 "attributes": {"type": "object"},
                                 "title": {"type": "string"},
-                                "content": {"type": "object"},
+                                "content": {"type": "string", "maxLength": 1200},
                                 "events": {"type": "array", "maxItems": 16},
-                                "root": {"type": "string"},
-                                "children": {"type": "array", "maxItems": 16},
+                                "root": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "label": {"type": "string"},
+                                    },
+                                },
+                                "children": {
+                                    "type": "array",
+                                    "maxItems": 16,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "label": {"type": "string"},
+                                            "children": {
+                                                "type": "array",
+                                                "items": {"type": "object"},
+                                            },
+                                        },
+                                    },
+                                },
                                 "position": {"type": "object"},
                                 "style": {"type": "object"},
                             },
@@ -338,7 +358,7 @@ class FramesGenerator(BaseGenerator):
             "export_targets": ["web", "manim_video"],
         }
 
-        dsl = normalize_dsl(dsl)
+        dsl = finalize_dsl(dsl)
 
         version_payload = json.dumps(
             dsl["frames"], ensure_ascii=False, sort_keys=True, default=str

@@ -10,6 +10,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from services.generate_service import (
     _finalize_done,
     _phase_pct,
@@ -203,6 +204,7 @@ class TestRunGenerationSync:
         assert len(initial_state["materials"]) == 1
         assert initial_state["reflection_count"] == 0
         assert initial_state["revision_history"] == []
+        assert initial_state["enable_retrieval"] is True
 
     @pytest.mark.asyncio
     async def test_sync_uses_thread_id_config(self):
@@ -642,7 +644,7 @@ class TestHITLInterruptResume:
 
         assert any(e["event"] == "waiting_approval" for e in events)
         assert not any(e["event"] == "done" for e in events)
-        wa = [e for e in events if e["event"] == "waiting_approval"][0]
+        wa = next(e for e in events if e["event"] == "waiting_approval")
         assert "teaching_plan" in wa["data"]
 
     @pytest.mark.asyncio

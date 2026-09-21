@@ -53,8 +53,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-ci.lock.txt
 
-      - name: Lint critical Python errors
-        run: python -m ruff check . --select E9,F63,F7,F82
+      - name: Ruff checks
+        run: python -m ruff check .
 
       - name: Validate OpenAPI schema
         run: python -c "from main import app; schema = app.openapi(); assert schema['openapi']; assert schema['paths']"

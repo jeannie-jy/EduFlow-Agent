@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BookOpen, AlertTriangle, Link2, Lightbulb } from "lucide-react";
+import { FormulaObject } from "./visual-objects/FormulaObject";
 
 export type KnowledgeCardData = {
   id: string;
@@ -82,7 +83,14 @@ export const KnowledgeCard = memo(function KnowledgeCard({
       {card.formula && (
         <div className="mb-3 rounded-lg border bg-muted/20 p-2.5">
           <p className="text-xs font-medium text-muted-foreground mb-1">公式</p>
-          <code className="text-sm font-mono">{card.formula}</code>
+          <FormulaObject
+            object={{
+              id: `${card.id}-formula`,
+              type: "formula",
+              latex: card.formula,
+            }}
+            className="border-0 bg-transparent p-0 text-left shadow-none"
+          />
         </div>
       )}
       {card.pseudocode && (

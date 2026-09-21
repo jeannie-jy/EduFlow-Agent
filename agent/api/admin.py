@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,22 @@ class AdminUserUpdate(BaseModel):
     def require_change(self) -> AdminUserUpdate:
         if self.role is None and self.is_active is None:
             raise ValueError("At least one of role or is_active is required")
+        return self
+
+
+class AdminQuotaUpdate(BaseModel):
+    projects: int | None = Field(default=None, ge=0, le=100000)
+    material_bytes: int | None = Field(default=None, ge=0, le=10 * 1024**4)
+    artifact_bytes: int | None = Field(default=None, ge=0, le=10 * 1024**4)
+    generation_concurrent: int | None = Field(default=None, ge=0, le=100)
+    video_concurrent: int | None = Field(default=None, ge=0, le=100)
+    task_max_tokens: int | None = Field(default=None, ge=1, le=10_000_000)
+    is_suspended: bool | None = None
+
+    @model_validator(mode="after")
+    def require_quota_change(self) -> AdminQuotaUpdate:
+        if all(value is None for value in self.model_dump().values()):
+            raise ValueError("At least one quota field is required")
         return self
 
 
@@ -103,7 +119,7 @@ async def list_users(
             select(AuthSession.user_id, func.count(AuthSession.id))
             .where(
                 AuthSession.user_id.in_([user.id for user in users]),
-                AuthSession.expires_at > datetime.now(timezone.utc),
+                AuthSession.expires_at > datetime.now(UTC),
             )
             .group_by(AuthSession.user_id)
         )
@@ -180,7 +196,7 @@ async def _session_count(session: AsyncSession, user_id: uuid.UUID) -> int:
         await session.scalar(
             select(func.count(AuthSession.id)).where(
                 AuthSession.user_id == user_id,
-                AuthSession.expires_at > datetime.now(timezone.utc),
+                AuthSession.expires_at > datetime.now(UTC),
             )
         )
         or 0
@@ -208,3 +224,52 @@ async def revoke_user_sessions(
         details={"sessions_revoked": revoked},
     )
     return {"revoked": revoked}
+
+
+@router.get("/users/{user_id}/quota")
+async def get_user_quota(
+    user_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _admin: Annotated[User, Depends(require_admin)] = None,
+) -> dict[str, Any]:
+    from db.models import UserQuotaPolicy
+    from services.quota import usage_snapshot
+    await _target_user(session, user_id)
+    policy = await session.get(UserQuotaPolicy, user_id)
+    return {
+        "user_id": str(user_id),
+        "limits": dict(policy.limits or {}) if policy else {},
+        "is_suspended": bool(policy.is_suspended) if policy else False,
+        "usage": await usage_snapshot(session, user_id),
+    }
+
+
+@router.put("/users/{user_id}/quota")
+async def update_user_quota(
+    user_id: uuid.UUID,
+    body: AdminQuotaUpdate,
+    session: AsyncSession = Depends(get_session),
+    admin: Annotated[User, Depends(require_admin)] = None,
+) -> dict[str, Any]:
+    from db.models import UserQuotaPolicy
+    await _target_user(session, user_id)
+    policy = await session.get(UserQuotaPolicy, user_id)
+    previous_limits = dict(policy.limits or {}) if policy else {}
+    previous_suspended = bool(policy.is_suspended) if policy else False
+    limits = dict(previous_limits)
+    limits.update({key: value for key, value in body.model_dump(exclude={"is_suspended"}).items() if value is not None})
+    suspended = previous_suspended if body.is_suspended is None else body.is_suspended
+    if policy is None:
+        policy = UserQuotaPolicy(user_id=user_id, limits=limits, is_suspended=suspended)
+        session.add(policy)
+    else:
+        policy.limits = limits
+        policy.is_suspended = suspended
+    record_audit(
+        session, action="admin.quota.update", resource_type="user",
+        resource_id=str(user_id), actor_id=admin.id,
+        details={"before": {"limits": previous_limits, "is_suspended": previous_suspended},
+                 "after": {"limits": limits, "is_suspended": suspended}},
+    )
+    await session.flush()
+    return {"user_id": str(user_id), "limits": limits, "is_suspended": suspended}

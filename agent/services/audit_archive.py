@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ def _canonical(value: Any) -> bytes:
 def _event_record(event: AuditEvent) -> dict[str, Any]:
     created_at = event.created_at
     if created_at is not None and created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.replace(tzinfo=UTC)
     return {
         "id": event.id,
         "actor_id": str(event.actor_id) if event.actor_id else None,
@@ -130,7 +130,7 @@ async def archive_audit_events(
 
     archive_bytes, manifest = build_archive(events, signing_key)
     prefix = (
-        f"audit-archives/{before.astimezone(timezone.utc).date().isoformat()}/"
+        f"audit-archives/{before.astimezone(UTC).date().isoformat()}/"
         f"{events[0].id}-{events[-1].id}-{manifest['root_hash'][:16]}"
     )
     archive_key = f"{prefix}.jsonl"

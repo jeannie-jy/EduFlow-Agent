@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -179,7 +179,7 @@ def score_review(
 
     return {
         "schema_version": "1.0",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "population_size": len(results),
         "reviewed_count": len(reviews),
         "review_rate": round(len(reviews) / len(results), 4),

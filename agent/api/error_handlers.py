@@ -36,6 +36,7 @@ _HTTP_CODE_MAP: dict[int, str] = {
     409: "CONFLICT",
     413: "PAYLOAD_TOO_LARGE",
     422: "VALIDATION_ERROR",
+    428: "PRECONDITION_REQUIRED",
     429: "TOO_MANY_REQUESTS",
     500: "INTERNAL_ERROR",
     503: "SERVICE_UNAVAILABLE",
@@ -118,7 +119,7 @@ def register_error_handlers(app) -> None:
         """
         field_errors: dict[str, list[str]] = {}
         for error in exc.errors():
-            loc = ".".join(str(l) for l in error["loc"])
+            loc = ".".join(str(part) for part in error["loc"])
             msg = error.get("msg", "Unknown error")
             field_errors.setdefault(loc, []).append(msg)
 

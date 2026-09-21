@@ -21,8 +21,8 @@ from db.database import get_readonly_session, get_session
 from db.models import User
 from schema.project import FrameLockRequest, FrameUpdateRequest
 
-from .auth import require_editor
-from .deps import parse_project_id
+from .auth import get_current_user, require_editor
+from .deps import ensure_project_access, parse_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ async def list_frames(
     project_id: str,
     version: int = 1,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
 ) -> dict:
     """获取项目的帧列表。
 
@@ -43,6 +44,12 @@ async def list_frames(
     from sqlalchemy import select
 
     from db.models import Frame as FrameModel
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
 
     # DB frames 表优先（编辑真源，反映最新编辑/锁定状态）
     query = (
@@ -103,6 +110,12 @@ async def update_frame(
     from sqlalchemy import select
 
     from db.models import Frame as FrameModel
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, _editor)
 
     # 查找帧
     query = select(FrameModel).where(
@@ -114,7 +127,6 @@ async def update_frame(
 
     if frame is None:
         # 历史项目可能只有 JSON 快照而没有 frames 表记录，仍允许直接编辑快照。
-        from db.models import Project as ProjectModel
         project = await session.get(ProjectModel, parse_project_id(project_id))
         snapshot_frames = (project.dsl_snapshot or {}).get("frames", []) if project else []
         snapshot_frame = next((f for f in snapshot_frames if f.get("frame_id") == fid), None)
@@ -160,6 +172,12 @@ async def lock_frame(
     from sqlalchemy import select
 
     from db.models import Frame as FrameModel
+    from db.models import Project as ProjectModel
+
+    project = await session.get(ProjectModel, parse_project_id(project_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, _editor)
 
     query = select(FrameModel).where(
         FrameModel.project_id == parse_project_id(project_id),
@@ -169,7 +187,6 @@ async def lock_frame(
     frame = result.scalar_one_or_none()
 
     if frame is None:
-        from db.models import Project as ProjectModel
         project = await session.get(ProjectModel, parse_project_id(project_id))
         snapshot_frames = (project.dsl_snapshot or {}).get("frames", []) if project else []
         snapshot_frame = next((f for f in snapshot_frames if f.get("frame_id") == fid), None)

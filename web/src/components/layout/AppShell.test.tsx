@@ -11,7 +11,10 @@ import { appRoutes } from "@/app/router";
 import { AppShell } from "./AppShell";
 import { setAuthState } from "@/lib/auth";
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  setAuthState({ isAuthenticated: true, nickname: "Test", email: "test@example.com" });
+});
 
 it("exposes navigation and changes theme", async () => {
   renderWithProviders(

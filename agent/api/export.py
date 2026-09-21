@@ -3,11 +3,13 @@
 POST   /api/projects/{id}/export/manim          创建视频导出任务
 GET    /api/export/{job_id}                     查询导出状态
 GET    /api/export/{job_id}/download/{filename} 下载产物
+     MP4 预览使用 ?inline=1，通过 API 流式返回并支持 Range 请求
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -17,13 +19,13 @@ import subprocess
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import select, update
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,9 +34,10 @@ from db.database import get_session
 from db.models import User
 from schema.project import ExportManimRequest
 from services.audit import record_audit
+from services.quota import QuotaExceededError
 
 from .auth import get_current_user, is_admin, require_editor
-from .deps import parse_project_id
+from .deps import ensure_project_access, parse_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,48 @@ _redis_lock = asyncio.Lock()
 
 class ExportWorkspaceLimitError(RuntimeError):
     """The renderer exceeded its per-job file-count or byte budget."""
+
+
+def _prepare_dsl_for_export(dsl: dict) -> dict:
+    """Recompile persisted model output at the final trusted boundary."""
+    from tools.finalize_dsl import finalize_dsl
+    from tools.validate_dsl import check_visual_completeness
+
+    prepared = finalize_dsl(dsl, compile_sorting=True)
+    visual_result = check_visual_completeness(prepared.get("frames", []))
+    if not visual_result["complete"]:
+        details = "; ".join(
+            f"{issue.get('frame_id', '?')}/{issue.get('visual_id', '?')}: "
+            f"{issue.get('description', '视觉组件不完整')}"
+            for issue in visual_result["issues"][:8]
+        )
+        raise ValueError(f"视频分镜包含不完整视觉组件，已阻止导出: {details}")
+    return prepared
+
+
+def _requires_deterministic_renderer(dsl: dict) -> bool:
+    """Keep executable teaching state out of the creative rendering path."""
+    for key in ("sorting_trace_compilation", "algorithm_trace_compilation"):
+        if (dsl.get(key) or {}).get("applied"):
+            return True
+
+    executable_state_keys = {
+        "array",
+        "dist",
+        "distance",
+        "visited",
+        "queue",
+        "stack",
+        "predecessor",
+        "events",
+    }
+    for frame in dsl.get("frames", []):
+        if not isinstance(frame, dict):
+            continue
+        snapshot = frame.get("state_snapshot")
+        if isinstance(snapshot, dict) and executable_state_keys.intersection(snapshot):
+            return True
+    return False
 
 
 async def _get_redis():
@@ -122,6 +167,26 @@ async def create_export_job(
 ) -> dict:
     """创建 Manim 视频导出任务。"""
     settings = get_settings()
+    if not settings.video_public_enabled and not is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Video export is not enabled for public accounts")
+    if (
+        getattr(settings, "environment", "development") == "production"
+        and settings.video_public_enabled
+        and not getattr(settings, "video_public_isolation_approved", False)
+        and not is_admin(current_user)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "code": "VIDEO_EXPORT_REQUIRES_TASK_ISOLATION",
+                    "message": (
+                        "Public video export requires per-task render isolation "
+                        "and an explicit security approval."
+                    ),
+                }
+            },
+        )
     if settings.manim_execution_mode != "queue":
         raise HTTPException(
             status_code=503,
@@ -143,8 +208,25 @@ async def create_export_job(
     project = await session.get(Project, pid)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
+    credential_ref = None
+    if current_user is not None and settings.manim_script_mode == "llm":
+        # Capture only the credential reference in the durable job.  The
+        # worker decrypts it just before the provider call; render sandbox
+        # input never contains this value.
+        from services.provider_credentials import selected_provider_credential
 
+        credential = await selected_provider_credential(
+            session, current_user.id, "generation"
+        )
+        if credential is None:
+            raise HTTPException(status_code=428, detail="A generation provider credential is required")
+        if credential is not None:
+            credential_ref = {"id": str(credential.id), "version": credential.version}
     normalized_key = idempotency_key.strip() if idempotency_key else None
+    if idempotency_key is not None and not normalized_key:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must not be blank")
+    quota_key = normalized_key or f"export:{uuid.uuid4()}"
     if normalized_key:
         existing = await session.scalar(
             select(ExportJobModel).where(
@@ -159,6 +241,61 @@ async def create_export_job(
                 "status": existing.status,
                 "source_version_id": _source_version_ref(existing),
             }
+
+        # Quota idempotency keys are user-scoped rather than project-scoped.
+        # Reject a key that was already admitted for a different project (or
+        # another resource) instead of letting the unique ledger constraint
+        # turn a harmless client retry into a 500 response.
+        if current_user is not None:
+            from db.models import UsageLedger
+
+            prior_ledger = await session.scalar(select(UsageLedger).where(
+                UsageLedger.user_id == current_user.id,
+                UsageLedger.resource == "video",
+                UsageLedger.idempotency_key == normalized_key,
+            ))
+            if prior_ledger is not None:
+                prior_details = prior_ledger.details if isinstance(prior_ledger.details, dict) else {}
+                if prior_details.get("project_id") not in {None, project_id}:
+                    raise HTTPException(status_code=409, detail="Idempotency key already used for another project")
+                if prior_details.get("job_target") not in {None, "manim_video"}:
+                    raise HTTPException(status_code=409, detail="Idempotency key already used for another export action")
+
+    if current_user is not None:
+        from services.quota import acquire_quota_lock
+        await acquire_quota_lock(session, user_id=current_user.id, resource="video")
+        active_exports = int(await session.scalar(select(func.count(ExportJobModel.id)).where(
+            ExportJobModel.project_id.in_(
+                select(Project.id).where(Project.owner_id == str(current_user.id))
+            ),
+            ExportJobModel.status.in_(("queued", "preparing", "rendering")),
+        )) or 0)
+        from services.quota import quota_limit
+        concurrent_limit = await quota_limit(
+            session, user_id=current_user.id, resource="video_concurrent"
+        )
+        if active_exports >= concurrent_limit:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": "CONCURRENCY_LIMIT", "message": "Another video export is already active",
+                        "details": {"limit": concurrent_limit}}},
+            )
+
+    if current_user is not None:
+        from services.quota import QuotaExceededError, reserve_quota
+        try:
+            await reserve_quota(
+                session, user_id=current_user.id, resource="video",
+                idempotency_key=quota_key,
+                count_toward_limit=False,
+                details={"project_id": project_id, "job_target": "manim_video"},
+            )
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail={"error": {"code": "QUOTA_EXCEEDED", "message": "Video quota exceeded",
+                        "details": {"resource": exc.resource, "period": exc.period, "limit": exc.limit}}},
+            ) from exc
 
     from services.project_persistence import load_canonical_project_dsl
 
@@ -193,6 +330,15 @@ async def create_export_job(
             "format": body.format,
             "fps": body.fps,
             "include_subtitles": body.include_subtitles,
+            **({"credential_ref": credential_ref} if credential_ref else {}),
+            **({"quota_ref": {
+                "resource": "video",
+                "idempotency_key": quota_key,
+                # Charge the actor that admitted the job. This keeps admin
+                # impersonation from accidentally settling against the
+                # project owner (or the other way around).
+                "user_id": str(current_user.id),
+            }} if current_user is not None else {}),
         },
     )
     session.add(export_job)
@@ -246,7 +392,7 @@ async def cancel_export_job(
     _editor: Annotated[User | None, Depends(require_editor)] = None,
 ) -> dict:
     """Idempotently cancel a queued/running export without leaking its owner."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from db.models import ExportJobAttempt
 
@@ -258,11 +404,12 @@ async def cancel_export_job(
         raise HTTPException(status_code=404, detail="Export job not found")
     if job.status in {"completed", "failed"}:
         raise HTTPException(status_code=409, detail="Export job is already terminal")
+    previous_status = job.status
     if job.status != "cancelled":
         job.status = "cancelled"
         job.worker_id = None
         job.lease_expires_at = None
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         await session.execute(
             update(ExportJobAttempt)
             .where(
@@ -282,6 +429,26 @@ async def cancel_export_job(
             resource_id=str(jid),
             actor_id=current_user.id if current_user is not None else None,
         )
+        if current_user is not None and isinstance(job.config, dict):
+            quota_ref = job.config.get("quota_ref")
+            quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+            if isinstance(quota_key, str) and quota_key:
+                from services.quota import release_quota, settle_quota
+                quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                try:
+                    admitted_user_id = uuid.UUID(str(quota_user_id or current_user.id))
+                except (TypeError, ValueError):
+                    admitted_user_id = current_user.id
+                if previous_status in {"queued", "preparing"}:
+                    await release_quota(
+                        session, user_id=admitted_user_id, resource="video",
+                        idempotency_key=quota_key,
+                    )
+                else:
+                    await settle_quota(
+                        session, user_id=admitted_user_id, resource="video",
+                        idempotency_key=quota_key,
+                    )
         await session.commit()
     redis_client = await _get_redis()
     if redis_client is not None:
@@ -293,7 +460,14 @@ async def cancel_export_job(
 _pool = ThreadPoolExecutor(max_workers=2)
 
 
-def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> None:
+def _do_export_sync(
+    job_id: str,
+    dsl: dict,
+    config: dict,
+    redis_url: str,
+    credentials=None,
+    llm_limits=None,
+) -> None:
     """同步导出入口（线程池线程中运行）。
 
     线程内创建独立事件循环 + 独立 DB engine：
@@ -312,15 +486,23 @@ def _do_export_sync(job_id: str, dsl: dict, config: dict, redis_url: str) -> Non
         from config import get_settings
 
         engine = create_async_engine(get_settings().database_url)
-        loop.run_until_complete(
-            _do_export_async(job_id, dsl, config, redis_url, engine)
-        )
+        from services.provider_credentials import credential_scope
+        with credential_scope(*(credentials or (None, None))):
+            if llm_limits is None:
+                loop.run_until_complete(
+                    _do_export_async(job_id, dsl, config, redis_url, engine)
+                )
+            else:
+                from services.quota import user_llm_limits_scope
+                with user_llm_limits_scope(llm_limits):
+                    loop.run_until_complete(
+                        _do_export_async(job_id, dsl, config, redis_url, engine)
+                    )
     finally:
+        credentials = None
         if engine is not None:
-            try:
+            with contextlib.suppress(Exception):
                 loop.run_until_complete(engine.dispose())
-            except Exception:
-                pass
         loop.close()
 
 
@@ -348,16 +530,34 @@ async def _do_export_async(
         # default; the optional LLM director can never be a single point of
         # failure because it falls back before rendering.
         from adapters.manim_validator import has_errors, validate_script
+        # Projects created by older generators and scoped regeneration may
+        # still contain model-authored intermediate state.  Recompile at the
+        # last trustworthy boundary so exports always consume executable,
+        # canonical snapshots (sorting arrays, graph traces, aliases, etc.).
+        dsl = _prepare_dsl_for_export(dsl)
 
         settings = get_settings()
         script_mode = getattr(settings, "manim_script_mode", "deterministic")
+        if script_mode == "llm" and _requires_deterministic_renderer(dsl):
+            logger.info(
+                "Executable lesson state requires deterministic renderer: job=%s",
+                job_id,
+            )
+            script_mode = "deterministic"
+        quality = config.get("quality", "h")
+        fps = config.get("fps", 30)
+        include_subtitles = config.get("include_subtitles", True)
         used_deterministic = script_mode != "llm"
         if script_mode == "llm":
             try:
                 from adapters.manim_llm_adapter import convert_dsl_to_manim_llm
 
                 files = await convert_dsl_to_manim_llm(
-                    dsl, dsl.get("teaching_plan")
+                    dsl,
+                    dsl.get("teaching_plan"),
+                    quality=quality,
+                    fps=fps,
+                    include_subtitles=include_subtitles,
                 )
             except Exception:
                 logger.exception(
@@ -366,12 +566,22 @@ async def _do_export_async(
                 )
                 from adapters.manim_adapter import convert_dsl_to_manim
 
-                files = convert_dsl_to_manim(dsl)
+                files = convert_dsl_to_manim(
+                    dsl,
+                    quality=quality,
+                    fps=fps,
+                    include_subtitles=include_subtitles,
+                )
                 used_deterministic = True
         else:
             from adapters.manim_adapter import convert_dsl_to_manim
 
-            files = convert_dsl_to_manim(dsl)
+            files = convert_dsl_to_manim(
+                dsl,
+                quality=quality,
+                fps=fps,
+                include_subtitles=include_subtitles,
+            )
 
         issues = validate_script(files["main.py"])
         if has_errors(issues) and not used_deterministic:
@@ -398,7 +608,12 @@ async def _do_export_async(
 
             from adapters.manim_adapter import convert_dsl_to_manim
 
-            files = convert_dsl_to_manim(dsl)
+            files = convert_dsl_to_manim(
+                dsl,
+                quality=quality,
+                fps=fps,
+                include_subtitles=include_subtitles,
+            )
             used_deterministic = True
             issues = validate_script(files["main.py"])
 
@@ -434,8 +649,6 @@ async def _do_export_async(
         _try_update_redis_status(r, job_id, "rendering", progress=30)
 
         # 3. 将已校验脚本交给无网络、无凭证的沙箱容器。
-        quality = config.get("quality", "h")
-        fps = config.get("fps", 30)
         artifacts: list[dict] = []
 
         _try_update_redis_status(r, job_id, "rendering", progress=50)
@@ -461,7 +674,12 @@ async def _do_export_async(
 
             from adapters.manim_adapter import convert_dsl_to_manim
 
-            files = convert_dsl_to_manim(dsl)
+            files = convert_dsl_to_manim(
+                dsl,
+                quality=quality,
+                fps=fps,
+                include_subtitles=include_subtitles,
+            )
             for src_name in ["main.py", "render_config.json", "subtitles.srt"]:
                 src = scripts_dir / src_name
                 src.write_text(files[src_name], encoding="utf-8")
@@ -598,7 +816,13 @@ async def _do_export_async(
             pass
 
 
-async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
+async def _fallback_export(
+    job_id: str,
+    dsl: dict,
+    config: dict,
+    credentials=None,
+    llm_limits=None,
+) -> None:
     """Worker 内导出：在线程中运行同步 Manim 工具链。
 
     Redis 仅用于实时进度追踪（get_export_status 优先读 Redis、回退 DB），
@@ -608,7 +832,8 @@ async def _fallback_export(job_id: str, dsl: dict, config: dict) -> None:
     settings = get_settings()
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(
-        _pool, _do_export_sync, job_id, dsl, config, settings.redis_url
+        _pool, _do_export_sync, job_id, dsl, config, settings.redis_url, credentials,
+        llm_limits,
     )
 
 
@@ -722,6 +947,17 @@ async def _publish_and_persist_export_artifacts(
             progress=100,
             engine=engine,
         )
+    except QuotaExceededError:
+        await _delete_published_export_artifacts(published)
+        await _update_db_export_status(
+            job_id,
+            "failed",
+            error_log="产物存储配额已用尽，请清理旧成果后重试",
+            retryable_failure=False,
+            error_class="quota_exceeded",
+            engine=engine,
+        )
+        return False, []
     except Exception:
         await _delete_published_export_artifacts(published)
         raise
@@ -747,6 +983,7 @@ def _render_manim_sync(
     ffmpeg_dir = _find_ffmpeg()
     if ffmpeg_dir:
         env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
+    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
 
     media_abs = str(Path(media_dir).resolve())
     result = _run_subprocess_group(
@@ -792,6 +1029,7 @@ def _render_manim_sync(
                 continue
             dest = export_dir / mp4.name
             _shutil.copy2(mp4, dest)
+            _optimize_mp4_for_web(dest, ffmpeg_bin)
             return {
                 "type": "mp4",
                 "filename": mp4.name,
@@ -799,7 +1037,6 @@ def _render_manim_sync(
             }
 
     # Manim 未产出最终 MP4，尝试手动合并 partial_movie_files
-    ffmpeg_bin = os.path.join(ffmpeg_dir, "ffmpeg.exe") if ffmpeg_dir else "ffmpeg"
     merged = _merge_partial_movies(export_dir, ffmpeg_bin)
     if merged:
         return merged
@@ -850,7 +1087,7 @@ def _run_subprocess_group(
                     "Render workspace exceeded its configured quota"
                 )
             break
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             if quota_root is not None and _workspace_exceeds_limit(
                 quota_root,
                 max_bytes=max_workspace_bytes,
@@ -860,7 +1097,7 @@ def _run_subprocess_group(
                 process.communicate()
                 raise ExportWorkspaceLimitError(
                     "Render workspace exceeded its configured quota"
-                )
+                ) from exc
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
@@ -916,8 +1153,7 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
             continue
         concat_list = export_dir / "_concat_list.txt"
         with open(concat_list, "w", encoding="utf-8") as f:
-            for mp4 in mp4s:
-                f.write(f"file '{mp4}'\n")
+            f.writelines(f"file '{mp4}'\n" for mp4 in mp4s)
 
         output = export_dir / "output.mp4"
         try:
@@ -932,6 +1168,8 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
                     str(concat_list),
                     "-c",
                     "copy",
+                    "-movflags",
+                    "+faststart",
                     str(output),
                     "-y",
                 ],
@@ -958,6 +1196,42 @@ def _merge_partial_movies(export_dir: Path, ffmpeg_bin: str) -> dict | None:
         # 继续尝试下一个 partial_movie_files 目录
 
     return None
+
+
+def _optimize_mp4_for_web(path: Path, ffmpeg_bin: str) -> None:
+    """Move the MP4 ``moov`` atom up front so browsers can load metadata fast."""
+    if not path.is_file() or path.suffix.lower() != ".mp4":
+        return
+    optimized = path.with_name(f".{path.stem}.faststart{path.suffix}")
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(optimized),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0 and optimized.is_file() and optimized.stat().st_size > 0:
+            optimized.replace(path)
+        elif optimized.exists():
+            optimized.unlink(missing_ok=True)
+    except Exception:
+        optimized.unlink(missing_ok=True)
+        logger.info("MP4 faststart 优化跳过: %s", path.name, exc_info=True)
 
 
 def _update_redis_status(
@@ -1010,16 +1284,31 @@ async def _update_db_export_status(
             跨 loop 使用会抛 InternalClientError）；主事件循环调用时省略。
     """
     try:
-        from db.models import ExportJobAttempt, ExportJobModel
+        from db.models import ExportJobAttempt, ExportJobModel, Project
 
         jid = uuid.UUID(job_id)
 
         async def apply_status(session) -> bool:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             job = await session.get(ExportJobModel, jid)
             if job is None or (job.status == "cancelled" and status != "cancelled"):
                 return False
+            previous_status = job.status
+            project = None
+            if status == "completed" and artifacts is not None:
+                project = await session.get(Project, job.project_id)
+                if project is None or not project.owner_id:
+                    return False
+                from services.quota import ensure_artifact_capacity
+                await ensure_artifact_capacity(
+                    session,
+                    user_id=uuid.UUID(project.owner_id),
+                    incoming_bytes=sum(
+                        int(item.get("size_bytes", 0) or 0)
+                        for item in artifacts if isinstance(item, dict)
+                    ),
+                )
             job.status = status
             job.worker_id = None
             job.lease_expires_at = None
@@ -1030,7 +1319,7 @@ async def _update_db_export_status(
             if progress is not None:
                 job.progress_pct = progress
             if status in {"completed", "failed", "cancelled"}:
-                job.completed_at = datetime.now(timezone.utc)
+                job.completed_at = datetime.now(UTC)
                 job.next_attempt_at = None
                 if status == "failed":
                     job.failure_retryable = retryable_failure
@@ -1046,6 +1335,30 @@ async def _update_db_export_status(
                         error_class=error_class if status == "failed" else None,
                     )
                 )
+                quota_ref = (job.config or {}).get("quota_ref") if isinstance(job.config, dict) else None
+                quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+                if isinstance(quota_key, str) and quota_key:
+                    if project is None:
+                        project = await session.get(Project, job.project_id)
+                    if project is not None and project.owner_id:
+                        from services.quota import release_quota, settle_quota
+                        quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                        try:
+                            owner_id = uuid.UUID(str(quota_user_id or project.owner_id))
+                        except (TypeError, ValueError):
+                            owner_id = uuid.UUID(str(project.owner_id))
+                        if status == "cancelled" and previous_status in {"queued", "preparing"}:
+                            await release_quota(
+                                session, user_id=owner_id, resource="video",
+                                idempotency_key=quota_key,
+                            )
+                        elif status == "completed" or status == "cancelled" or (
+                            status == "failed" and not retryable_failure
+                        ):
+                            await settle_quota(
+                                session, user_id=owner_id, resource="video",
+                                idempotency_key=quota_key,
+                            )
             await session.commit()
             return True
 
@@ -1059,6 +1372,8 @@ async def _update_db_export_status(
 
             async with async_session_factory() as session:
                 return await apply_status(session)
+    except QuotaExceededError:
+        raise
     except Exception:
         logger.warning("导出状态 DB 同步失败")
         return False
@@ -1106,11 +1421,12 @@ async def get_export_status(
             }
 
             if status == "completed":
+                from db.models import Project
                 artifacts = data.get("artifacts", [])
                 result["artifacts"] = [
                     {
                         "type": a.get("type", "mp4"),
-                        "url": f"/api/export/{job_id}/download/{a.get('filename', 'output.mp4')}",
+                        "url": _artifact_download_url(job_id, a),
                         "size_bytes": a.get("size_bytes", 0),
                     }
                     for a in artifacts
@@ -1125,6 +1441,22 @@ async def get_export_status(
                         job.status = "completed"
                         job.progress_pct = 100
                         job.artifacts = artifacts
+                        if isinstance(job.config, dict):
+                            quota_ref = job.config.get("quota_ref")
+                            quota_key = quota_ref.get("idempotency_key") if isinstance(quota_ref, dict) else None
+                            if isinstance(quota_key, str) and current_user is not None:
+                                project = await session.get(Project, job.project_id)
+                                if project is not None and project.owner_id:
+                                    from services.quota import settle_quota
+                                    quota_user_id = quota_ref.get("user_id") if isinstance(quota_ref, dict) else None
+                                    try:
+                                        admitted_user_id = uuid.UUID(str(quota_user_id or project.owner_id))
+                                    except (TypeError, ValueError):
+                                        admitted_user_id = uuid.UUID(str(project.owner_id))
+                                    await settle_quota(
+                                        session, user_id=admitted_user_id,
+                                        resource="video", idempotency_key=quota_key,
+                                    )
                         await session.commit()
 
             return result
@@ -1141,7 +1473,7 @@ async def get_export_status(
                 "artifacts": [
                     {
                         "type": a.get("type", "mp4"),
-                        "url": f"/api/export/{job_id}/download/{a.get('filename', 'output.mp4')}",
+                        "url": _artifact_download_url(job_id, a),
                         "size_bytes": a.get("size_bytes", 0),
                     }
                     for a in db_artifacts
@@ -1169,6 +1501,20 @@ def _public_export_error(error_log: object) -> str | None:
     return public_failure_message("render")
 
 
+def _artifact_download_url(job_id: str, artifact: dict) -> str:
+    """Build a browser-safe URL for an exported artifact.
+
+    MP4 previews are served through the API instead of redirecting to MinIO.
+    A redirect works for ordinary downloads, but media elements issue follow-up
+    Range requests and may fail when the redirect crosses the storage origin.
+    """
+    filename = artifact.get("filename", "output.mp4")
+    url = f"/api/export/{job_id}/download/{filename}"
+    if artifact.get("type", "mp4") == "mp4":
+        url += "?inline=1"
+    return url
+
+
 # ============================================================================
 # 下载产物
 # ============================================================================
@@ -1180,6 +1526,8 @@ async def download_artifact(
     filename: str,
     session: AsyncSession = Depends(get_session),
     current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    request: Request = None,  # type: ignore[assignment]
+    inline: bool = False,
 ):
     """下载导出的产物文件。
 
@@ -1212,7 +1560,18 @@ async def download_artifact(
     if artifact and artifact.get("storage_key"):
         from services.artifact_store import get_artifact_store
 
-        url = await get_artifact_store().presigned_get_url(artifact["storage_key"])
+        store = get_artifact_store()
+        if inline and artifact.get("type", "mp4") == "mp4":
+            streamed = await _stream_minio_artifact(
+                store,
+                artifact["storage_key"],
+                filename,
+                request,
+            )
+            if streamed is not None:
+                return streamed
+
+        url = await store.presigned_get_url(artifact["storage_key"])
         if url:
             return RedirectResponse(url=url, status_code=307)
 
@@ -1249,7 +1608,7 @@ async def download_artifact(
         if not any(resolved.is_relative_to(base) for base in allowed_bases):
             raise HTTPException(status_code=403, detail="Access denied")
     except (ValueError, OSError):
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail="Access denied") from None
 
     media_type_map = {
         ".mp4": "video/mp4",
@@ -1265,6 +1624,114 @@ async def download_artifact(
         path=str(file_path),
         media_type=media_type,
         filename=filename,
+        content_disposition_type="inline" if inline and suffix == ".mp4" else "attachment",
+    )
+
+
+def _parse_byte_range(value: str | None, total_size: int) -> tuple[int, int] | None:
+    """Parse one HTTP byte range, returning inclusive start/end offsets."""
+    if not value:
+        return None
+    if not value.lower().startswith("bytes=") or total_size <= 0:
+        raise ValueError("Invalid byte range")
+    spec = value[6:].split(",", 1)[0].strip()
+    if "-" not in spec:
+        raise ValueError("Invalid byte range")
+    start_text, end_text = (part.strip() for part in spec.split("-", 1))
+    try:
+        if not start_text:
+            suffix_length = int(end_text)
+            if suffix_length <= 0:
+                raise ValueError
+            start = max(total_size - suffix_length, 0)
+            end = total_size - 1
+        else:
+            start = int(start_text)
+            if start < 0 or start >= total_size:
+                raise ValueError
+            end = total_size - 1 if not end_text else min(int(end_text), total_size - 1)
+            if end < start:
+                raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid byte range") from exc
+    return start, end
+
+
+async def _stream_minio_artifact(
+    store: object,
+    key: str,
+    filename: str,
+    request: Request | None,
+) -> Response | None:
+    """Proxy an MP4 from MinIO with Range support for native browser playback."""
+    # LocalArtifactStore intentionally has no client/bucket attributes.  Keep
+    # this check duck-typed so the API remains importable without minio installed.
+    client = getattr(store, "client", None)
+    bucket = getattr(store, "bucket", None)
+    if client is None or not bucket:
+        return None
+
+    from services.artifact_store import normalize_artifact_key
+
+    try:
+        safe_key = normalize_artifact_key(key)
+        stat = await asyncio.to_thread(client.stat_object, bucket, safe_key)
+        total_size = int(stat.size)
+        content_type = getattr(stat, "content_type", None) or "video/mp4"
+        range_header = request.headers.get("range") if request is not None else None
+        try:
+            byte_range = _parse_byte_range(range_header, total_size)
+        except ValueError:
+            return Response(
+                status_code=416,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": f"bytes */{total_size}",
+                },
+            )
+
+        start, end = byte_range or (0, total_size - 1)
+        length = end - start + 1
+        object_response = await asyncio.to_thread(
+            client.get_object,
+            bucket,
+            safe_key,
+            offset=start,
+            length=length,
+        )
+    except Exception:
+        logger.warning("MinIO 视频流读取失败", exc_info=True)
+        return None
+
+    def body():
+        try:
+            while True:
+                chunk = object_response.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            with contextlib.suppress(Exception):
+                object_response.close()
+            with contextlib.suppress(Exception):
+                object_response.release_conn()
+
+    from urllib.parse import quote
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(length),
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+    }
+    status_code = 200
+    if byte_range is not None:
+        headers["Content-Range"] = f"bytes {start}-{end}/{total_size}"
+        status_code = 206
+    return StreamingResponse(
+        body(),
+        status_code=status_code,
+        media_type=content_type,
+        headers=headers,
     )
 
 

@@ -104,8 +104,9 @@ async def test_modules_node_runs_dependency_scheduler_inside_graph():
 
 @pytest.mark.asyncio
 async def test_modules_node_emits_fine_grained_events_inside_runnable():
-    from agents.nodes import modules_node
     from langchain_core.runnables import RunnableLambda
+
+    from agents.nodes import modules_node
 
     scheduler_events = [
         {
@@ -166,9 +167,10 @@ async def test_modules_node_emits_fine_grained_events_inside_runnable():
 
 @pytest.mark.asyncio
 async def test_canonical_graph_persists_interrupt_and_resumes_to_done():
-    import agents.graph as graph_module
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.types import Command, interrupt
+
+    import agents.graph as graph_module
 
     async def planner(state):
         decision = interrupt({"teaching_plan": {"objectives": ["learn"]}})

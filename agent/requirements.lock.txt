@@ -21,6 +21,8 @@ argon2-cffi==25.1.0
     # via minio
 argon2-cffi-bindings==26.1.0
     # via argon2-cffi
+asgiref==3.12.1
+    # via opentelemetry-instrumentation-asgi
 asyncpg==0.31.0
     # via -r requirements.txt
 audioop-lts==0.2.2 ; python_full_version >= '3.13'
@@ -36,7 +38,9 @@ certifi==2026.7.22
     #   minio
     #   requests
 cffi==2.1.1
-    # via argon2-cffi-bindings
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
 charset-normalizer==3.5.1
     # via requests
 click==8.5.0
@@ -52,6 +56,8 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   tqdm
 coverage==7.16.0
     # via pytest-cov
+cryptography==50.0.1
+    # via -r requirements.txt
 cython==3.3.0 ; sys_platform == 'darwin'
     # via screeninfo
 decorator==5.3.1
@@ -64,6 +70,8 @@ fastapi==0.141.1
     # via -r requirements.txt
 glcontext==3.0.0
     # via moderngl
+googleapis-common-protos==1.75.3
+    # via opentelemetry-exporter-otlp-proto-http
 greenlet==3.5.5
     # via sqlalchemy
 h11==0.16.0
@@ -164,6 +172,60 @@ numpy==2.5.2
     #   scipy
 openai==3.7.0
     # via -r requirements.txt
+opentelemetry-api==1.44.0
+    # via
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-redis
+    #   opentelemetry-instrumentation-sqlalchemy
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-exporter-otlp-proto-common==1.44.0
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.44.0
+    # via -r requirements.txt
+opentelemetry-instrumentation==0.65b0
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-redis
+    #   opentelemetry-instrumentation-sqlalchemy
+opentelemetry-instrumentation-asgi==0.65b0
+    # via opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-fastapi==0.65b0
+    # via -r requirements.txt
+opentelemetry-instrumentation-httpx==0.65b0
+    # via -r requirements.txt
+opentelemetry-instrumentation-redis==0.65b0
+    # via -r requirements.txt
+opentelemetry-instrumentation-sqlalchemy==0.65b0
+    # via -r requirements.txt
+opentelemetry-proto==1.44.0
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.44.0
+    # via
+    #   -r requirements.txt
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.65b0
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-redis
+    #   opentelemetry-instrumentation-sqlalchemy
+    #   opentelemetry-sdk
+opentelemetry-util-http==0.65b0
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
 orjson==3.12.0
     # via
     #   langgraph-checkpoint-postgres
@@ -175,6 +237,8 @@ packaging==26.3
     # via
     #   langchain-core
     #   langsmith
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-sqlalchemy
     #   pytest
 pillow==12.3.0
     # via
@@ -185,6 +249,10 @@ pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
+protobuf==7.36.1
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
 psycopg==3.3.5
     # via
     #   -r requirements.txt
@@ -262,6 +330,7 @@ redis==8.1.0
 requests==2.34.2
     # via
     #   langsmith
+    #   opentelemetry-exporter-otlp-proto-http
     #   requests-toolbelt
 requests-toolbelt==1.0.0
     # via langsmith
@@ -314,6 +383,10 @@ typing-extensions==4.16.0
     #   manim
     #   minio
     #   openai
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   psycopg
     #   psycopg-pool
     #   pydantic
@@ -353,6 +426,12 @@ websockets==16.1.1
     #   langgraph-sdk
     #   langsmith
     #   uvicorn
+wrapt==2.4.1
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-redis
+    #   opentelemetry-instrumentation-sqlalchemy
 xlsxwriter==3.2.9
     # via python-pptx
 xxhash==4.0.1

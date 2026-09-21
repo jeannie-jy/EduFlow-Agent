@@ -137,9 +137,34 @@ describe("generate service", () => {
       modules: ["quiz", "mindmap"],
     });
     expect(fetchMock.mock.calls[1][0]).toBe(
-      "http://localhost:8000/api/projects/p1/generate/modules/stream?stream_id=persisted-id",
+      "/api/projects/p1/generate/modules/stream?stream_id=persisted-id",
     );
     connection.close();
+  });
+
+  it("normalizes an old absolute API stream URL to the same origin", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(
+          'event: done\ndata: {"phase":"done","pct":100}\n\n',
+        ));
+        controller.close();
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, body: stream });
+    vi.stubGlobal("fetch", fetchMock);
+    const { streamFromUrl } = await import("@/services/generate");
+
+    streamFromUrl(
+      "http://localhost:8000/api/projects/p1/generate/stream?stream_id=old",
+      { reconnectMs: 0 },
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/projects/p1/generate/stream?stream_id=old",
+    );
   });
 
   it("requests a trace-based cost estimate before module retry", async () => {

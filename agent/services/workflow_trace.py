@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -65,10 +65,11 @@ async def workflow_trace_scope(
 ) -> AsyncIterator[WorkflowTraceContext]:
     context = WorkflowTraceContext(run_id=uuid.uuid4(), enabled=False)
     try:
+        from sqlalchemy import select
+
         from api.deps import parse_project_id
         from db.database import async_session_factory
         from db.models import WorkflowRun
-        from sqlalchemy import select
 
         parsed_project_id = parse_project_id(project_id)
         async with async_session_factory() as session:
@@ -82,7 +83,7 @@ async def workflow_trace_scope(
                 )
                 for row in previous.all():
                     row.status = "resumed"
-                    row.completed_at = datetime.now(timezone.utc)
+                    row.completed_at = datetime.now(UTC)
             session.add(WorkflowRun(
                 id=context.run_id,
                 project_id=parsed_project_id,
@@ -227,7 +228,7 @@ async def finish_node_trace(
             row = await session.get(WorkflowNodeRun, usage.node_id)
             if row is not None:
                 row.status = status[:50]
-                row.completed_at = datetime.now(timezone.utc)
+                row.completed_at = datetime.now(UTC)
                 row.duration_ms = (time.perf_counter() - usage.started) * 1000
                 row.model = usage.model
                 row.endpoint = usage.endpoint
@@ -348,7 +349,7 @@ async def _finish_workflow(
                 row.estimated_cost_usd = context.estimated_cost_usd
                 row.error_class = error_class[:100] if error_class else None
                 if context.status != "waiting_approval":
-                    row.completed_at = datetime.now(timezone.utc)
+                    row.completed_at = datetime.now(UTC)
                 await session.commit()
     except Exception:
         logger.exception("workflow trace finish failed")

@@ -5,6 +5,7 @@ DSL 校验工具：确定性检查，不依赖 LLM。
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 _INFINITY_VALUES = {"∞", "inf", "+inf", "infinity", "无穷", "无穷大"}
 _EMPTY_QUEUE_SENTINELS = {"", "[]", "empty", "none", "null", "空", "空队列"}
 _SHORTEST_PATH_MARKERS = ("dijkstra", "shortest path", "最短路径")
+_BELLMAN_FORD_MARKERS = ("bellman-ford", "bellman ford", "bellmanford", "bellman-ford", "bellman")
 _SECONDARY_GRAPH_MARKERS = (
     "negative",
     "counterexample",
@@ -23,6 +25,7 @@ _SECONDARY_GRAPH_MARKERS = (
     "exercise",
     "反例",
     "练习",
+    "负环",
 )
 _DERIVED_GRAPH_MARKERS = ("path_tree", "path-tree", "shortest_path_tree", "路径树")
 
@@ -57,6 +60,12 @@ def _queue_values(value: Any) -> list[str]:
     for item in value:
         if isinstance(item, dict):
             candidate = item.get("id", item.get("vertex", item.get("node", item.get("key"))))
+        elif isinstance(item, (list, tuple)):
+            # Priority queues are commonly serialized as ``[vertex, key]``
+            # pairs, e.g. ``[["C", 8]]``. Only the vertex participates in
+            # visited/queue invariants; treating the whole pair as an id
+            # creates false "unprocessed vertex" failures.
+            candidate = item[0] if item else None
         else:
             candidate = item
         if candidate is not None:
@@ -78,7 +87,11 @@ def _negative_counterexample_issues(frame: dict[str, Any]) -> list[str]:
     if not isinstance(snapshot, dict):
         return []
     explicitly_wrong_trace = "visited_wrong" in snapshot or "wrong_dist" in snapshot
-    if any(_graph_role(graph) == "primary" for graph in _graph_visuals(frame)) and not explicitly_wrong_trace:
+    if (
+        any(_graph_role(graph) == "primary" for graph in _graph_visuals(frame))
+        and not explicitly_wrong_trace
+        and not _frame_state_likely_secondary(frame)
+    ):
         # In a mixed comparison frame, ordinary ``visited``/``dist`` belongs
         # to the primary graph.  Only explicitly named wrong-trace fields may
         # be evaluated against the secondary counterexample.
@@ -114,7 +127,7 @@ def _negative_counterexample_issues(frame: dict[str, Any]) -> list[str]:
         for edge in raw_edges:
             if not isinstance(edge, dict):
                 continue
-            source, target = edge.get("source"), edge.get("target")
+            source, target = _edge_endpoints(edge)
             weight = _distance_value(edge.get("weight"))
             if (
                 source is None
@@ -195,14 +208,17 @@ def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str,
             if not isinstance(visual, dict):
                 continue
             if visual.get("type") == "graph" and _graph_role(visual) == "primary":
-                for node in visual.get("nodes", []):
+                raw_nodes = visual.get("nodes") or visual.get("vertices", [])
+                for node in raw_nodes if isinstance(raw_nodes, list) else []:
                     if isinstance(node, dict):
                         node_id = node.get("id", node.get("label"))
                         if node_id is not None:
                             vertices.add(str(node_id))
+                    elif node is not None:
+                        vertices.add(str(node))
                 candidates = visual.get("edges", visual.get("graph_edges", []))
                 if isinstance(candidates, list):
-                    edges.extend(item for item in candidates if isinstance(item, dict))
+                    edges.extend(_normalise_edge(item) for item in candidates if isinstance(item, dict))
             elif visual.get("type") == "edge":
                 edges.append(visual)
         graph_state = frame.get("state_snapshot", {}).get("graph", {})
@@ -214,7 +230,7 @@ def _graph_edges(frames: list[dict[str, Any]]) -> tuple[set[str], list[dict[str,
                     vertices.add(str(node))
             state_edges = graph_state.get("edges", graph_state.get("graph_edges", []))
             if isinstance(state_edges, list):
-                edges.extend(item for item in state_edges if isinstance(item, dict))
+                edges.extend(_normalise_edge(item) for item in state_edges if isinstance(item, dict))
         if vertices and edges:
             break
     return vertices, edges
@@ -279,6 +295,658 @@ def _frame_has_primary_graph(frame: dict[str, Any], primary_graph_id: str | None
     return False
 
 
+def _graph_vertices(visual: dict[str, Any]) -> set[str]:
+    """Return vertex ids declared by one graph visual."""
+    vertices: set[str] = set()
+    raw_vertices = visual.get("nodes") or visual.get("vertices", [])
+    for node in raw_vertices if isinstance(raw_vertices, list) else []:
+        if isinstance(node, dict):
+            node_id = node.get("id", node.get("label"))
+            if node_id is not None:
+                vertices.add(str(node_id))
+        elif node is not None:
+            vertices.add(str(node))
+    for edge in visual.get("edges", visual.get("graph_edges", [])):
+        if not isinstance(edge, dict):
+            continue
+        source, target = _edge_endpoints(edge)
+        if source is not None:
+            vertices.add(str(source))
+        if target is not None:
+            vertices.add(str(target))
+    return vertices
+
+
+def _graph_has_negative_edge(visual: dict[str, Any]) -> bool:
+    for edge in visual.get("edges", visual.get("graph_edges", [])):
+        if not isinstance(edge, dict):
+            continue
+        weight = _distance_value(edge.get("weight"))
+        if weight is not None and math.isfinite(weight) and weight < 0:
+            return True
+    return False
+
+
+def _state_distance_map(frame: dict[str, Any]) -> dict[str, Any] | None:
+    snapshot = frame.get("state_snapshot", {})
+    if not isinstance(snapshot, dict):
+        return None
+    for key in ("dist", "distances", "distance"):
+        value = snapshot.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _edge_endpoints(edge: dict[str, Any]) -> tuple[Any, Any]:
+    """Read canonical and legacy graph edge endpoint aliases."""
+    return edge.get("source", edge.get("from")), edge.get("target", edge.get("to"))
+
+
+def _normalise_edge(edge: dict[str, Any]) -> dict[str, Any]:
+    """Expose legacy ``from/to`` graph edges through the canonical keys."""
+    source, target = _edge_endpoints(edge)
+    if "source" in edge and "target" in edge:
+        return edge
+    return {**edge, "source": source, "target": target}
+
+
+def _frame_state_likely_secondary(frame: dict[str, Any]) -> bool:
+    """Detect a secondary trace embedded beside the primary graph.
+
+    Models frequently render both graphs in one frame but put the secondary
+    graph's ordinary ``dist``/``visited`` fields in the top-level snapshot.
+    When the snapshot vertex set exactly matches a negative graph and omits a
+    vertex from the primary graph, it cannot be the primary execution state.
+    This inference is deliberately narrow so ordinary mixed comparison frames
+    remain part of the primary trace.
+    """
+    distance_map = _state_distance_map(frame)
+    snapshot = frame.get("state_snapshot", {})
+    if not isinstance(distance_map, dict) or not isinstance(snapshot, dict):
+        return False
+    secondary_graphs = [
+        graph
+        for graph in _graph_visuals(frame)
+        if _graph_role(graph) == "secondary" and _graph_has_negative_edge(graph)
+    ]
+    if not secondary_graphs:
+        return False
+    state_vertices = {str(vertex) for vertex in distance_map}
+    primary_vertices: set[str] = set()
+    for graph in _graph_visuals(frame):
+        if _graph_role(graph) == "primary":
+            primary_vertices.update(_graph_vertices(graph))
+    for graph in secondary_graphs:
+        secondary_vertices = _graph_vertices(graph)
+        if secondary_vertices and state_vertices == secondary_vertices:
+            return True
+    # A negative trace may expose only a subset of its graph, but an explicit
+    # negative-only state must still not reset the primary baseline.
+    if primary_vertices and state_vertices and state_vertices < primary_vertices:
+        return any(
+            key in snapshot
+            for key in ("negative_edge", "dijkstra_result", "wrong_dist", "neg_dist")
+        )
+    return False
+
+
+def _topic_requests_negative_counterexample(topic_text: str) -> bool:
+    markers = (
+        "负权反例",
+        "负权边反例",
+        "反例",
+        "counterexample",
+        "negative edge example",
+    )
+    return any(marker in topic_text for marker in markers)
+
+
+def _strip_unrequested_negative_examples(
+    frames: list[dict[str, Any]],
+    *,
+    topic_text: str,
+) -> list[dict[str, Any]]:
+    """Remove invalid illustrative negative graphs when the topic did not ask for one.
+
+    The primary lesson remains intact, while a model's optional counterexample
+    cannot poison the executable Dijkstra trace. Explicit counterexample topics
+    are never modified and continue to be checked strictly.
+    """
+    if _topic_requests_negative_counterexample(topic_text):
+        return frames
+
+    cleaned: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            cleaned.append(frame)
+            continue
+        negative_graphs = [
+            visual
+            for visual in _graph_visuals(frame)
+            if _graph_has_negative_edge(visual)
+        ]
+        if not negative_graphs:
+            cleaned.append(frame)
+            continue
+
+        secondary_state = _frame_state_likely_secondary(frame)
+        has_safe_primary = any(
+            _graph_role(visual) == "primary" and not _graph_has_negative_edge(visual)
+            for visual in _graph_visuals(frame)
+        )
+        has_negative_primary = any(
+            _graph_role(visual) == "primary" and _graph_has_negative_edge(visual)
+            for visual in negative_graphs
+        )
+        # If the frame only contains a negative primary graph, it is an
+        # unrequested counterexample rather than a valid execution step. Drop
+        # it instead of relabelling a negative trace as the main algorithm.
+        if has_negative_primary and not has_safe_primary:
+            continue
+
+        state = frame.get("state_snapshot")
+        if not isinstance(state, dict):
+            state = {}
+            frame["state_snapshot"] = state
+        frame["visual_objects"] = [
+            visual
+            for visual in frame.get("visual_objects", [])
+            if not (
+                isinstance(visual, dict)
+                and visual.get("type") == "graph"
+                and visual in negative_graphs
+            )
+        ]
+
+        # Mixed frames may carry a correctly named primary snapshot alongside
+        # the negative trace. Preserve the primary state and discard only the
+        # counterexample fields.
+        primary_dist = state.get("primary_dist")
+        primary_visited = state.get("primary_visited")
+        if isinstance(primary_dist, dict) and not isinstance(state.get("dist"), dict):
+            state["dist"] = deepcopy(primary_dist)
+        if isinstance(primary_visited, list) and not isinstance(state.get("visited"), list):
+            state["visited"] = deepcopy(primary_visited)
+        if secondary_state and not isinstance(primary_dist, dict):
+            for key in ("dist", "distances", "distance", "visited", "processed"):
+                state.pop(key, None)
+        for key in list(state):
+            normalized = str(key).casefold()
+            if (
+                normalized.startswith(("neg_", "negative_", "wrong_"))
+                or normalized in {
+                    "primary_dist",
+                    "primary_visited",
+                    "visited_wrong",
+                    "dijkstra_result",
+                    "true_result",
+                    "error_step",
+                    "negative_edge",
+                }
+            ):
+                state.pop(key, None)
+
+        # A frame that only described the discarded counterexample carries no
+        # executable primary state; dropping it is safer than relabelling a
+        # wrong trace as the main algorithm.
+        if (
+            secondary_state
+            or (
+                not isinstance(state.get("dist"), dict)
+                and not isinstance(state.get("distances"), dict)
+                and not isinstance(state.get("distance"), dict)
+                and not isinstance(state.get("visited"), list)
+                and not isinstance(state.get("processed"), list)
+            )
+        ):
+            continue
+        cleaned.append(frame)
+    return cleaned
+
+
+def _stabilize_primary_graph_topology(
+    frames: list[dict[str, Any]],
+    *,
+    topic_text: str,
+) -> int:
+    """Keep the best complete primary graph immutable across all graph lessons."""
+    if _topic_requests_negative_counterexample(topic_text):
+        return 0
+    candidates: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        candidates.extend(
+            visual
+            for visual in _graph_visuals(frame)
+            if _graph_role(visual) == "primary" and not _graph_has_negative_edge(visual)
+        )
+    if not candidates:
+        return 0
+
+    def topology_score(visual: dict[str, Any]) -> tuple[int, int, int]:
+        nodes = visual.get("nodes", [])
+        edges = visual.get("edges", visual.get("graph_edges", []))
+        node_count = len(nodes) if isinstance(nodes, list) else 0
+        valid_edges = [
+            edge
+            for edge in (edges if isinstance(edges, list) else [])
+            if isinstance(edge, dict)
+            and _edge_endpoints(edge)[0] is not None
+            and _edge_endpoints(edge)[1] is not None
+        ]
+        return (1 if valid_edges else 0, len(valid_edges), node_count)
+
+    baseline = deepcopy(max(candidates, key=topology_score))
+    baseline_nodes = baseline.get("nodes", [])
+    baseline_edges = baseline.get("edges", baseline.get("graph_edges", []))
+    node_map: dict[str, dict[str, Any]] = {}
+    for node in baseline_nodes if isinstance(baseline_nodes, list) else []:
+        if isinstance(node, dict):
+            node_id = node.get("id", node.get("label"))
+            if node_id is None:
+                continue
+            normalized = deepcopy(node)
+            normalized["id"] = str(node_id)
+            normalized.setdefault("label", str(node_id))
+            node_map[str(node_id)] = normalized
+        elif node is not None:
+            node_map[str(node)] = {"id": str(node), "label": str(node)}
+    clean_edges: list[dict[str, Any]] = []
+    for edge in baseline_edges if isinstance(baseline_edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        source, target = _edge_endpoints(edge)
+        if source is None or target is None:
+            continue
+        source_id, target_id = str(source), str(target)
+        node_map.setdefault(source_id, {"id": source_id, "label": source_id})
+        node_map.setdefault(target_id, {"id": target_id, "label": target_id})
+        normalized = deepcopy(edge)
+        normalized["source"] = source_id
+        normalized["target"] = target_id
+        clean_edges.append(normalized)
+    baseline["nodes"] = list(node_map.values())
+    baseline["edges"] = clean_edges
+
+    repairs = 0
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        for visual in _graph_visuals(frame):
+            if _graph_role(visual) != "primary" or _graph_has_negative_edge(visual):
+                continue
+            if (
+                visual.get("nodes") == baseline["nodes"]
+                and visual.get("edges", visual.get("graph_edges", [])) == baseline["edges"]
+            ):
+                continue
+            visual["nodes"] = deepcopy(baseline["nodes"])
+            visual["edges"] = deepcopy(baseline["edges"])
+            repairs += 1
+    return repairs
+
+
+def _repair_shortest_path_trees(frames: list[dict[str, Any]]) -> int:
+    """Rebuild explicit path-tree visuals from the frame's predecessor map.
+
+    A model may leave an examined-but-not-selected edge (for example ``B->C``)
+    in the final tree even though ``prev[C]`` is ``A``.  The predecessor map
+    and distance snapshot are the executable source of truth, so derived tree
+    visuals are normalized to that single parent per vertex.
+    """
+    _, edges = _graph_edges(frames)
+    weights: dict[tuple[str, str], list[float]] = {}
+    for edge in edges:
+        source, target = _edge_endpoints(edge)
+        weight = _distance_value(edge.get("weight"))
+        if source is not None and target is not None and weight is not None and math.isfinite(weight):
+            weights.setdefault((str(source), str(target)), []).append(weight)
+    if not weights:
+        return 0
+    repairs = 0
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        tree_keys = [key for key in ("shortest_path_tree", "path_tree") if key in snapshot]
+        derived_visuals = [
+            visual
+            for visual in _graph_visuals(frame)
+            if _graph_role(visual) == "derived"
+            and any(marker in " ".join(str(visual.get(key, "")) for key in ("id", "label", "title")).casefold() for marker in _DERIVED_GRAPH_MARKERS)
+        ]
+        if not tree_keys and not derived_visuals:
+            continue
+
+        raw_dist = snapshot.get("dist", snapshot.get("distances", snapshot.get("distance")))
+        distances = {
+            str(vertex): value
+            for vertex, raw_value in raw_dist.items()
+            if (value := _distance_value(raw_value)) is not None
+        } if isinstance(raw_dist, dict) else {}
+        raw_prev = snapshot.get(
+            "predecessor",
+            snapshot.get("prev", snapshot.get("predecessors", snapshot.get("parents", {}))),
+        )
+        candidates: list[tuple[str, str, float]] = []
+        if isinstance(raw_prev, dict):
+            for child, parent in raw_prev.items():
+                if parent is None:
+                    continue
+                parent_text, child_text = str(parent), str(child)
+                for weight in weights.get((parent_text, child_text), []):
+                    parent_dist = distances.get(parent_text)
+                    child_dist = distances.get(child_text)
+                    if parent_dist is None or child_dist is None or (
+                        math.isfinite(parent_dist)
+                        and math.isfinite(child_dist)
+                        and math.isclose(child_dist, parent_dist + weight, abs_tol=1e-9)
+                    ):
+                        candidates.append((parent_text, child_text, weight))
+                        break
+        if not candidates and distances:
+            for (parent_text, child_text), edge_weights in weights.items():
+                parent_dist = distances.get(parent_text)
+                child_dist = distances.get(child_text)
+                if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
+                    continue
+                if math.isclose(child_dist, parent_dist + edge_weights[0], abs_tol=1e-9):
+                    candidates.append((parent_text, child_text, edge_weights[0]))
+        # Preserve one deterministic parent per child.
+        desired: list[dict[str, Any]] = []
+        seen_children: set[str] = set()
+        for parent_text, child_text, weight in candidates:
+            if child_text in seen_children:
+                continue
+            seen_children.add(child_text)
+            desired.append({"source": parent_text, "target": child_text, "weight": int(weight) if weight.is_integer() else weight})
+
+        if not desired and not candidates:
+            # Do not erase an intentionally empty/partially specified tree when
+            # the snapshot provides insufficient evidence to reconstruct it.
+            continue
+
+        for key in tree_keys:
+            if snapshot.get(key) != desired:
+                snapshot[key] = deepcopy(desired)
+                repairs += 1
+        for visual in derived_visuals:
+            if visual.get("edges") != desired:
+                visual["edges"] = deepcopy(desired)
+                repairs += 1
+    return repairs
+
+
+def _bellman_frame_is_illustrative(frame: dict[str, Any]) -> bool:
+    """Identify a Dijkstra comparison frame in a Bellman-Ford lesson."""
+    snapshot = frame.get("state_snapshot", {})
+    if isinstance(snapshot, dict) and snapshot.get("phase") in {
+        "dijkstra_failure_demo",
+        "negative_cycle_detection",
+    }:
+        return True
+    identity = " ".join(
+        str(frame.get(key, "")) for key in ("title", "narration")
+    ).casefold()
+    return "dijkstra" in identity and "bellman" not in identity
+
+
+def _bellman_primary_graph(frames: list[dict[str, Any]]) -> tuple[list[str], list[tuple[str, str, float]]]:
+    """Extract the main Bellman-Ford teaching graph, not comparison examples."""
+    candidates: list[tuple[int, list[str], list[tuple[str, str, float]]]] = []
+    for frame in frames:
+        if not isinstance(frame, dict) or _bellman_frame_is_illustrative(frame):
+            continue
+        for visual in _graph_visuals(frame):
+            if _graph_role(visual) != "primary":
+                continue
+            vertices = list(_graph_vertices(visual))
+            edges: list[tuple[str, str, float]] = []
+            for edge in visual.get("edges", visual.get("graph_edges", [])):
+                if not isinstance(edge, dict):
+                    continue
+                source, target = _edge_endpoints(edge)
+                weight = _distance_value(edge.get("weight"))
+                if source is None or target is None or weight is None or math.isinf(weight):
+                    continue
+                edges.append((str(source), str(target), weight))
+            if vertices and edges:
+                identity = " ".join(str(visual.get(key, "")) for key in ("id", "label", "title")).casefold()
+                score = 2 if "bellman" in identity else 0
+                if isinstance(frame.get("state_snapshot"), dict) and "round" in frame["state_snapshot"]:
+                    score += 1
+                candidates.append((score, sorted(set(vertices)), edges))
+    if not candidates:
+        return [], []
+    _, vertices, edges = max(candidates, key=lambda item: item[0])
+    return vertices, edges
+
+
+def _bellman_pass_states(
+    vertices: list[str],
+    edges: list[tuple[str, str, float]],
+    source: str,
+) -> list[dict[str, float]]:
+    """Compute deterministic in-place Bellman-Ford states by relaxation round."""
+    distances = {vertex: math.inf for vertex in vertices}
+    distances[source] = 0.0
+    states = [dict(distances)]
+    for _ in range(max(0, len(vertices) - 1)):
+        for left, right, weight in edges:
+            if math.isfinite(distances.get(left, math.inf)):
+                candidate = distances[left] + weight
+                if candidate < distances.get(right, math.inf):
+                    distances[right] = candidate
+        states.append(dict(distances))
+    return states
+
+
+def _encode_distance(value: float, original: Any) -> Any:
+    """Preserve the artifact's infinity representation while repairing numbers."""
+    if math.isinf(value):
+        return original if isinstance(original, str) else "∞"
+    if isinstance(original, int) and not isinstance(original, bool):
+        return int(value) if float(value).is_integer() else value
+    return int(value) if float(value).is_integer() else value
+
+
+def _repair_bellman_text(value: str, states: list[dict[str, float]]) -> str:
+    """Correct explicit ``第 k 轮 ... dist[x]=y`` claims in model prose."""
+    if not isinstance(value, str) or not states:
+        return value
+    repaired = value
+    for round_index, expected in enumerate(states):
+        round_pattern = r"初始" if round_index == 0 else rf"第\s*{round_index}\s*轮"
+        match = re.search(round_pattern, repaired)
+        if not match:
+            continue
+        end_match = re.search(r"[；;。！？!?\n]", repaired[match.end():])
+        end = match.end() + end_match.start() if end_match else len(repaired)
+        clause = repaired[match.start():end]
+        for vertex, distance in expected.items():
+            number = "∞" if math.isinf(distance) else (str(int(distance)) if distance.is_integer() else str(distance))
+            token = re.compile(
+                rf"(dist\s*\[\s*{re.escape(vertex)}\s*\]\s*=\s*)(-?\d+(?:\.\d+)?|∞|inf|无穷(?:大)?)",
+                flags=re.IGNORECASE,
+            )
+            clause = token.sub(rf"\g<1>{number}", clause)
+        repaired = repaired[:match.start()] + clause + repaired[end:]
+    return repaired
+
+
+def _stabilize_bellman_ford_trace(frames: list[dict[str, Any]]) -> int:
+    """Repair Bellman-Ford snapshots/tables against the declared graph.
+
+    LLMs often mix in-place and synchronous relaxation when narrating a round.
+    The graph and round number are already structured data, so recomputing the
+    expected state is deterministic and avoids spending another LLM request.
+    """
+    vertices, edges = _bellman_primary_graph(frames)
+    if not vertices or not edges:
+        return 0
+    source = None
+    for frame in frames:
+        snapshot = frame.get("state_snapshot", {}) if isinstance(frame, dict) else {}
+        raw_dist = snapshot.get("dist", snapshot.get("distances")) if isinstance(snapshot, dict) else None
+        if isinstance(raw_dist, dict):
+            for vertex, raw_value in raw_dist.items():
+                if _distance_value(raw_value) == 0:
+                    source = str(vertex)
+                    break
+        if source:
+            break
+    source = source or vertices[0]
+    states = _bellman_pass_states(vertices, edges, source)
+    repairs = 0
+    secondary_active = False
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        if _bellman_frame_is_illustrative(frame):
+            continue
+        has_secondary = _frame_has_secondary_graph(frame)
+        # Bellman-Ford lesson plans often redraw the same teaching graph with
+        # a new visual id in each frame. Unlike Dijkstra's immutable id
+        # contract, accept any non-secondary primary graph here.
+        has_primary = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
+        if has_secondary and not has_primary:
+            secondary_active = True
+            continue
+        if secondary_active and not has_primary:
+            continue
+        if has_primary:
+            secondary_active = False
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        round_value = snapshot.get("round", snapshot.get("iteration"))
+        try:
+            round_index = max(0, min(int(round_value), len(states) - 1))
+        except (TypeError, ValueError):
+            round_index = None
+        expected = states[round_index] if round_index is not None else None
+        if expected is not None:
+            key = "dist" if isinstance(snapshot.get("dist"), dict) else "distances" if isinstance(snapshot.get("distances"), dict) else None
+            if key:
+                raw_dist = snapshot[key]
+                for vertex, distance in expected.items():
+                    original = raw_dist.get(vertex, raw_dist.get(str(vertex)))
+                    if original is None:
+                        continue
+                    repaired = _encode_distance(distance, original)
+                    if raw_dist.get(vertex, raw_dist.get(str(vertex))) != repaired:
+                        raw_dist[vertex] = repaired
+                        repairs += 1
+
+            for visual in frame.get("visual_objects", []):
+                if not isinstance(visual, dict) or visual.get("type") != "table":
+                    continue
+                headers = visual.get("headers", visual.get("columns", []))
+                rows = visual.get("rows")
+                if not isinstance(headers, list) or not isinstance(rows, list):
+                    continue
+                header_index = {str(header): index for index, header in enumerate(headers)}
+                for row in rows:
+                    if not isinstance(row, list):
+                        continue
+                    label = str(row[0]) if row else ""
+                    round_match = re.search(r"(?:第\s*)?(\d+)\s*轮", label)
+                    if not round_match:
+                        continue
+                    row_round = max(0, min(int(round_match.group(1)), len(states) - 1))
+                    for vertex, distance in states[row_round].items():
+                        index = header_index.get(vertex)
+                        if index is None or index >= len(row):
+                            continue
+                        repaired = _encode_distance(distance, row[index])
+                        if row[index] != repaired:
+                            row[index] = repaired
+                            repairs += 1
+
+        def repair(value: Any) -> Any:
+            if isinstance(value, str):
+                return _repair_bellman_text(value, states)
+            if isinstance(value, list):
+                return [repair(item) for item in value]
+            if isinstance(value, dict):
+                return {key: repair(item) for key, item in value.items()}
+            return value
+
+        repaired_frame = repair(frame)
+        if repaired_frame != frame:
+            frame.clear()
+            frame.update(repaired_frame)
+            repairs += 1
+    return repairs
+
+
+def _bellman_ford_invariant_issues(frames: list[dict[str, Any]]) -> list[str]:
+    """Check structured Bellman-Ford distances against graph relaxation rounds."""
+    vertices, edges = _bellman_primary_graph(frames)
+    if not vertices or not edges:
+        return []
+    source = None
+    for frame in frames:
+        snapshot = frame.get("state_snapshot", {}) if isinstance(frame, dict) else {}
+        raw_dist = snapshot.get("dist", snapshot.get("distances")) if isinstance(snapshot, dict) else None
+        if isinstance(raw_dist, dict):
+            source = next(
+                (str(vertex) for vertex, value in raw_dist.items() if _distance_value(value) == 0),
+                None,
+            )
+        if source:
+            break
+    states = _bellman_pass_states(vertices, edges, source or vertices[0])
+    issues: list[str] = []
+    secondary_active = False
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        if _bellman_frame_is_illustrative(frame):
+            continue
+        has_secondary = _frame_has_secondary_graph(frame)
+        has_primary = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
+        if has_secondary and not has_primary:
+            secondary_active = True
+            continue
+        if secondary_active and not has_primary:
+            continue
+        if has_primary:
+            secondary_active = False
+        snapshot = frame.get("state_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        raw_dist = snapshot.get("dist", snapshot.get("distances"))
+        if not isinstance(raw_dist, dict):
+            continue
+        round_value = snapshot.get("round", snapshot.get("iteration"))
+        if round_value is None:
+            # Intro/summary/negative-cycle frames do not identify a specific
+            # relaxation pass and must not be compared with pass state.
+            continue
+        try:
+            round_index = max(0, min(int(round_value), len(states) - 1))
+        except (TypeError, ValueError):
+            continue
+        expected = states[round_index]
+        for vertex, distance in expected.items():
+            actual = _distance_value(raw_dist.get(vertex, raw_dist.get(str(vertex))))
+            if actual is None:
+                continue
+            if (math.isinf(distance) and not math.isinf(actual)) or (
+                not math.isinf(distance) and (math.isinf(actual) or abs(actual - distance) > 1e-9)
+            ):
+                issues.append(
+                    f"Bellman-Ford 第 {round_index} 轮 dist[{vertex}]={actual:g}，"
+                    f"按图和边遍历顺序应为 {('∞' if math.isinf(distance) else f'{distance:g}')}"
+                )
+    return issues
+
+
 def _frame_graph_signature(
     frame: dict[str, Any],
     *,
@@ -299,7 +967,8 @@ def _frame_graph_signature(
         candidates = visual.get("edges", visual.get("graph_edges", []))
         if isinstance(candidates, list):
             raw_edges.extend(item for item in candidates if isinstance(item, dict))
-    if not _frame_has_secondary_graph(frame):
+    has_primary_visual = any(_graph_role(visual) == "primary" for visual in _graph_visuals(frame))
+    if not _frame_has_secondary_graph(frame) and not has_primary_visual:
         for visual in frame.get("visual_objects", []):
             if isinstance(visual, dict) and visual.get("type") == "edge":
                 raw_edges.append(visual)
@@ -308,19 +977,20 @@ def _frame_graph_signature(
             candidates = graph_state.get("edges", graph_state.get("graph_edges", []))
             if isinstance(candidates, list):
                 raw_edges.extend(item for item in candidates if isinstance(item, dict))
-    return frozenset(
-        (
-            str(edge.get("source")),
-            str(edge.get("target")),
+    signature: set[tuple[str, str, str]] = set()
+    for edge in raw_edges:
+        source, target = _edge_endpoints(edge)
+        if source is None or target is None:
+            continue
+        weight = _distance_value(edge.get("weight"))
+        signature.add(
             (
-                "" if edge.get("weight") is None
-                else f"{weight:g}" if (weight := _distance_value(edge.get("weight"))) is not None
-                else str(edge.get("weight"))
-            ),
+                str(source),
+                str(target),
+                "" if edge.get("weight") is None else f"{weight:g}" if weight is not None else str(edge.get("weight")),
+            )
         )
-        for edge in raw_edges
-        if edge.get("source") is not None and edge.get("target") is not None
-    )
+    return frozenset(signature)
 
 
 def _extract_tree_edges(value: Any) -> list[tuple[str, str]]:
@@ -360,22 +1030,38 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         return {}
     result = deepcopy(dsl)
     topic_text = str(result.get("topic", "")).casefold()
-    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
-        return result
-
     frames = result.get("frames", [])
     if not isinstance(frames, list):
         return result
+    if any(marker in topic_text for marker in _BELLMAN_FORD_MARKERS):
+        bellman_repairs = _stabilize_bellman_ford_trace(frames)
+        if bellman_repairs:
+            logger.info("Algorithm guardrail stabilized Bellman-Ford trace | repairs=%d", bellman_repairs)
+    repairs = _stabilize_primary_graph_topology(frames, topic_text=topic_text)
+    if repairs:
+        logger.info(
+            "Algorithm guardrail stabilized primary graph topology | repairs=%d",
+            repairs,
+        )
+    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
+        result["frames"] = frames
+        return result
+    frames = _strip_unrequested_negative_examples(frames, topic_text=topic_text)
+    result["frames"] = frames
+    tree_repairs = _repair_shortest_path_trees(frames)
+    if tree_repairs:
+        logger.info("Algorithm guardrail stabilized shortest-path tree | repairs=%d", tree_repairs)
     primary_graph_id = _primary_graph_id(frames)
     previous_visited: list[Any] = []
+    previous_dist: dict[str, float] = {}
     secondary_trace_active = False
-    repairs = 0
 
     for frame in frames:
         if not isinstance(frame, dict):
             continue
         has_secondary = _frame_has_secondary_graph(frame)
-        has_primary = _frame_has_primary_graph(frame, primary_graph_id)
+        state_is_secondary = _frame_state_likely_secondary(frame)
+        has_primary = _frame_has_primary_graph(frame, primary_graph_id) and not state_is_secondary
         # A mixed comparison frame can show a secondary graph beside the
         # primary graph.  Its state snapshot still belongs to the explicitly
         # present primary trace; only a secondary-only frame starts an
@@ -391,6 +1077,35 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         snapshot = frame.get("state_snapshot")
         if not isinstance(snapshot, dict):
             continue
+        raw_dist = snapshot.get(
+            "dist", snapshot.get("distances", snapshot.get("distance"))
+        )
+        distances = {
+            str(vertex): distance
+            for vertex, value in raw_dist.items()
+            if (distance := _distance_value(value)) is not None
+        } if isinstance(raw_dist, dict) else {}
+        if isinstance(raw_dist, dict) and previous_dist:
+            for key, value in list(raw_dist.items()):
+                current = _distance_value(value)
+                before = previous_dist.get(str(key))
+                if (
+                    current is not None
+                    and before is not None
+                    and math.isfinite(before)
+                    and (
+                        (math.isfinite(current) and current > before + 1e-9)
+                        or math.isinf(current)
+                    )
+                ):
+                    raw_dist[key] = before
+                    distances[str(key)] = before
+                    repairs += 1
+        if distances:
+            previous_dist = {
+                **previous_dist,
+                **distances,
+            }
         visited_key = (
             "visited"
             if isinstance(snapshot.get("visited"), list)
@@ -400,15 +1115,6 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         )
         if visited_key is None:
             continue
-
-        raw_dist = snapshot.get(
-            "dist", snapshot.get("distances", snapshot.get("distance"))
-        )
-        distances = {
-            str(vertex): distance
-            for vertex, value in raw_dist.items()
-            if (distance := _distance_value(value)) is not None
-        } if isinstance(raw_dist, dict) else {}
 
         current: list[Any] = []
         current_ids: set[str] = set()
@@ -443,6 +1149,291 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def check_storyboard_dynamics(
+    frames: list[dict[str, Any]], *, topic: str = ""
+) -> dict[str, Any]:
+    """Require graph-traversal lessons to show state progression, not only terminal slides."""
+    topic_text = str(topic).casefold()
+    requested: list[str] = []
+    if "bfs" in topic_text or "广度" in topic_text:
+        requested.append("bfs")
+    if "dfs" in topic_text or "深度" in topic_text:
+        requested.append("dfs")
+    if not requested:
+        return {"checked": False, "dynamic": True, "issues": []}
+
+    issues: list[dict[str, Any]] = []
+    for algorithm in requested:
+        distinct_states: set[tuple[str, ...]] = set()
+        execution_frames = 0
+        missing_graph_frames: list[str] = []
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+            snapshot = frame.get("state_snapshot")
+            if not isinstance(snapshot, dict):
+                continue
+            frame_text = f"{frame.get('title', '')} {frame.get('narration', '')}".casefold()
+            frame_algorithm = str(snapshot.get("algorithm") or "").casefold()
+            if frame_algorithm != algorithm and algorithm not in frame_text:
+                continue
+            visited = snapshot.get("visited")
+            if not isinstance(visited, list) or not visited:
+                continue
+            execution_frames += 1
+            distinct_states.add(tuple(str(vertex) for vertex in visited))
+            has_primary_graph = any(
+                isinstance(visual, dict)
+                and visual.get("type") == "graph"
+                and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+                for visual in frame.get("visual_objects", [])
+            )
+            if not has_primary_graph:
+                missing_graph_frames.append(str(frame.get("frame_id", "?")))
+
+        if len(distinct_states) < 3:
+            issues.append({
+                "algorithm": algorithm,
+                "description": (
+                    f"{algorithm.upper()} 只有 {len(distinct_states)} 个不同 visited 状态；"
+                    "至少需要 3 个逐步增长的执行分镜，不能直接展示最终序列"
+                ),
+            })
+        if execution_frames and len(missing_graph_frames) == execution_frames:
+            issues.append({
+                "algorithm": algorithm,
+                "description": (
+                    f"{algorithm.upper()} 的执行分镜没有携带 primary_graph，"
+                    "视频无法在同一张图上表现节点访问变化"
+                ),
+            })
+
+    return {
+        "checked": True,
+        "dynamic": not issues,
+        "issues": issues,
+    }
+
+
+def check_visual_completeness(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reject visual shells that a renderer can only draw as broken shapes.
+
+    Schema validation proves field *types*, not that a component contains the
+    data needed to communicate its meaning.  This render-aware contract is
+    intentionally deterministic so incomplete model output cannot slip into
+    an MP4 merely because ``nodes=[]`` or ``code=''`` is schema-valid.
+    """
+    issues: list[dict[str, str]] = []
+
+    def report(frame_id: str, visual_id: str, description: str) -> None:
+        issues.append({
+            "frame_id": frame_id,
+            "visual_id": visual_id,
+            "description": description,
+        })
+
+    for frame_index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        frame_id = str(frame.get("frame_id") or f"frames.{frame_index}")
+        visuals = frame.get("visual_objects", [])
+        if not isinstance(visuals, list):
+            continue
+        for visual_index, visual in enumerate(visuals):
+            if not isinstance(visual, dict):
+                continue
+            visual_id = str(visual.get("id") or f"visual_objects.{visual_index}")
+            object_type = str(visual.get("type") or "")
+
+            if object_type == "graph":
+                nodes = visual.get("nodes", [])
+                edges = visual.get("edges", visual.get("graph_edges", []))
+                node_ids: set[str] = set()
+                missing_node_ids = 0
+                for node in nodes if isinstance(nodes, list) else []:
+                    node_id = (
+                        node.get("id", node.get("label"))
+                        if isinstance(node, dict)
+                        else node
+                    )
+                    if node_id is None or not str(node_id).strip():
+                        missing_node_ids += 1
+                    else:
+                        node_ids.add(str(node_id))
+                if not node_ids:
+                    report(frame_id, visual_id, "graph 缺少可渲染节点")
+                    continue
+                if missing_node_ids:
+                    report(frame_id, visual_id, f"graph 有 {missing_node_ids} 个节点缺少 id")
+                valid_edges = []
+                invalid_endpoints: set[str] = set()
+                for edge in edges if isinstance(edges, list) else []:
+                    if not isinstance(edge, dict):
+                        continue
+                    source, target = _edge_endpoints(edge)
+                    if source is None or target is None:
+                        continue
+                    valid_edges.append(edge)
+                    invalid_endpoints.update(
+                        endpoint
+                        for endpoint in (str(source), str(target))
+                        if endpoint not in node_ids
+                    )
+                if len(node_ids) > 1 and not valid_edges:
+                    report(frame_id, visual_id, "多节点 graph 缺少边，无法表达图结构")
+                if invalid_endpoints:
+                    report(
+                        frame_id,
+                        visual_id,
+                        "graph 边引用未定义节点: " + ", ".join(sorted(invalid_endpoints)),
+                    )
+            elif object_type == "array" and not visual.get("cells"):
+                snapshot = frame.get("state_snapshot")
+                snapshot_array = snapshot.get("array") if isinstance(snapshot, dict) else None
+                if not isinstance(snapshot_array, list) or not snapshot_array:
+                    report(frame_id, visual_id, "array 缺少 cells")
+            elif object_type == "table":
+                if not visual.get("headers") and not visual.get("rows"):
+                    report(frame_id, visual_id, "table 缺少 headers 和 rows")
+            elif object_type == "code_block":
+                if not str(visual.get("code") or "").strip():
+                    report(frame_id, visual_id, "code_block 缺少 code")
+            elif object_type == "formula":
+                if not str(visual.get("latex") or "").strip():
+                    report(frame_id, visual_id, "formula 缺少 latex")
+            elif object_type == "timeline" and not visual.get("events"):
+                report(frame_id, visual_id, "timeline 缺少 events")
+            elif object_type == "memory_block" and not visual.get("blocks"):
+                report(frame_id, visual_id, "memory_block 缺少 blocks")
+            elif object_type == "edge":
+                if visual.get("source") is None or visual.get("target") is None:
+                    report(frame_id, visual_id, "edge 缺少 source 或 target")
+            elif object_type == "mindmap":
+                root = visual.get("root")
+                root_label = (
+                    root.get("name", root.get("label"))
+                    if isinstance(root, dict)
+                    else root
+                )
+                if not str(root_label or "").strip():
+                    report(frame_id, visual_id, "mindmap 缺少 root")
+
+    return {"complete": not issues, "issues": issues}
+
+
+def check_sorting_invariants(
+    frames: list[dict[str, Any]], *, topic: str = ""
+) -> dict[str, Any]:
+    """Prove that sorting frames preserve element identity and visible state.
+
+    Sorting may reorder values but must never create, delete, or duplicate an
+    element.  The snapshot and every array visual in a frame must also agree;
+    otherwise the narration, web preview, and video can show three different
+    executions while remaining schema-valid.
+    """
+    topic_text = str(topic).casefold()
+    markers = (
+        "sort", "排序", "bubble", "冒泡", "insertion", "插入",
+        "selection", "选择排序", "merge sort", "归并", "quick", "快速排序",
+    )
+    snapshot_algorithms = {
+        str(frame.get("state_snapshot", {}).get("sorting_algorithm", ""))
+        for frame in frames
+        if isinstance(frame, dict) and isinstance(frame.get("state_snapshot"), dict)
+    }
+    checked = any(marker in topic_text for marker in markers) or any(snapshot_algorithms)
+    if not checked:
+        return {"checked": False, "consistent": True, "issues": []}
+
+    def values_from_visual(visual: dict[str, Any]) -> list[Any] | None:
+        cells = visual.get("cells")
+        if not isinstance(cells, list) or not cells:
+            return None
+        return [
+            cell.get("value") if isinstance(cell, dict) else cell
+            for cell in cells
+        ]
+
+    def multiset(values: list[Any]) -> list[str]:
+        return sorted(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            for value in values
+        )
+
+    issues: list[dict[str, Any]] = []
+    baseline: list[Any] | None = None
+    last_snapshot: list[Any] | None = None
+    last_snapshot_state: dict[str, Any] | None = None
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        frame_id = str(frame.get("frame_id") or f"frames.{index}")
+        snapshot = frame.get("state_snapshot")
+        snapshot_array = snapshot.get("array") if isinstance(snapshot, dict) else None
+        if not isinstance(snapshot_array, list) or not snapshot_array:
+            snapshot_array = None
+        if baseline is None and snapshot_array is not None:
+            baseline = deepcopy(snapshot_array)
+        if snapshot_array is not None:
+            last_snapshot = snapshot_array
+            last_snapshot_state = snapshot
+            if baseline is not None and multiset(snapshot_array) != multiset(baseline):
+                issues.append({
+                    "frame_id": frame_id,
+                    "description": "排序数组改变了元素多重集合，出现元素丢失、重复或凭空新增",
+                })
+
+        for visual in frame.get("visual_objects", []):
+            if not isinstance(visual, dict) or visual.get("type") != "array":
+                continue
+            visible = values_from_visual(visual)
+            if visible is None:
+                continue
+            if baseline is None:
+                baseline = deepcopy(visible)
+            if multiset(visible) != multiset(baseline):
+                issues.append({
+                    "frame_id": frame_id,
+                    "visual_id": str(visual.get("id") or "?"),
+                    "description": "可见数组改变了初始元素多重集合",
+                })
+            if snapshot_array is not None and visible != snapshot_array:
+                issues.append({
+                    "frame_id": frame_id,
+                    "visual_id": str(visual.get("id") or "?"),
+                    "description": "可见数组与 state_snapshot.array 不一致",
+                })
+
+    if baseline is None:
+        issues.append({
+            "frame_id": "?",
+            "description": "排序主题没有提供可执行的初始数组",
+        })
+    elif last_snapshot is not None and last_snapshot_state is not None:
+        phase = str(last_snapshot_state.get("phase") or "").casefold()
+        terminal_declared = phase in {"complete", "completed", "done", "final"}
+        terminal_declared = terminal_declared or (
+            last_snapshot_state.get("sorted_prefix") == len(baseline)
+            or last_snapshot_state.get("sorted_suffix") == len(baseline)
+        )
+        expected = sorted(
+            baseline,
+            key=lambda value: (
+                0 if isinstance(value, (int, float)) and not isinstance(value, bool) else 1,
+                float(value)
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                else str(value),
+            ),
+        )
+        if terminal_declared and last_snapshot != expected:
+            issues.append({
+                "frame_id": str(frames[-1].get("frame_id", "?")) if frames else "?",
+                "description": "排序终态不是由初始数组得到的升序结果",
+            })
+
+    return {"checked": True, "consistent": not issues, "issues": issues}
+
+
 async def check_algorithm_invariants(
     frames: list[dict[str, Any]],
     *,
@@ -455,10 +1446,22 @@ async def check_algorithm_invariants(
     lessons are not rejected merely because they use different state shapes.
     """
     topic_text = str(topic).casefold()
-    if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
+    bellman_requested = any(marker in topic_text for marker in _BELLMAN_FORD_MARKERS)
+    shortest_path_requested = any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS)
+    if not shortest_path_requested and not bellman_requested:
         return {"checked": False, "consistent": True, "issues": []}
 
     issues: list[dict[str, Any]] = []
+    if bellman_requested:
+        issues.extend(
+            {"frame_id": "?", "description": description}
+            for description in _bellman_ford_invariant_issues(frames)
+        )
+        # Bellman-Ford permits distance re-relaxation and often contains a
+        # Dijkstra comparison frame. Do not apply Dijkstra monotonic-distance
+        # and visited-set rules to a Bellman-only lesson.
+        if bellman_requested:
+            return {"checked": True, "consistent": not issues, "issues": issues}
     vertices, edges = _graph_edges(frames)
     edge_map: dict[tuple[str, str], list[float]] = {}
     for edge in edges:
@@ -483,6 +1486,7 @@ async def check_algorithm_invariants(
     graph_signature: frozenset[tuple[str, str, str]] | None = None
     primary_graph_id = _primary_graph_id(frames)
     final_dist: dict[str, float] = {}
+    dist_by_frame: dict[str, dict[str, float]] = {}
     # A frame may expose the same path tree both as a derived graph and in its
     # state snapshot. Later frames may repeat an unchanged tree. Keep evidence
     # scoped to each frame so those representations are not mistaken for
@@ -517,8 +1521,9 @@ async def check_algorithm_invariants(
         # Do not compare its state against the primary execution trace; the
         # following frames may continue that illustration without repeating the
         # graph object.
+        state_is_secondary = _frame_state_likely_secondary(frame)
         has_secondary = _frame_has_secondary_graph(frame)
-        has_primary = _frame_has_primary_graph(frame, primary_graph_id)
+        has_primary = _frame_has_primary_graph(frame, primary_graph_id) and not state_is_secondary
         if has_secondary and not has_primary:
             secondary_trace_active = True
             continue
@@ -553,6 +1558,7 @@ async def check_algorithm_invariants(
             }
             if current_dist:
                 final_dist = current_dist
+                dist_by_frame[frame_id] = current_dist
 
         if current_dist is not None and previous_dist is not None:
             for vertex in set(previous_dist) & set(current_dist):
@@ -650,8 +1656,9 @@ async def check_algorithm_invariants(
                 if not weights:
                     issues.append({"frame_id": tree_frame_id, "description": f"最短路径树边 {parent}->{child} 不存在于图定义中"})
                     continue
-                parent_dist = final_dist.get(parent)
-                child_dist = final_dist.get(child)
+                frame_dist = dist_by_frame.get(tree_frame_id, final_dist)
+                parent_dist = frame_dist.get(parent)
+                child_dist = frame_dist.get(child)
                 if parent_dist is None or child_dist is None or not math.isfinite(parent_dist) or not math.isfinite(child_dist):
                     continue
                 if not any(math.isclose(child_dist, parent_dist + weight, rel_tol=1e-9, abs_tol=1e-9) for weight in weights):
@@ -665,6 +1672,7 @@ async def check_algorithm_invariants(
 
 async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     """使用 Pydantic 校验 DSL 结构完整性。"""
+    from schema.algorithm_trace import validate_algorithm_snapshot
     from schema.dsl import RenderScript
 
     errors: list[str] = []
@@ -673,7 +1681,7 @@ async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     try:
         RenderScript.model_validate(dsl)
         valid = True
-    except Exception as exc:  # noqa: BLE001 - validator must return structured errors
+    except Exception as exc:
         valid = False
         errors.append(str(exc))
 
@@ -682,6 +1690,9 @@ async def validate_dsl_schema(dsl: dict[str, Any]) -> dict[str, Any]:
     for i, frame in enumerate(frames):
         if not frame.get("frame_id"):
             errors.append(f"Frame at index {i} missing frame_id")
+            valid = False
+        for trace_error in validate_algorithm_snapshot(frame.get("state_snapshot")):
+            errors.append(f"Frame {frame.get('frame_id', i)} algorithm trace: {trace_error}")
             valid = False
 
     # 检查：帧间 order 连续性

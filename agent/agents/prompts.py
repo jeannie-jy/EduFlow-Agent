@@ -188,11 +188,45 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
 
 **其他**: memory_block, process, timeline 按场景选用
 
+### 组件完整性硬约束
+
+- 不得输出只有 `id/type` 的视觉空壳：array 必须有非空 cells，table 必须有
+  headers 或 rows，code_block 必须有非空 code，formula 必须有非空 latex，
+  timeline 必须有 events，memory_block 必须有 blocks，mindmap 必须有 root
+- graph 的每个节点必须有唯一 id；超过一个节点时必须有 edges，且每条边的
+  source/target 都必须引用已声明节点。每个执行帧携带完整 nodes+edges，不能只返回高亮节点
+- 若当前知识无法满足组件必需字段，改用已能完整表达信息的 table/array/formula；
+  禁止用无标签圆点、空框或占位数据冒充尚未生成的图形
+
 ## state_snapshot 规范
 
 必须包含当前步骤的完整变量状态，且与 visual_objects 中展示的数据一致：
 - 排序: `{"array":[3,1,5,8], "i":1, "j":2}`
 - 图: `{"distances":{"A":0,"B":3}, "visited":["A"], "current":"B"}`
+
+### algorithm-trace-v1（图算法主题必用）
+
+当主题涉及 Dijkstra、Bellman-Ford、BFS 或 DFS 时，state_snapshot 必须使用
+`schema_version="algorithm-trace-v1"`、`algorithm`、`phase`、`dist`、`visited`、
+`queue` 和 `predecessor` 字段。优先队列必须写成对象数组，例如
+`[{"vertex":"C","priority":8}]`；禁止使用 `[["C",8]]`、`["C(8)"]`、
+`priority_queue`、`heap` 或 `unvisited` 作为替代字段。FIFO/DFS 队列的 priority
+可以为 null，但 vertex 必须是字符串。不要同时输出同一状态的多个别名字段。
+Bellman-Ford 不使用优先队列；若展示每轮扫描的边，使用
+`edge_scan:[{"source":"u","target":"v","weight":-1}]`，`queue` 保持为空数组。
+
+### BFS / DFS 分镜硬约束
+
+- 如果主题同时包含 BFS 与 DFS，必须在同一张 `primary_graph` 上分别安排至少 3 个执行帧；
+  不能用一个“最终访问序列”帧代替算法过程
+- BFS 的执行帧每帧只推进一次出队/访问，`visited` 必须表现为逐步增长的前缀，
+  `queue` 展示该步结束后的 FIFO 队列
+- DFS 的执行帧每帧只推进一次入栈/弹栈/访问，`visited` 必须逐步增长，
+  `queue` 按栈顶优先顺序记录当前栈；narration 明确当前深入或回溯动作
+- 每个 BFS/DFS 执行帧都必须包含完整且结构不变的 `primary_graph`，并用
+  `current` 指向本帧正在访问的节点；不得只展示静态终态全绿图
+- 概念、应用和总结帧合计不得超过总帧数的 40%；至少一半帧必须产生可见状态变化
+- 非执行型总结帧不要重复摆放终态主图，改用精简表格或公式，避免视觉重复
 
 ## 动画类型
 
@@ -234,6 +268,17 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
    算法失效而伪造错误选点顺序或漏掉本应执行的松弛。
    除非教学计划明确要求负权边反例，否则只说明“要求非负权重”即可，不要额外引入反例图。
 
+8. 图算法状态必须遵循 algorithm-trace-v1；格式不确定时压缩 narration，优先保证
+   schema_version、algorithm、dist、visited、queue 和 predecessor 完整闭合。
+
+9. 图算法的可执行状态优先由操作事件驱动。若当前帧发生算法操作，必须在
+   state_snapshot.events 中写出 1-3 个事件，事件只能使用：
+   {"operation":"select|relax|enqueue|dequeue|visit|detect_negative_cycle|complete",
+   "source":"...", "target":"...", "weight": 数字或 null}。
+   Dijkstra 的 relax 必须引用图中真实边及其权重；Bellman-Ford 的每轮松弛必须引用
+   真实边。程序会根据主图重放事件并推导 dist、visited、queue、predecessor，模型
+   不得用事件之外的自由发挥覆盖这些字段。概念介绍或比较帧可以省略 events。
+
 生成完成前逐项复核上述不变量；如果材料没有足够信息，不要编造边权或状态，明确标记信息不足。
 """
 
@@ -245,6 +290,8 @@ CODER_BATCH_SYSTEM_PROMPT = """你是 RenderScript 逐帧续写器。只输出�
 每帧必须有 `frame_id`、`title`、`narration`、`visual_objects`、`state_snapshot`；
 visual_objects 只能使用 RenderScript 合法类型，动画 target 必须引用当前帧对象。
 array 的 `cells` 必须是对象数组（如 `[{"index":0,"value":3}]`），不能直接写数字数组。
+所有组件必须数据闭合：graph 必须携带完整 nodes+edges 且边端点已声明；table 不得同时
+缺少 headers/rows；code_block/formula/timeline/memory_block/mindmap 不得缺少各自内容字段。
 测验题使用 `interaction_hooks`/`checks`，不要把 `quiz` 当作 visual_object 类型。
 保持前一帧的图结构、变量命名和状态演进；不要重复 parameters/assets，不要输出 markdown。
 如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足
@@ -252,6 +299,14 @@ dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `
 `graph_role=primary`；其他反例/练习图必须标记为 `secondary`，不要让它们重置主轨迹。
 距离为无穷大的不可达节点不得加入 visited，后续总结帧必须继承主轨迹的终态。
 负权反例也必须按当前最小暂定距离选点并执行所有可用松弛，不能用错误步骤证明算法失效。
+图算法 state_snapshot 必须遵循 algorithm-trace-v1：queue 使用
+`[{"vertex":"A","priority":3}]`，禁止 `[["A",3]]`、`A(3)`、priority_queue、heap、unvisited
+等别名；不要同时输出同一状态的多个字段别名。
+如果帧包含算法操作，附带 state_snapshot.events；不要伪造不存在的边或权重。
+Bellman-Ford 的边扫描使用 `edge_scan`，不要把 `u→v(w)` 字符串放入 queue。
+如果主题包含 BFS/DFS：每种算法至少生成 3 个状态递进执行帧；每帧保留完整
+primary_graph，visited 必须逐步增长并设置 current，不能直接跳到完整访问序列。
+同一帧只推进一个出队/入栈/访问动作；概念、应用和总结帧不得挤占主要分镜。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 
@@ -593,16 +648,23 @@ box.animate.set_stroke(color="#F4D03F", fill_color="...")    # 错误！
 
 ## 画布布局
 
-- 画布 14×8 单位。中心区域（y∈[-2.5, 2.5]）放核心教学内容
-- 标题固定在顶部 `to_edge(UP)`
-- 字幕固定在底部 `to_edge(DOWN)`
-- 数据可视化居中，标注在数据上方或下方
-- 新帧的内容 y 坐标不要和上一帧残留元素重叠
+- 画布 14×8 单位，所有内容必须位于 x∈[-6.35, 6.35]、y∈[-3.65, 3.65]
+- 标题区固定为 y∈[2.7, 3.65]；核心内容只能位于 y∈[-2.35, 2.65]
+- 字幕区固定为 y∈[-3.65, -2.55]，主体、表格、代码不得进入字幕区
+- 同一时刻最多展示两个主组件；三项以上信息必须拆帧，不得缩成密集小字
+- 每个 DSL frame 都是完整快照。进入下一帧前必须 FadeOut/remove 上一帧的全部对象，或显式 Transform 需要保留的对象；禁止残留对象叠加
+- 每帧使用一个 `frame_group = VGroup(...)` 管理主体，转场统一清理该 group
+- 表格或代码块必须先限制 `width <= 5.8`、`height <= 4.5`，再放入左右分栏
+- 不得依靠 `Text(width=...)` 换行；应先在字符串中插入 `\n`，正文最多两行
+- `render_options.include_subtitles=false` 时禁止创建旁白/字幕 Text
+- `render_options.include_subtitles=true` 时每帧只能存在一个字幕组：最多两行、宽度不超过 11.4、高度不超过 1.05，并带半透明黑色底板
+- 字幕、标题和单元格文字只能按 `min(1, max_width / width, max_height / height)` 等比缩小；禁止先 `scale_to_fit_width()` 再无条件 `scale_to_fit_height()`，后者会把文字重新放大并推出画布
 
 ## 常见模式：如何可视化教学概念
 
 ### 数组/排序
 用一排正方形 + 内部数字。当前比较的染金色，已就位的染绿色。交换时两个框交换位置。
+数组值必须逐字取自当前帧的 `state_snapshot.array`，不得根据旁白猜测或重新生成；相邻帧只能执行 trace 中声明的 compare/swap/write，排序全过程必须保持初始元素多重集合不变。
 ```python
 boxes = VGroup()
 for v in values:

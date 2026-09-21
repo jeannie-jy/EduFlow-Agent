@@ -59,6 +59,25 @@ async def test_dijkstra_queue_cannot_disappear_without_dequeue():
 
 
 @pytest.mark.asyncio
+async def test_dijkstra_priority_queue_pair_encoding_uses_vertex_only():
+    frames = [
+        _graph_frame(
+            "f_001",
+            {"visited": ["A"], "queue": [["C", 8]]},
+        ),
+        _graph_frame(
+            "f_002",
+            {"visited": ["A", "C"], "queue": []},
+        ),
+    ]
+
+    result = await check_algorithm_invariants(frames, topic="Dijkstra 最短路径")
+
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
 async def test_dijkstra_scalar_empty_queue_sentinel_is_not_a_vertex():
     frames = [
         _graph_frame(
@@ -258,6 +277,134 @@ def test_secondary_trace_cannot_reset_primary_guardrail_baseline():
     assert stabilized["frames"][2]["state_snapshot"]["visited"] == ["A", "B"]
 
 
+def test_bellman_ford_guardrail_repairs_in_place_round_values_and_table():
+    graph = {
+        "id": "primary_graph",
+        "type": "graph",
+        "graph_role": "primary",
+        "nodes": [{"id": "s"}, {"id": "a"}, {"id": "b"}, {"id": "c"}],
+        "edges": [
+            {"source": "s", "target": "a", "weight": 6},
+            {"source": "s", "target": "b", "weight": 7},
+            {"source": "a", "target": "c", "weight": 5},
+            {"source": "b", "target": "c", "weight": -3},
+            {"source": "c", "target": "a", "weight": 1},
+        ],
+    }
+    dsl = {
+        "topic": "讲解 Bellman-Ford 迭代松弛",
+        "frames": [{
+            "frame_id": "f_001",
+            "visual_objects": [graph, {
+                "id": "dist_table",
+                "type": "table",
+                "headers": ["轮次", "s", "a", "b", "c"],
+                "rows": [["第1轮", 0, 6, 7, 16]],
+            }],
+            "state_snapshot": {
+                "round": 1,
+                "dist": {"s": 0, "a": 6, "b": 7, "c": 16},
+            },
+            "narration": "第 1 轮后 dist[a]=6, dist[b]=7, dist[c]=16。",
+        }],
+    }
+
+    stabilized = stabilize_algorithm_trace(dsl)
+    frame = stabilized["frames"][0]
+
+    assert frame["state_snapshot"]["dist"]["c"] == 4
+    assert frame["visual_objects"][1]["rows"][0][-1] == 4
+    assert "dist[c]=4" in frame["narration"]
+
+
+@pytest.mark.asyncio
+async def test_bellman_ford_legacy_graph_aliases_ignore_comparison_and_summary_frames():
+    """Legacy vertices/from/to output must not trigger Dijkstra reset errors."""
+    frames = [
+        {
+            "frame_id": "f_001",
+            "visual_objects": [{
+                "id": "vo_g1",
+                "type": "graph",
+                "vertices": ["s", "a", "b"],
+                "edges": [{"from": "s", "to": "a", "weight": 2}],
+            }],
+            "state_snapshot": {
+                "phase": "dijkstra_failure_demo",
+                "dist": {"s": 0, "a": 2, "b": 5},
+            },
+        },
+        {
+            "frame_id": "f_003",
+            "state_snapshot": {"phase": "init", "dist": {"s": 0, "a": "∞", "b": "∞"}},
+        },
+        {
+            "frame_id": "f_005",
+            "visual_objects": [{
+                "id": "bellman_graph",
+                "type": "graph",
+                "vertices": ["s", "a", "b"],
+                "edges": [
+                    {"from": "s", "to": "a", "weight": 2},
+                    {"from": "a", "to": "b", "weight": -1},
+                ],
+            }],
+            "state_snapshot": {"dist": {"s": 0, "a": 2, "b": 1}},
+        },
+    ]
+
+    result = await check_algorithm_invariants(
+        frames, topic="讲解 Bellman-Ford 如何处理负权边并检测负环"
+    )
+
+    assert result["checked"] is True
+    assert result["consistent"] is True
+    assert result["issues"] == []
+
+
+def test_dijkstra_guardrail_rebuilds_tree_from_consistent_predecessors():
+    dsl = {
+        "topic": "用逐帧方式讲解 Dijkstra 最短路径算法",
+        "frames": [{
+            "frame_id": "f_001",
+            "visual_objects": [{
+                "id": "primary_graph",
+                "type": "graph",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "C", "weight": 2},
+                    {"source": "B", "target": "C", "weight": 1},
+                ],
+            }, {
+                "id": "shortest_path_tree",
+                "type": "graph",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "C", "weight": 2},
+                    {"source": "B", "target": "C", "weight": 1},
+                ],
+            }],
+            "state_snapshot": {
+                "dist": {"A": 0, "B": 3, "C": 2},
+                "prev": {"C": "A"},
+                "shortest_path_tree": [
+                    {"source": "A", "target": "C", "weight": 2},
+                    {"source": "B", "target": "C", "weight": 1},
+                ],
+            },
+        }],
+    }
+
+    stabilized = stabilize_algorithm_trace(dsl)
+    frame = stabilized["frames"][0]
+
+    assert frame["state_snapshot"]["shortest_path_tree"] == [
+        {"source": "A", "target": "C", "weight": 2}
+    ]
+    derived = frame["visual_objects"][1]
+    assert derived["edges"] == frame["state_snapshot"]["shortest_path_tree"]
+
+
 def test_mixed_primary_secondary_frame_still_stabilizes_primary_snapshot():
     first = _graph_frame(
         "f_001",
@@ -284,6 +431,95 @@ def test_mixed_primary_secondary_frame_still_stabilizes_primary_snapshot():
     })
 
     assert stabilized["frames"][1]["state_snapshot"]["visited"] == ["A", "B"]
+
+
+def test_guardrail_clamps_primary_distance_regression():
+    first = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A", "B"]},
+    )
+    second = _graph_frame(
+        "f_002",
+        {"dist": {"A": 0, "B": 2, "C": 5}, "visited": ["A", "B", "C"]},
+    )
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 最短路径",
+        "frames": [first, second],
+    })
+
+    assert stabilized["frames"][1]["state_snapshot"]["dist"] == {
+        "A": 0,
+        "B": 1,
+        "C": 3,
+    }
+
+
+def test_unrequested_negative_counterexample_is_removed_from_primary_trace():
+    primary = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A", "B"]},
+    )
+    mixed = {
+        "frame_id": "f_002",
+        "visual_objects": [
+            primary["visual_objects"][0],
+            {
+                "id": "negative_graph",
+                "type": "graph",
+                "graph_role": "secondary",
+                "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                "edges": [
+                    {"source": "A", "target": "B", "weight": 2},
+                    {"source": "A", "target": "C", "weight": 5},
+                    {"source": "C", "target": "B", "weight": -4},
+                ],
+            },
+        ],
+        "state_snapshot": {
+            "dist": {"A": 0, "B": 2, "C": 5},
+            "visited": ["A", "B", "C"],
+        },
+    }
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 为什么要求非负边权",
+        "frames": [primary, mixed],
+    })
+
+    assert len(stabilized["frames"]) == 1
+    assert all(
+        not (
+            visual.get("type") == "graph"
+            and any(float(edge.get("weight", 0)) < 0 for edge in visual.get("edges", []))
+        )
+        for frame in stabilized["frames"]
+        for visual in frame.get("visual_objects", [])
+        if isinstance(visual, dict)
+    )
+
+
+def test_unrequested_negative_primary_frames_are_dropped():
+    positive = _graph_frame(
+        "f_001",
+        {"dist": {"A": 0, "B": 1, "C": 3}, "visited": ["A"]},
+    )
+    negative = _graph_frame(
+        "f_002",
+        {"dist": {"A": 0, "B": -9, "C": 1}, "visited": ["A", "C", "B"]},
+    )
+    negative["visual_objects"][0]["edges"] = [
+        {"source": "A", "target": "B", "weight": 5},
+        {"source": "A", "target": "C", "weight": 1},
+        {"source": "C", "target": "B", "weight": -10},
+    ]
+
+    stabilized = stabilize_algorithm_trace({
+        "topic": "Dijkstra 为什么要求非负边权",
+        "frames": [positive, negative],
+    })
+
+    assert [frame["frame_id"] for frame in stabilized["frames"]] == ["f_001"]
 
 
 @pytest.mark.asyncio

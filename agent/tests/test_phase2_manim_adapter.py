@@ -8,13 +8,14 @@ from __future__ import annotations
 import pytest
 
 from adapters.manim_adapter import (
+    ANIMATION_MAP,
+    MOBJECT_MAP,
     ManimScriptGenerator,
+    _ms_to_srt_time,
     convert_dsl_to_manim,
     generate_render_config,
     generate_subtitles_srt,
-    _ms_to_srt_time,
-    MOBJECT_MAP,
-    ANIMATION_MAP,
+    validate_render_layout,
 )
 
 # ============================================================================
@@ -107,6 +108,243 @@ class TestMappingTables:
 class TestManimScriptGenerator:
     """脚本生成器测试。"""
 
+    def test_table_cells_are_stringified_for_manim_text(self):
+        """Numeric/None table cells must not crash Manim Text at render time."""
+        dsl = {
+            "project_id": "table_values",
+            "topic": "Table values",
+            "frames": [
+                {
+                    "frame_id": "f_001",
+                    "title": "Distance table",
+                    "visual_objects": [
+                        {
+                            "id": "dist",
+                            "type": "table",
+                            "headers": ["vertex", "distance"],
+                            "rows": [["A", 0], ["B", None]],
+                        }
+                    ],
+                    "animations": [],
+                }
+            ],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "[['vertex', 'distance'], ['A', '0'], ['B', '—']]" in script
+
+    def test_table_without_headers_is_rectangular(self):
+        dsl = {
+            "project_id": "table_rows",
+            "topic": "Table rows",
+            "frames": [
+                {
+                    "frame_id": "f_001",
+                    "title": "Rows",
+                    "visual_objects": [
+                        {
+                            "id": "rows",
+                            "type": "table",
+                            "rows": [[1, 2], [3]],
+                        }
+                    ],
+                    "animations": [],
+                }
+            ],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "[['1', '2'], ['3', '']]" in script
+
+    def test_missing_positions_use_readable_frame_layout(self):
+        dsl = {
+            "project_id": "layout",
+            "topic": "Layout",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [
+                    {"id": "left", "type": "node"},
+                    {"id": "right", "type": "code_block", "code": "x = 1"},
+                ],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "move_to(np.array([-3.0, 0.0, 0]))" in script
+        assert "move_to(np.array([3.0, 0.0, 0]))" in script
+
+    def test_graph_objects_render_structure_and_state(self):
+        dsl = {
+            "project_id": "graph",
+            "topic": "Graph",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{
+                    "id": "g",
+                    "type": "graph",
+                    "nodes": [{"id": "A", "label": "A"}, {"id": "B", "label": "B"}],
+                    "edges": [{"source": "A", "target": "B", "weight": 2}],
+                }],
+                "state_snapshot": {
+                    "source": "A",
+                    "visited": ["A"],
+                    "queue": [{"vertex": "B", "priority": 2}],
+                    "dist": {"A": 0, "B": None},
+                },
+                "animations": [{"type": "appear", "target": "g"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "g_0 = VGroup()" in script
+        assert "g_0_edge_0 = Arrow" in script
+        assert "d=∞" in script
+        assert "fill_color='#2ECC71'" in script
+        compile(script, "<generated-manim>", "exec")
+
+    def test_graph_traversal_frame_animates_visited_nodes_in_order(self):
+        dsl = {
+            "project_id": "graph-motion",
+            "topic": "BFS",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "BFS逐层演示",
+                "visual_objects": [{
+                    "id": "primary_graph",
+                    "type": "graph",
+                    "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                    "edges": [
+                        {"source": "A", "target": "B"},
+                        {"source": "A", "target": "C"},
+                    ],
+                }],
+                "state_snapshot": {
+                    "algorithm": "bfs",
+                    "phase": "visit",
+                    "source": "A",
+                    "visited": ["A", "B", "C"],
+                    "queue": [],
+                },
+                "animations": [{"type": "appear", "target": "primary_graph"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        a = script.index("primary_graph_0_A.animate.set_fill('#2ECC71'")
+        b = script.index("primary_graph_0_B.animate.set_fill('#2ECC71'")
+        c = script.index("primary_graph_0_C.animate.set_fill('#2ECC71'")
+        assert a < b < c
+
+    def test_graph_keeps_full_height_when_support_panels_are_stacked(self):
+        dsl = {
+            "project_id": "graph-layout",
+            "topic": "BFS and DFS",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [
+                    {"id": "primary_graph", "type": "graph", "nodes": [{"id": "A"}]},
+                    {"id": "state", "type": "table", "rows": [["A"]]},
+                    {"id": "code", "type": "code_block", "code": "visit(A)"},
+                ],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "np.array([-3.15, 0.15, 0]), 5.75, 4.55" in script
+        assert "np.array([3.15, 1.24, 0]), 5.65, 2.07" in script
+
+    def test_array_renders_readable_cells_and_semantic_highlights(self):
+        dsl = {
+            "project_id": "array",
+            "topic": "Bubble sort",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{
+                    "id": "arr",
+                    "type": "array",
+                    "label": "待排序数组",
+                    "cells": [
+                        {"value": 5, "highlight": True},
+                        {"value": 1},
+                        {"value": 8, "sorted": True},
+                    ],
+                }],
+                "animations": [{"type": "appear", "target": "arr"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "arr_0_cell_0_box = Square" in script
+        assert "fill_color='#F4D03F'" in script
+        assert "fill_color='#2ECC71'" in script
+        assert "arr_0.arrange(RIGHT, buff=0.08)" in script
+        assert "FadeIn(arr_0)" in script
+        compile(script, "<generated-manim>", "exec")
+
+    def test_array_falls_back_to_state_snapshot_values(self):
+        dsl = {
+            "project_id": "array-state",
+            "topic": "Bubble sort",
+            "frames": [{
+                "frame_id": "f_001",
+                "state_snapshot": {"array": [5, 1, 4]},
+                "visual_objects": [{"id": "arr", "type": "array", "cells": []}],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "Text('5'" in script
+        assert "Text('1'" in script
+        assert "Text('4'" in script
+
+    def test_objects_without_appear_animation_are_still_rendered(self):
+        dsl = {
+            "project_id": "no-blank-frame",
+            "topic": "Dijkstra",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{
+                    "id": "dist",
+                    "type": "table",
+                    "headers": ["vertex", "distance"],
+                    "rows": [["A", 0]],
+                }],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "self.play(FadeIn(dist_0), run_time=0.35)" in script
+
+    def test_highlight_only_animation_adds_object_before_indicate(self):
+        dsl = {
+            "project_id": "highlight",
+            "topic": "Graph",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [{"id": "node", "type": "node"}],
+                "animations": [{"type": "highlight", "target": "node"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        fade_index = script.index("self.play(FadeIn(node_0), run_time=0.35)")
+        indicate_index = script.index("self.play(Indicate(node_0")
+        assert fade_index < indicate_index
+
     def test_generate_empty_dsl(self, empty_dsl):
         gen = ManimScriptGenerator(empty_dsl)
         script = gen.generate()
@@ -139,13 +377,68 @@ class TestManimScriptGenerator:
         assert "next_section" in script, "应包含 next_section 调用"
         assert "f_001" in script
         assert "f_002" in script
+        assert "FadeOut(*self.mobjects), run_time=0.25" in script
 
     def test_narration_generates_subtitle(self, minimal_dsl):
         gen = ManimScriptGenerator(minimal_dsl)
         script = gen.generate()
-        assert "subtitle.to_edge(DOWN)" in script
-        assert "FadeIn(subtitle)" in script
-        assert "FadeOut(subtitle)" in script
+        assert "subtitle_0_0_text.to_edge(DOWN, buff=0.3)" in script
+        assert "BackgroundRectangle(subtitle_0_0_text" in script
+        assert "FadeIn(subtitle_0_0)" in script
+        assert "FadeOut(subtitle_0_0)" in script
+
+    def test_long_narration_subtitle_is_wrapped_and_scaled(self):
+        dsl = {
+            "project_id": "subtitle",
+            "topic": "Subtitle",
+            "frames": [{
+                "frame_id": "f_001",
+                "narration": "这是一个很长的字幕内容，用于验证视频字幕会自动换行并限制在画布内部，不会因为文字太长而跑出边框。"
+                "每一个字幕页最多只能显示两行，其余内容必须自动进入下一页继续展示，字号也不能被反向放大。",
+                "visual_objects": [],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "\\n" in script
+        assert "subtitle_0_1_text = Text" in script
+        assert "eduflow_shrink_to_fit(subtitle_0_0_text, 11.4, 1.05)" in script
+        assert "scale_to_fit_height" not in script.split("# Narration:", 1)[1]
+
+    def test_subtitles_can_be_disabled(self, minimal_dsl):
+        script = ManimScriptGenerator(
+            minimal_dsl,
+            include_subtitles=False,
+        ).generate()
+
+        assert "subtitle_text = Text" not in script
+        assert "BackgroundRectangle(subtitle_text" not in script
+
+    def test_visuals_are_fitted_to_safe_content_slots(self):
+        dsl = {
+            "project_id": "safe-layout",
+            "topic": "Safe layout",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "Two panels",
+                "visual_objects": [
+                    {"id": "graph", "type": "graph", "nodes": [{"id": "A"}]},
+                    {"id": "table", "type": "table", "rows": [["x", "y"]]},
+                ],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "def eduflow_fit_to_safe_area" in script
+        assert "eduflow_fit_to_safe_area(graph_0" in script
+        assert "eduflow_fit_to_safe_area(table_0" in script
+        assert "frame_title.to_edge(UP, buff=0.25)" in script
+        assert "font_size=22, weight=SEMIBOLD" in script
+        assert "eduflow_shrink_to_fit(frame_title, 11.2, 0.55)" in script
 
     def test_special_characters_in_topic(self):
         """话题包含特殊字符应被安全处理。"""
@@ -157,7 +450,7 @@ class TestManimScriptGenerator:
         gen = ManimScriptGenerator(dsl)
         script = gen.generate()
         # 类名不应包含 &、/、@ 等
-        class_line = [l for l in script.split("\n") if "class EduFlow_" in l][0]
+        class_line = next(line for line in script.split("\n") if "class EduFlow_" in line)
         assert "&" not in class_line
         assert "@" not in class_line
         assert "/" not in class_line
@@ -302,6 +595,28 @@ class TestManimScriptGenerator:
         # 应使用 FadeIn 回退
         assert "FadeIn" in script
 
+    def test_single_target_semantic_animations_never_wrap_raw_mobjects(self):
+        """Manim AnimationGroup/Transform cannot accept one raw Mobject."""
+        semantic_types = ["compare", "transform", "relax_edge", "split", "merge"]
+        dsl = {
+            "project_id": "p1",
+            "topic": "safe semantic animations",
+            "frames": [{
+                "frame_id": f"f_{index:03d}",
+                "title": animation_type,
+                "narration": "",
+                "visual_objects": [{"id": f"obj_{index}", "type": "node"}],
+                "animations": [{"type": animation_type, "target": f"obj_{index}"}],
+            } for index, animation_type in enumerate(semantic_types)],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "AnimationGroup(obj_" not in script
+        assert "Transform(obj_" not in script
+        assert script.count("self.play(Indicate(obj_") == len(semantic_types)
+        compile(script, "<generated-manim>", "exec")
+
     def test_mixed_visual_object_types_imports(self):
         """多类型 VisualObject 应生成完整的 import 集合。"""
         dsl = {
@@ -372,6 +687,61 @@ class TestRenderConfig:
         config = generate_render_config(empty_dsl)
         assert "generated_at" in config
 
+    def test_config_persists_deterministic_layout_audit(self, empty_dsl):
+        config = generate_render_config(empty_dsl)
+        assert config["layout_valid"] is True
+        assert config["layout_issues"] == []
+
+    def test_layout_audit_flags_overlap_clipping_and_text_truncation(self):
+        dsl = {
+            "project_id": "p",
+            "topic": "layout",
+            "frames": [{
+                "frame_id": "f_layout",
+                "narration": "n" * 201,
+                "visual_objects": [
+                    {
+                        "id": "clipped",
+                        "type": "node",
+                        "label": "l" * 21,
+                        "position": {"x": 1000, "y": 650},
+                    },
+                    {
+                        "id": "overlap",
+                        "type": "node",
+                        "position": {"x": 1000, "y": 650},
+                    },
+                ],
+            }],
+        }
+
+        issues = validate_render_layout(dsl)
+        rules = {issue["rule"] for issue in issues}
+
+        assert {"object-out-of-bounds", "object-overlap", "label-truncated", "narration-truncated"} <= rules
+
+    def test_layout_audit_marks_non_finite_coordinates_as_errors(self):
+        dsl = {
+            "frames": [{
+                "frame_id": "f_invalid",
+                "visual_objects": [{
+                    "id": "bad",
+                    "type": "node",
+                    "position": {"x": float("nan"), "y": 0},
+                }],
+            }],
+        }
+
+        issues = validate_render_layout(dsl)
+
+        assert issues == [{
+            "frame_id": "f_invalid",
+            "rule": "invalid-position",
+            "severity": "error",
+            "object_id": "bad",
+            "detail": "position x/y must be finite",
+        }]
+
 
 # ============================================================================
 # Subtitles SRT
@@ -437,6 +807,19 @@ class TestSubtitlesSRT:
         assert lines[2] == "Test"  # 内容
         assert lines[3] == ""  # 空行分隔
 
+    def test_long_srt_narration_is_paginated_to_two_lines_per_cue(self):
+        narration = "字幕必须保持在安全区域内。" * 12
+        srt = generate_subtitles_srt({
+            "frames": [{"frame_id": "f_001", "narration": narration, "animations": []}],
+        })
+
+        cues = [cue for cue in srt.strip().split("\n\n") if cue]
+        assert len(cues) > 1
+        for cue in cues:
+            lines = cue.splitlines()
+            assert len(lines[2:]) <= 2
+            assert all(len(line) <= 28 for line in lines[2:])
+
 
 # ============================================================================
 # Top-level converter
@@ -466,6 +849,23 @@ class TestConvertDSLToManim:
         config = json.loads(config_str)
         assert "frame_count" in config
         assert "quality" in config
+
+    def test_converter_honors_render_options(self, minimal_dsl):
+        import json
+
+        result = convert_dsl_to_manim(
+            minimal_dsl,
+            quality="m",
+            fps=24,
+            include_subtitles=False,
+        )
+        config = json.loads(result["render_config.json"])
+
+        assert config["quality"] == "m"
+        assert config["fps"] == 24
+        assert config["include_subtitles"] is False
+        assert result["subtitles.srt"] == ""
+        assert "subtitle_text = Text" not in result["main.py"]
 
     def test_subtitles_is_string(self, minimal_dsl):
         result = convert_dsl_to_manim(minimal_dsl)

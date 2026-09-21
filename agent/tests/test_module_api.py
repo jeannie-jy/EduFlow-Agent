@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from generators.registry import clear_registry, register_generator
 from httpx import ASGITransport, AsyncClient
+
+from generators.registry import clear_registry, register_generator
 
 # ============================================================================
 # Mock Generator（用于注册表）

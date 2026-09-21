@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -30,7 +30,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     """声明式基类。"""
-    pass
 
 
 class User(Base):
@@ -48,8 +47,14 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     nickname: Mapped[str] = mapped_column(String(100), nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    role: Mapped[str] = mapped_column(String(50), default="teacher", nullable=False)
+    # Public self-registration is student-first. Existing teacher/admin rows
+    # are preserved; this default protects future creation paths that do not
+    # explicitly assign an elevated role.
+    role: Mapped[str] = mapped_column(
+        String(50), default="student", server_default="student", nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -71,20 +76,211 @@ class AuthSession(Base):
     )
 
 
+class ProviderCredential(Base):
+    """Envelope-encrypted user-owned provider credential; plaintext is never stored."""
+
+    __tablename__ = "provider_credentials"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "purpose", "version"),
+        Index("ix_provider_credentials_user_status", "user_id", "status"),
+        CheckConstraint(
+            "provider IN ('deepseek', 'dashscope', 'openai', 'ollama')",
+            name="ck_provider_credentials_provider",
+        ),
+        CheckConstraint("purpose IN ('generation', 'embedding')", name="ck_provider_credentials_purpose"),
+        CheckConstraint(
+            "status IN ('unverified', 'valid', 'invalid', 'revoked')",
+            name="ck_provider_credentials_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(30), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="Model connection")
+    model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_data_key: Mapped[str] = mapped_column(Text, nullable=False)
+    nonce: Mapped[str] = mapped_column(String(100), nullable=False)
+    key_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_last_four: Mapped[str] = mapped_column(String(4), nullable=False)
+    kms_key_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unverified")
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ActiveProviderCredential(Base):
+    """The connection explicitly selected for one user and runtime purpose."""
+
+    __tablename__ = "active_provider_credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('generation', 'embedding')",
+            name="ck_active_provider_credentials_purpose",
+        ),
+        Index("ix_active_provider_credentials_credential", "credential_id"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    purpose: Mapped[str] = mapped_column(String(30), primary_key=True)
+    credential_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_credentials.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UserMFA(Base):
+    """Encrypted TOTP seed; the clear seed is returned only during setup."""
+
+    __tablename__ = "user_mfa"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    secret_encrypted_data_key: Mapped[str] = mapped_column(Text, nullable=False)
+    secret_nonce: Mapped[str] = mapped_column(String(100), nullable=False)
+    kms_key_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UsageBucket(Base):
+    """Atomic per-user resource counters for one UTC day or month."""
+
+    __tablename__ = "usage_buckets"
+    __table_args__ = (
+        UniqueConstraint("user_id", "resource", "period", "period_start"),
+        Index("ix_usage_buckets_user_period", "user_id", "period_start"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    resource: Mapped[str] = mapped_column(String(50), nullable=False)
+    period: Mapped[str] = mapped_column(String(10), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UsageLedger(Base):
+    """Immutable idempotent record of accepted quota consumption."""
+
+    __tablename__ = "usage_ledger"
+    __table_args__ = (
+        UniqueConstraint("user_id", "resource", "idempotency_key"),
+        Index("ix_usage_ledger_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    resource: Mapped[str] = mapped_column(String(50), nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    details: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserQuotaPolicy(Base):
+    __tablename__ = "user_quota_policies"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    limits: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )
+    is_suspended: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UserConsent(Base):
+    __tablename__ = "user_consents"
+    __table_args__ = (UniqueConstraint("user_id", "policy", "policy_version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    policy: Mapped[str] = mapped_column(String(50), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccountDeletionRequest(Base):
+    __tablename__ = "account_deletion_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    execute_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuthOneTimeToken(Base):
+    __tablename__ = "auth_one_time_tokens"
+    __table_args__ = (
+        Index("ix_auth_one_time_tokens_user_purpose", "user_id", "purpose"),
+        Index("ix_auth_one_time_tokens_expires", "expires_at"),
+        CheckConstraint("purpose IN ('verify_email', 'reset_password')", name="ck_auth_one_time_tokens_purpose"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    purpose: Mapped[str] = mapped_column(String(30), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Material(Base):
     __tablename__ = "materials"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
     )
     original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     stored_filename: Mapped[str] = mapped_column(String(500), nullable=False)
-    storage_key: Mapped[Optional[str]] = mapped_column(String(1000))
+    storage_key: Mapped[str | None] = mapped_column(String(1000))
     media_type: Mapped[str] = mapped_column(String(200), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="uploaded", nullable=False)
-    parsed_result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    parsed_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -106,14 +302,14 @@ class AuditEvent(Base):
         primary_key=True,
         autoincrement=True,
     )
-    actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    resource_id: Mapped[Optional[str]] = mapped_column(String(200))
+    resource_id: Mapped[str | None] = mapped_column(String(200))
     request_id: Mapped[str] = mapped_column(String(100), nullable=False)
-    details: Mapped[Optional[dict[str, Any]]] = mapped_column(
+    details: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -134,15 +330,15 @@ class Project(Base):
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
-    topic: Mapped[Optional[str]] = mapped_column(String(300))
-    subject: Mapped[Optional[str]] = mapped_column(String(200))
-    course: Mapped[Optional[str]] = mapped_column(String(300))
+    topic: Mapped[str | None] = mapped_column(String(300))
+    subject: Mapped[str | None] = mapped_column(String(200))
+    course: Mapped[str | None] = mapped_column(String(300))
     audience: Mapped[str] = mapped_column(String(100), default="undergraduate_cs")
     difficulty: Mapped[str] = mapped_column(String(50), default="intermediate")
-    owner_id: Mapped[Optional[str]] = mapped_column(String(200))
+    owner_id: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(50), default="draft")
-    dsl_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
-    current_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    dsl_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
             "project_versions.id",
@@ -159,8 +355,8 @@ class Project(Base):
     )
 
     # 关联
-    frames: Mapped[list["Frame"]] = relationship(back_populates="project", lazy="raise", cascade="all, delete-orphan")
-    parameters: Mapped[list["ParameterModel"]] = relationship(back_populates="project", lazy="raise", cascade="all, delete-orphan")
+    frames: Mapped[list[Frame]] = relationship(back_populates="project", lazy="raise", cascade="all, delete-orphan")
+    parameters: Mapped[list[ParameterModel]] = relationship(back_populates="project", lazy="raise", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Project id={self.id!s} title={self.title[:30]!r}>"
@@ -186,14 +382,14 @@ class Frame(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     frame_id: Mapped[str] = mapped_column(String(50), nullable=False)
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    title: Mapped[Optional[str]] = mapped_column(String(500))
-    learning_goal: Mapped[Optional[str]] = mapped_column(Text)
-    narration: Mapped[Optional[str]] = mapped_column(Text)
-    visual_objects: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
-    state_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
-    animations: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
-    interaction_hooks: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
-    checks: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    title: Mapped[str | None] = mapped_column(String(500))
+    learning_goal: Mapped[str | None] = mapped_column(Text)
+    narration: Mapped[str | None] = mapped_column(Text)
+    visual_objects: Mapped[list[dict] | None] = mapped_column(JSONB)
+    state_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    animations: Mapped[list[dict] | None] = mapped_column(JSONB)
+    interaction_hooks: Mapped[list[dict] | None] = mapped_column(JSONB)
+    checks: Mapped[list[dict] | None] = mapped_column(JSONB)
     quality_status: Mapped[str] = mapped_column(String(50), default="pending")
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -228,11 +424,11 @@ class ParameterModel(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     key: Mapped[str] = mapped_column(String(200), nullable=False)
-    label: Mapped[Optional[str]] = mapped_column(String(500))
+    label: Mapped[str | None] = mapped_column(String(500))
     param_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    default_value: Mapped[Optional[dict]] = mapped_column(JSONB)
-    current_value: Mapped[Optional[dict]] = mapped_column(JSONB)
-    constraints: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    default_value: Mapped[dict | None] = mapped_column(JSONB)
+    current_value: Mapped[dict | None] = mapped_column(JSONB)
+    constraints: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     visibility: Mapped[str] = mapped_column(String(50), default="student")
     recompute_scope: Mapped[str] = mapped_column(String(50), default="all_frames")
     created_at: Mapped[datetime] = mapped_column(
@@ -261,9 +457,9 @@ class QualityReportModel(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     version: Mapped[int] = mapped_column(Integer, default=1)
-    scores: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
-    issues: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
-    suggestions: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
+    scores: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    issues: Mapped[list[dict] | None] = mapped_column(JSONB)
+    suggestions: Mapped[list[dict] | None] = mapped_column(JSONB)
     is_blocking: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -301,26 +497,26 @@ class ExportJobModel(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    source_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    source_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("project_versions.id", ondelete="SET NULL"),
     )
     target: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="queued")
-    config: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    config: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
-    artifacts: Mapped[Optional[list[dict]]] = mapped_column(JSONB)
-    error_log: Mapped[Optional[str]] = mapped_column(Text)
-    idempotency_key: Mapped[Optional[str]] = mapped_column(String(200))
+    artifacts: Mapped[list[dict] | None] = mapped_column(JSONB)
+    error_log: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
-    worker_id: Mapped[Optional[str]] = mapped_column(String(200))
-    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(String(200))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_retryable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ExportJobAttempt(Base):
@@ -346,9 +542,9 @@ class ExportJobAttempt(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    error_class: Mapped[Optional[str]] = mapped_column(String(100))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_class: Mapped[str | None] = mapped_column(String(100))
 
 
 class BackgroundJob(Base):
@@ -365,10 +561,10 @@ class BackgroundJob(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE")
     )
-    owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
     )
     kind: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -376,14 +572,14 @@ class BackgroundJob(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="queued", nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    worker_id: Mapped[Optional[str]] = mapped_column(String(200))
-    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    error_class: Mapped[Optional[str]] = mapped_column(String(100))
+    worker_id: Mapped[str | None] = mapped_column(String(200))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_class: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class BackgroundJobAttempt(Base):
@@ -407,9 +603,9 @@ class BackgroundJobAttempt(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    error_class: Mapped[Optional[str]] = mapped_column(String(100))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_class: Mapped[str | None] = mapped_column(String(100))
 
 
 class WorkflowRun(Base):
@@ -432,11 +628,11 @@ class WorkflowRun(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0)
-    error_class: Mapped[Optional[str]] = mapped_column(String(100))
+    error_class: Mapped[str | None] = mapped_column(String(100))
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class WorkflowNodeRun(Base):
@@ -452,26 +648,26 @@ class WorkflowNodeRun(Base):
     workflow_run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False
     )
-    graph_run_id: Mapped[Optional[str]] = mapped_column(String(100))
+    graph_run_id: Mapped[str | None] = mapped_column(String(100))
     node_name: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    model: Mapped[Optional[str]] = mapped_column(String(200))
-    endpoint: Mapped[Optional[str]] = mapped_column(String(500))
-    prompt_version: Mapped[Optional[str]] = mapped_column(String(100))
+    model: Mapped[str | None] = mapped_column(String(200))
+    endpoint: Mapped[str | None] = mapped_column(String(500))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    structured_parse_success: Mapped[Optional[bool]] = mapped_column(Boolean)
-    error_class: Mapped[Optional[str]] = mapped_column(String(100))
-    attributes: Mapped[Optional[dict[str, Any]]] = mapped_column(
+    structured_parse_success: Mapped[bool | None] = mapped_column(Boolean)
+    error_class: Mapped[str | None] = mapped_column(String(100))
+    attributes: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    duration_ms: Mapped[Optional[float]] = mapped_column(Float)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[float | None] = mapped_column(Float)
 
 
 class ToolCallTrace(Base):
@@ -491,15 +687,15 @@ class ToolCallTrace(Base):
     )
     tool_call_id: Mapped[str] = mapped_column(String(200), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    tool_version: Mapped[Optional[str]] = mapped_column(String(50))
+    tool_version: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(50), nullable=False)
-    arguments_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(
+    arguments_summary: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )
-    result_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(
+    result_summary: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )
-    error_code: Mapped[Optional[str]] = mapped_column(String(100))
+    error_code: Mapped[str | None] = mapped_column(String(100))
     duration_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -523,12 +719,12 @@ class SSEStream(Base):
     kind: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     last_event_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    producer_id: Mapped[Optional[str]] = mapped_column(String(100))
-    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    producer_id: Mapped[str | None] = mapped_column(String(100))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SSEEvent(Base):
@@ -568,12 +764,12 @@ class Feedback(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    frame_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    frame_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("frames.id", ondelete="SET NULL")
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)   # rating / correction / suggestion
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    rating: Mapped[Optional[int]] = mapped_column(Integer)
+    rating: Mapped[int | None] = mapped_column(Integer)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -595,11 +791,11 @@ class SourceMaterial(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)   # pdf / ppt / markdown / text / code
-    filename: Mapped[Optional[str]] = mapped_column(String(500))
-    content_text: Mapped[Optional[str]] = mapped_column(Text)
-    parsed_result: Mapped[Optional[dict]] = mapped_column(JSONB)
-    size_bytes: Mapped[Optional[int]] = mapped_column()
-    storage_path: Mapped[Optional[str]] = mapped_column(String(1000))
+    filename: Mapped[str | None] = mapped_column(String(500))
+    content_text: Mapped[str | None] = mapped_column(Text)
+    parsed_result: Mapped[dict | None] = mapped_column(JSONB)
+    size_bytes: Mapped[int | None] = mapped_column()
+    storage_path: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -624,7 +820,7 @@ class ProjectVersion(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     dsl_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    change_summary: Mapped[Optional[str]] = mapped_column(Text)
+    change_summary: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

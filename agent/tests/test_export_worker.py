@@ -3,8 +3,10 @@
 import asyncio
 import hashlib
 import json
+import os
+import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,9 +65,8 @@ async def test_worker_refuses_to_run_in_api_queue_mode():
     with patch(
         "services.export_worker.get_settings",
         return_value=MagicMock(manim_execution_mode="queue"),
-    ):
-        with pytest.raises(RuntimeError, match="requires MANIM_EXECUTION_MODE=worker"):
-            await run_worker()
+    ), pytest.raises(RuntimeError, match="requires MANIM_EXECUTION_MODE=worker"):
+        await run_worker()
 
 
 @pytest.mark.asyncio
@@ -98,7 +99,7 @@ async def test_claim_marks_job_rendering_and_assigns_lease():
         export_worker_max_attempts=3,
         manim_timeout_seconds=600,
     )
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     with (
         patch("services.export_worker.get_settings", return_value=settings),
         patch("db.database.async_session_factory", return_value=context),
@@ -135,6 +136,71 @@ def _export_dsl() -> dict:
             }
         ],
     }
+
+
+def test_export_boundary_recompiles_invalid_sorting_frames():
+    from api.export import _prepare_dsl_for_export
+
+    dsl = {
+        "project_id": "p-sort",
+        "topic": "冒泡排序",
+        "frames": [
+            {
+                "frame_id": "f_001",
+                "title": "初始数组",
+                "narration": "从初始数组开始。",
+                "visual_objects": [{
+                    "id": "arr", "type": "array",
+                    "cells": [{"value": value} for value in [5, 3, 8, 1]],
+                }],
+                "state_snapshot": {"array": [5, 3, 8, 1]},
+                "animations": [],
+            },
+            {
+                "frame_id": "f_002",
+                "title": "错误的模型状态",
+                "narration": "模型意外复制了元素。",
+                "visual_objects": [{
+                    "id": "arr", "type": "array",
+                    "cells": [{"value": value} for value in [5, 5, 8, 1]],
+                }],
+                "state_snapshot": {"array": [5, 5, 8, 1]},
+                "animations": [],
+            },
+            {
+                "frame_id": "f_003",
+                "title": "排序完成",
+                "narration": "得到升序结果。",
+                "visual_objects": [{
+                    "id": "arr", "type": "array",
+                    "cells": [{"value": value} for value in [1, 3, 5, 8]],
+                }],
+                "state_snapshot": {"array": [1, 3, 5, 8]},
+                "animations": [],
+            },
+        ],
+    }
+
+    prepared = _prepare_dsl_for_export(dsl)
+
+    for frame in prepared["frames"]:
+        values = frame["state_snapshot"]["array"]
+        visible = [cell["value"] for cell in frame["visual_objects"][0]["cells"]]
+        assert sorted(values) == [1, 3, 5, 8]
+        assert visible == values
+    assert prepared["frames"][-1]["state_snapshot"]["array"] == [1, 3, 5, 8]
+
+
+def test_executable_lessons_require_deterministic_renderer():
+    from api.export import _requires_deterministic_renderer
+
+    assert _requires_deterministic_renderer({
+        "frames": [{"state_snapshot": {"array": [5, 3, 8, 1]}}]
+    })
+    assert _requires_deterministic_renderer({
+        "frames": [{"state_snapshot": {"queue": ["A"], "visited": ["A"]}}]
+    })
+    assert not _requires_deterministic_renderer(_export_dsl())
 
 
 @pytest.mark.asyncio
@@ -225,7 +291,7 @@ async def test_failed_export_is_requeued_with_backoff_before_max_attempts():
         id=job_id,
         status="failed",
         attempt_count=1,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(UTC),
     )
     session = MagicMock()
     session.get = AsyncMock(return_value=job)
@@ -254,7 +320,7 @@ async def test_failed_export_is_requeued_with_backoff_before_max_attempts():
     assert job.status == "queued"
     assert job.error_log is None
     assert job.completed_at is None
-    assert 6 <= (job.next_attempt_at - datetime.now(timezone.utc)).total_seconds() <= 7
+    assert 6 <= (job.next_attempt_at - datetime.now(UTC)).total_seconds() <= 7
     session.commit.assert_awaited_once()
     redis_update.assert_called_once()
 
@@ -391,6 +457,30 @@ def test_sandbox_claims_filesystem_request_and_writes_result(tmp_path):
     render.assert_called_once()
 
 
+def test_sandbox_reaps_only_stale_orphaned_claims(tmp_path):
+    from services.export_sandbox import _reap_stale_claims
+
+    old_claim = tmp_path / "old-job" / "render-request.claimed-crashed.json"
+    old_claim.parent.mkdir()
+    old_claim.write_text("{}", encoding="utf-8")
+    fresh_claim = tmp_path / "fresh-job" / "render-request.claimed-active.json"
+    fresh_claim.parent.mkdir()
+    fresh_claim.write_text("{}", encoding="utf-8")
+
+    os.utime(old_claim, (100, 100))
+    os.utime(fresh_claim, (950, 950))
+
+    reaped = _reap_stale_claims(
+        tmp_path,
+        stale_after_seconds=100,
+        now=1000,
+    )
+
+    assert reaped == 1
+    assert not old_claim.exists()
+    assert fresh_claim.exists()
+
+
 def test_workspace_quota_counts_bytes_and_files_without_following_symlinks(tmp_path):
     from api.export import _workspace_exceeds_limit
 
@@ -430,6 +520,18 @@ def test_sandbox_rejects_oversized_workspace_without_rendering(tmp_path):
     render.assert_not_called()
 
 
+def test_render_subprocess_timeout_terminates_process_group(tmp_path):
+    from api.export import _run_subprocess_group
+
+    with pytest.raises(TimeoutError, match="exceeded 1s"):
+        _run_subprocess_group(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=str(tmp_path),
+            env=os.environ.copy(),
+            timeout=1,
+        )
+
+
 def test_sandbox_rejects_script_modified_after_worker_approval(tmp_path):
     from services.export_sandbox import process_one_request
 
@@ -458,6 +560,42 @@ def test_sandbox_rejects_script_modified_after_worker_approval(tmp_path):
     assert result["status"] == "failed"
     assert result["retryable"] is False
     assert result["error_code"] == "script_integrity_failed"
+    render.assert_not_called()
+
+
+def test_sandbox_rejects_task_symlink_escape(tmp_path):
+    from services.export_sandbox import process_one_request
+
+    job_dir = tmp_path / "job-symlink"
+    job_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_script = outside_dir / "main.py"
+    script = "from manim import *"
+    outside_script.write_text(script, encoding="utf-8")
+    try:
+        (job_dir / "scripts").symlink_to(outside_dir, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this Windows runner")
+
+    (job_dir / "render-request.json").write_text(
+        _sandbox_request(script, "attempt-symlink"), encoding="utf-8"
+    )
+    settings = MagicMock(
+        export_max_workspace_bytes=1024,
+        export_max_workspace_files=100,
+    )
+
+    with (
+        patch("services.export_sandbox.get_settings", return_value=settings),
+        patch("services.export_sandbox._render_manim_sync") as render,
+    ):
+        assert process_one_request(tmp_path) is True
+
+    result = json.loads((job_dir / "render-result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert result["retryable"] is False
+    assert result["error_code"] == "task_path_escape"
     render.assert_not_called()
 
 

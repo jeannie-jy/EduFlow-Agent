@@ -14,7 +14,7 @@ _REDACTIONS = (
     (re.compile(r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://[^:\s]+:)[^@\s]+@"), r"\1[REDACTED]@"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"), "[REDACTED_KEY]"),
     (re.compile(r"(?i)\b[A-Z]:\\[^\r\n\t]+"), "[REDACTED_PATH]"),
-    (re.compile(r"(?<!:)\b/(?:app|home|users|tmp|var)/[^\r\n\t]+", re.I), "[REDACTED_PATH]"),
+    (re.compile(r"(?<!:)\b/(?:app|home|users|tmp|var)/[^\r\n\t]+", re.IGNORECASE), "[REDACTED_PATH]"),
 )
 
 

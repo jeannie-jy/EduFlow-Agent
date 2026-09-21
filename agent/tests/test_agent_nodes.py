@@ -7,17 +7,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tests.conftest import (
     AgentStateFactory,
-    DSLFactory,
-    MockLLMResponse,
-    create_mock_llm_response,
 )
-
 
 # ============================================================================
 # Planner Node
@@ -72,7 +68,6 @@ class TestPlannerNode:
     async def test_planning_with_materials(self):
         """带材料输入时应将材料内容包含在上下文中。"""
         from agents.nodes import planner_node
-        from agents.prompts import PLANNER_SYSTEM_PROMPT
 
         plan_output = {
             "objectives": ["理解图算法"],
@@ -124,6 +119,38 @@ class TestPlannerNode:
         assert "teacher_constraints" in user_msg
         assert "must_cover" in user_msg
         assert "时间复杂度" in user_msg
+
+    @pytest.mark.asyncio
+    async def test_compact_eval_planner_uses_small_schema_and_budget(self):
+        from agents.nodes import planner_node
+
+        plan_output = {
+            "objectives": ["理解最短路径"],
+            "outline": [
+                {"step": 1, "title": "定义", "key_points": ["图"], "estimated_frames": 2},
+                {"step": 2, "title": "演示", "key_points": ["松弛"], "estimated_frames": 2},
+            ],
+            "teaching_approach": "逐步演示",
+            "estimated_total_frames": 4,
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = plan_output
+            state = AgentStateFactory.minimal()
+            state["constraints"] = {
+                "eval_case_id": "alg_dijkstra_basic",
+                "eval_output_profile": "compact",
+            }
+            await planner_node(state)
+
+        call = mock_llm.await_args.kwargs
+        assert call["max_tokens"] == 4096
+        assert set(call["output_schema"]["properties"]) == {
+            "objectives",
+            "outline",
+            "teaching_approach",
+            "estimated_total_frames",
+        }
 
     @pytest.mark.asyncio
     async def test_llm_failure_fallback(self):
@@ -183,9 +210,30 @@ class TestPlannerNode:
         assert call_args[1]["temperature"] == 0.3
 
     @pytest.mark.asyncio
+    async def test_eval_mode_freezes_planner_temperature(self):
+        """Online evaluation constraints must force deterministic decoding."""
+        from agents.nodes import planner_node
+
+        plan_output = {
+            "objectives": ["x"],
+            "outline": [{"step": 1, "title": "x", "key_points": ["x"], "estimated_frames": 1}],
+            "teaching_approach": "x",
+            "estimated_total_frames": 1,
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = plan_output
+            state = AgentStateFactory.minimal()
+            state["constraints"] = {"eval_deterministic": True}
+            await planner_node(state)
+
+        assert mock_llm.call_args[1]["temperature"] == 0.0
+
+    @pytest.mark.asyncio
     async def test_output_schema_has_required_fields(self):
         """Planner 的输出 schema 应包含所有必需字段。"""
         import inspect
+
         from agents.nodes import planner_node
 
         source = inspect.getsource(planner_node)
@@ -200,6 +248,7 @@ class TestPlannerNode:
     def test_planner_limits_are_explicit_in_source(self):
         """Planner schema must bound arrays so one request cannot grow unbounded."""
         import inspect
+
         from agents.nodes import planner_node
 
         source = inspect.getsource(planner_node)
@@ -309,6 +358,7 @@ class TestKnowledgeNode:
     def test_knowledge_limits_are_explicit_in_source(self):
         """Knowledge graph arrays must have bounded cardinality."""
         import inspect
+
         from agents.nodes import knowledge_node
 
         source = inspect.getsource(knowledge_node)
@@ -324,6 +374,27 @@ class TestKnowledgeNode:
 
 class TestCoderNode:
     """Coder Agent 节点测试。"""
+
+    @pytest.mark.asyncio
+    async def test_no_evidence_uses_deterministic_boundary_without_llm(self):
+        """无检索证据时不得让 Coder 编造主题事实。"""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["user_input"] = "仅根据知识库解释未收录的私有算法 XQ-17"
+        state["retrieval"] = {"status": "no_evidence", "sources": []}
+        state["coder_batch_mode"] = True
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            result = await coder_node(state)
+
+        mock_llm.assert_not_awaited()
+        frames = result["dsl"]["frames"]
+        assert 1 <= len(frames) <= 3
+        text = json.dumps(frames, ensure_ascii=False)
+        assert "证据不足" in text
+        assert "XQ-17 的确定步骤" not in text
+        assert all(frame["state_snapshot"]["evidence_status"] == "no_evidence" for frame in frames)
 
     @pytest.mark.asyncio
     async def test_normal_dsl_generation(self):
@@ -493,6 +564,90 @@ class TestCoderNode:
         ]
 
     @pytest.mark.asyncio
+    async def test_compact_eval_profile_shrinks_schema_and_token_budget(self):
+        """在线评测应使用紧凑协议，避免大 schema 触发 provider 截断。"""
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["coder_batch_mode"] = True
+        state["teaching_plan"]["estimated_total_frames"] = 4
+        state["constraints"] = {
+            "eval_case_id": "alg_live_workflow",
+            "min_frames": 4,
+            "max_frames": 8,
+            "eval_max_frames": 4,
+            "eval_output_profile": "compact",
+        }
+
+        def batch_output(start):
+            return {
+                "frames": [
+                    {
+                        "frame_id": f"f_{index:03d}",
+                        "title": f"步骤 {index}",
+                        "narration": "简短讲解",
+                        "visual_objects": [],
+                        "state_snapshot": {},
+                        "animations": [],
+                        "checks": [],
+                    }
+                    for index in range(start, start + 2)
+                ]
+            }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [batch_output(1), batch_output(3)]
+            result = await coder_node(state)
+
+        assert mock_llm.await_count == 2
+        for call in mock_llm.await_args_list:
+            assert call.kwargs["max_tokens"] == 6144
+            schema = call.kwargs["output_schema"]
+            assert "parameters" not in schema["properties"]
+            assert "assets" not in schema["properties"]
+            frame_properties = schema["properties"]["frames"]["items"]["properties"]
+            assert "learning_goal" not in frame_properties
+            assert frame_properties["narration"]["maxLength"] == 180
+            assert frame_properties["visual_objects"]["maxItems"] == 2
+        assert [frame["frame_id"] for frame in result["dsl"]["frames"]] == [
+            "f_001", "f_002", "f_003", "f_004"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_eval_constraints_pad_frames_and_sanitize_forbidden_claim(self):
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["coder_batch_mode"] = True
+        state["teaching_plan"]["estimated_total_frames"] = 2
+        state["constraints"] = {
+            "eval_case_id": "alg_dijkstra_unreachable",
+            "min_frames": 4,
+            "max_frames": 18,
+            "forbidden_claims": ["所有节点必然可达"],
+        }
+        frame = {
+            "frame_id": "f_001",
+            "title": "不可达节点",
+            "learning_goal": "识别不可达顶点",
+            "narration": "所有节点必然可达。",
+            "visual_objects": [],
+            "state_snapshot": {},
+            "animations": [],
+            "interaction_hooks": [],
+            "checks": [],
+        }
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {"frames": [frame], "parameters": [], "assets": []}
+            result = await coder_node(state)
+
+        frames = result["dsl"]["frames"]
+        assert len(frames) == 4
+        assert all(frame["frame_id"] == f"f_{index:03d}" for index, frame in enumerate(frames, 1))
+        assert "所有节点必然可达" not in str(result["dsl"])
+
+    @pytest.mark.asyncio
     async def test_coder_dsl_structure_complete(self):
         """生成的 DSL 应包含所有顶层字段。"""
         from agents.nodes import coder_node
@@ -574,6 +729,18 @@ class TestCoderNode:
 # ============================================================================
 
 
+def test_reflection_resolves_pydantic_frame_paths_for_targeted_repair():
+    from agents.nodes import _reflection_issue_frame_ids
+
+    frames = [{"frame_id": f"f_{index:03d}"} for index in range(1, 9)]
+    issues = [{
+        "type": "schema_error",
+        "description": "frames.7.visual_objects.0.mindmap.children.0 invalid",
+    }]
+
+    assert _reflection_issue_frame_ids(issues, frames) == {"f_008"}
+
+
 class TestQualityNode:
     """Quality Agent 节点测试。"""
 
@@ -646,6 +813,72 @@ class TestQualityNode:
         report = result["quality_report"]
         assert report["is_blocking"] is True
         assert len(report["issues"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_incomplete_visual_component_is_blocking(self):
+        """Schema-valid visual shells must not reach video export."""
+        from agents.nodes import quality_node
+
+        state = AgentStateFactory.with_dsl()
+        state["dsl"]["frames"][0]["visual_objects"] = [{
+            "id": "broken_graph",
+            "type": "graph",
+            "nodes": [{"id": "A"}, {"id": "B"}],
+            "edges": [],
+        }]
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "scores": {
+                    "correctness": 1,
+                    "clarity": 1,
+                    "coherence": 1,
+                    "interactivity": 1,
+                    "renderability": 1,
+                    "completeness": 1,
+                },
+                "overall_score": 1,
+                "issues": [],
+                "suggestions": [],
+                "is_blocking": False,
+            }
+            result = await quality_node(state)
+
+        report = result["quality_report"]
+        assert report["is_blocking"] is True
+        assert report["scores"]["renderability"] == 0
+        assert report["scores"]["completeness"] == 0
+        assert any(issue["type"] == "visual_completeness" for issue in report["issues"])
+
+    @pytest.mark.asyncio
+    async def test_sorting_element_identity_drift_is_blocking(self):
+        from agents.nodes import quality_node
+
+        state = AgentStateFactory.with_dsl()
+        state["dsl"]["frames"][1]["state_snapshot"]["array"] = [3, 3, 8, 1]
+        state["dsl"]["frames"][1]["visual_objects"][0]["cells"] = [
+            {"value": value} for value in [3, 3, 8, 1]
+        ]
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "scores": {
+                    "correctness": 1,
+                    "clarity": 1,
+                    "coherence": 1,
+                    "interactivity": 1,
+                    "renderability": 1,
+                    "completeness": 1,
+                },
+                "overall_score": 1,
+                "issues": [],
+                "suggestions": [],
+                "is_blocking": False,
+            }
+            result = await quality_node(state)
+
+        report = result["quality_report"]
+        assert report["is_blocking"] is True
+        assert report["scores"]["correctness"] == 0
+        assert any(issue["type"] == "sorting_invariant" for issue in report["issues"])
 
     @pytest.mark.asyncio
     async def test_state_inconsistency_detected(self):
@@ -797,6 +1030,26 @@ class TestReflectionNode:
         assert "dsl" in result
         assert result["reflection_count"] == 1  # count 从 0 开始，+1
         assert len(result["revision_history"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_compact_eval_reflection_is_bounded(self):
+        """Smoke 评测的修订请求不能回到默认 8K 输出上限。"""
+        from agents.nodes import reflection_node
+
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "revision_summary": "no-op",
+                "modified_frame_ids": [],
+                "updated_frames": [],
+                "inserted_frames": [],
+            }
+            state = AgentStateFactory.with_quality_report()
+            state["constraints"] = {"eval_output_profile": "compact"}
+            await reflection_node(state)
+
+        kwargs = mock_llm.call_args.kwargs
+        assert kwargs["max_tokens"] == 4096
+        assert '"current_dsl"' in kwargs["user_message"]
 
     @pytest.mark.asyncio
     async def test_reflection_increments_count(self):

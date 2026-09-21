@@ -14,8 +14,9 @@ import threading
 import time
 import uuid
 import weakref
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -72,7 +73,7 @@ class ToolExecutionContext:
         *,
         actor_id: str | None = None,
         actor_role: str | None = None,
-    ) -> "ToolExecutionContext":
+    ) -> ToolExecutionContext:
         from services.telemetry import request_id_var
         from services.workflow_trace import current_trace_identifiers
 
@@ -346,7 +347,7 @@ async def execute_tool_call(
             )
         except ValidationError:
             status, error_code = "invalid_arguments", "INVALID_TOOL_ARGUMENTS"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             status, error_code = "timeout", "TOOL_TIMEOUT"
         except PermissionError:
             status, error_code = "permission_denied", "TOOL_PERMISSION_DENIED"
@@ -435,7 +436,9 @@ async def run_tool_calling_loop(
         conversation.append(response["assistant_message"])
         semaphore = _get_tool_semaphore(settings.tool_max_concurrency)
 
-        async def execute(call: dict[str, Any]) -> dict[str, Any]:
+        async def execute(
+            call: dict[str, Any], semaphore: asyncio.Semaphore = semaphore
+        ) -> dict[str, Any]:
             async with semaphore:
                 return await execute_tool_call(call, context, registry=registry)
 

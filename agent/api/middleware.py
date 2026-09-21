@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 import time
 import uuid
 
@@ -115,9 +116,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             if costly
             else settings.api_write_rate_window_seconds
         )
-        identifier = request.cookies.get("eduflow_session") or (
-            request.client.host if request.client else "unknown"
-        )
+        from services.request_security import client_ip
+        identifier = request.cookies.get("eduflow_session") or client_ip(request)
         retry_after = await check_rate_limit(
             scope, identifier, limit=limit, window_seconds=window
         )
@@ -134,3 +134,46 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             },
             headers={"Retry-After": str(retry_after)},
         )
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    """Apply browser security headers and reject cross-origin authenticated writes."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        from config import get_settings
+        from services.request_security import request_origin
+
+        settings = get_settings()
+        unsafe = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        authenticated = bool(request.cookies.get("eduflow_session"))
+        if settings.enforce_origin_check and unsafe:
+            origin = request_origin(request)
+            if origin != settings.public_origin.rstrip("/"):
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": {"code": "ORIGIN_REJECTED", "message": "Cross-origin write rejected"}},
+                )
+            if authenticated:
+                csrf_cookie = request.cookies.get("eduflow_csrf", "")
+                csrf_header = request.headers.get("x-csrf-token", "")
+                if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": {"code": "CSRF_REJECTED", "message": "CSRF token is missing or invalid"}},
+                    )
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+            "object-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; "
+            "connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; form-action 'self'",
+        )
+        if settings.environment in {"staging", "production"}:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        response.headers.setdefault("Cache-Control", "no-store" if request.url.path.startswith("/api/") else "no-cache")
+        return response

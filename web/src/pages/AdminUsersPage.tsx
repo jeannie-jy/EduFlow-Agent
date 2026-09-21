@@ -9,7 +9,8 @@ import {
 import { getAuthState } from "@/lib/auth";
 import {
   ApiError, listAdminUsers, revokeAdminUserSessions, updateAdminUser,
-  type AdminUser, type UserRole,
+  getAdminUserQuota, updateAdminUserQuota,
+  type AdminQuota, type AdminQuotaChange, type AdminUser, type UserRole,
 } from "@/services";
 
 const roleLabels: Record<UserRole, string> = {
@@ -17,6 +18,15 @@ const roleLabels: Record<UserRole, string> = {
   teacher: "教师",
   admin: "管理员",
 };
+
+const quotaFields = [
+  ["projects", "项目数"],
+  ["material_bytes", "素材字节"],
+  ["artifact_bytes", "产物字节"],
+  ["generation_concurrent", "生成并发"],
+  ["video_concurrent", "视频并发"],
+  ["task_max_tokens", "单任务 Token"],
+] as const;
 
 export function AdminUsersPage() {
   const currentUserId = getAuthState()?.id;
@@ -30,6 +40,10 @@ export function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [pendingId, setPendingId] = useState<string>();
   const [message, setMessage] = useState<{ error: boolean; text: string }>();
+  const [quotaUser, setQuotaUser] = useState<AdminUser>();
+  const [quota, setQuota] = useState<AdminQuota>();
+  const [quotaDraft, setQuotaDraft] = useState<Record<string, string | boolean>>({});
+  const [quotaLoading, setQuotaLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +97,45 @@ export function AdminUsersPage() {
       setMessage({ error: true, text: error instanceof ApiError ? error.message : "会话撤销失败" });
     } finally {
       setPendingId(undefined);
+    }
+  };
+
+  const openQuota = async (user: AdminUser) => {
+    setQuotaLoading(true);
+    setMessage(undefined);
+    try {
+      const data = await getAdminUserQuota(user.id);
+      setQuotaUser(user);
+      setQuota(data);
+      const draft: Record<string, string | boolean> = { is_suspended: data.is_suspended };
+      quotaFields.forEach(([key]) => { draft[key] = data.limits[key] === undefined ? "" : String(data.limits[key]); });
+      setQuotaDraft(draft);
+    } catch (error) {
+      setMessage({ error: true, text: error instanceof ApiError ? error.message : "无法加载用户配额" });
+    } finally {
+      setQuotaLoading(false);
+    }
+  };
+
+  const saveQuota = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!quotaUser) return;
+    setQuotaLoading(true);
+    const payload: Record<string, unknown> = {
+      is_suspended: Boolean(quotaDraft.is_suspended),
+    };
+    quotaFields.forEach(([key]) => {
+      const value = Number(quotaDraft[key]);
+      if (Number.isFinite(value) && value >= 0) payload[key] = value;
+    });
+    try {
+      const updated = await updateAdminUserQuota(quotaUser.id, payload as AdminQuotaChange);
+      setQuota(updated);
+      setMessage({ error: false, text: "用户配额已更新，变更已写入审计日志" });
+    } catch (error) {
+      setMessage({ error: true, text: error instanceof ApiError ? error.message : "配额更新失败" });
+    } finally {
+      setQuotaLoading(false);
     }
   };
 
@@ -157,6 +210,7 @@ export function AdminUsersPage() {
                 <TableCell className="text-right"><div className="flex justify-end gap-2">
                   <Button size="sm" variant="outline" disabled={pending || isSelf} onClick={() => void mutate(user, { is_active: !user.is_active })}>{user.is_active ? "停用" : "启用"}</Button>
                   <Button size="sm" variant="outline" disabled={pending || user.session_count === 0} onClick={() => void revoke(user)}>撤销会话</Button>
+                  <Button size="sm" variant="outline" disabled={pending || quotaLoading} onClick={() => void openQuota(user)}>配额</Button>
                 </div></TableCell>
               </TableRow>;
             })}
@@ -164,6 +218,29 @@ export function AdminUsersPage() {
         </Table>
         {loading && <p role="status" className="p-8 text-center text-sm text-muted-foreground">正在加载用户…</p>}
       </div>
+
+      {quotaUser && quota ? <section className="rounded-lg border bg-card p-4" aria-label="用户配额">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-medium">{quotaUser.nickname} 的配额</h2>
+            <p className="mt-1 text-xs text-muted-foreground">已用量只读；保存配额会生成不可变审计事件。</p>
+          </div>
+          <Button type="button" variant="ghost" onClick={() => { setQuotaUser(undefined); setQuota(undefined); }}>关闭</Button>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Object.entries(quota.usage.resources).map(([resource, periods]) => <div key={resource} className="rounded-md border p-3 text-sm">
+            <p className="font-medium">{resource === "generation" ? "生成" : "视频"}</p>
+            <p className="mt-1 text-muted-foreground">今日 {periods.day.used}/{periods.day.limit} · 本月 {periods.month.used}/{periods.month.limit}</p>
+          </div>)}
+        </div>
+        <form className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" onSubmit={(event) => void saveQuota(event)}>
+          {quotaFields.map(([key, label]) => <label key={key} className="space-y-1 text-sm">{label}
+            <Input type="number" min={0} value={String(quotaDraft[key] ?? "")} onChange={(event) => setQuotaDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
+          </label>)}
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(quotaDraft.is_suspended)} onChange={(event) => setQuotaDraft((draft) => ({ ...draft, is_suspended: event.target.checked }))} />暂停该账号资源任务</label>
+          <div className="flex items-end"><Button type="submit" disabled={quotaLoading}>{quotaLoading ? "保存中…" : "保存配额"}</Button></div>
+        </form>
+      </section> : null}
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" disabled={!cursor || loading} onClick={() => setCursor(undefined)}>返回首页</Button>

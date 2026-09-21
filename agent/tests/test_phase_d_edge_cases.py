@@ -11,7 +11,7 @@ import pytest
 
 
 def _ensure_registered():
-    from generators.registry import register_generator, has_generator
+    from generators.registry import has_generator, register_generator
     for mod_id, cls_name in [
         ("misconception", "MisconceptionGenerator"), ("pathway", "PathwayGenerator"), ("sandbox", "SandboxGenerator"),
     ]:
@@ -179,7 +179,7 @@ class TestPathwayEdges:
             ], "edges": [],
         }
         start = time.monotonic()
-        issues = gen.validate(output)
+        gen.validate(output)
         assert time.monotonic() - start < 5.0
 
     def test_validate_no_extensions(self, gen):
@@ -241,5 +241,5 @@ class TestSandboxEdges:
                   "test_cases": [{"name": "T1", "input": {}, "expected_output": {}},
                                  {"name": "T2", "input": {}, "expected_output": {}}]}
         start = time.monotonic()
-        issues = gen.validate(output)
+        gen.validate(output)
         assert time.monotonic() - start < 5.0

@@ -40,6 +40,8 @@ export interface SSEErrorEvent {
   phase: "error";
   message: string;
   details?: unknown;
+  status?: number;
+  code?: string;
 }
 
 /** 模块生成开始事件 */
@@ -139,7 +141,28 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
       });
 
       if (!res.ok) {
-        throw new Error(`SSE 连接失败: HTTP ${res.status}`);
+        let detail = "";
+        let code = "";
+        try {
+          const rawBody = await res.text();
+          const body = JSON.parse(rawBody) as {
+            detail?: string | { error?: { code?: string; message?: string } };
+            error?: { code?: string; message?: string };
+          };
+          const nested = typeof body.detail === "object" ? body.detail?.error : undefined;
+          detail = nested?.message
+            ?? body.error?.message
+            ?? (typeof body.detail === "string" ? body.detail : "");
+          code = nested?.code ?? body.error?.code ?? "";
+        } catch {
+          // The status code is still actionable when the response body is not JSON.
+        }
+        const error = new Error(
+          `SSE 连接失败: HTTP ${res.status}${code ? ` ${code}` : ""}${detail ? ` - ${detail}` : ""}`,
+        ) as Error & { status?: number; code?: string };
+        error.status = res.status;
+        error.code = code || undefined;
+        throw error;
       }
 
       if (!res.body) {
@@ -190,7 +213,13 @@ export function connectSSE(url: string, options: SSEOptions = {}): SSEConnection
       // 重连次数耗尽或禁用重连 → 通知上层
       const errMsg = err instanceof Error ? err.message : "SSE 连接失败";
       console.error("SSE 连接失败（已放弃）:", errMsg);
-      onError?.({ phase: "error", message: errMsg });
+      const typedError = err as Error & { status?: number; code?: string };
+      onError?.({
+        phase: "error",
+        message: errMsg,
+        status: typedError.status,
+        code: typedError.code,
+      });
     }
   }
 

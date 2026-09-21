@@ -7,6 +7,7 @@ Revises: 0002_export_job_leases
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0003_export_idempotency"

@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock
 
+import pytest
+
 from adapters.manim_llm_adapter import (
-    ManimCodeValidationError,
     _CODE_TEXT_STYLE_KWARGS,
+    ManimCodeValidationError,
     _fix_code_indexing,
     _fix_code_object_access,
     _format_issues_with_context,
@@ -175,6 +176,25 @@ class TestSuccessPath:
         assert set(files) == {"main.py", "render_config.json", "subtitles.srt"}
         assert not has_errors(validate_script(files["main.py"]))
 
+    async def test_render_options_are_forwarded_to_prompt_and_manifest(self, mocker):
+        import json
+
+        mock = _mock_call_llm(mocker, [{"content": GOOD_SCRIPT}])
+        files = await convert_dsl_to_manim_llm(
+            _minimal_dsl(),
+            quality="m",
+            fps=24,
+            include_subtitles=False,
+        )
+        user_message = mock.await_args.kwargs["user_message"]
+        config = json.loads(files["render_config.json"])
+
+        assert '\"include_subtitles\": false' in user_message
+        assert config["quality"] == "m"
+        assert config["fps"] == 24
+        assert config["include_subtitles"] is False
+        assert files["subtitles.srt"] == ""
+
     async def test_auto_injects_undefined_font_size(self, mocker):
         """白名单命中：font_size 自动注入模块级常量，无需 LLM 重试。"""
         mock = _mock_call_llm(mocker, [{"content": FONT_SIZE_BUG_SCRIPT}])
@@ -313,21 +333,21 @@ class TestStripCodeTextStyleKwargs:
         src = 'Code(code_string="a", font_size=24, language="python")'
         out = _strip_code_text_style_kwargs(src)
         assert "font_size" not in out
-        assert 'Code(code_string="a", language="python")' == out
+        assert out == 'Code(code_string="a", language="python")'
 
     def test_code_variable_rhs_stripped(self):
         """变量 RHS（真实失败模式 font_size=font_size）同样剥离。"""
         src = 'Code(code_string="a", font_size=font_size, language="python")'
         out = _strip_code_text_style_kwargs(src)
         assert "font_size" not in out
-        assert 'Code(code_string="a", language="python")' == out
+        assert out == 'Code(code_string="a", language="python")'
 
     def test_code_first_position_expression_rhs(self):
         """首位参数 + 表达式 RHS（font_size=FONT_SIZE - 4）也能干净移除。"""
         src = 'Code(font_size=FONT_SIZE - 4, language="python")'
         out = _strip_code_text_style_kwargs(src)
         assert "font_size" not in out
-        assert 'Code(language="python")' == out
+        assert out == 'Code(language="python")'
 
     def test_code_multiline_real_pattern(self):
         """真实导出脚本的多行 Code 调用（font_size 为最后一个参数）。"""

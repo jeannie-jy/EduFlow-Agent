@@ -38,6 +38,28 @@ async def test_manim_export_is_disabled_before_database_access_by_default():
 
 
 @pytest.mark.asyncio
+async def test_production_public_video_requires_task_isolation_approval():
+    from api.export import create_export_job
+
+    session = MagicMock()
+    settings = MagicMock(
+        environment="production",
+        video_public_enabled=True,
+        video_public_isolation_approved=False,
+        manim_execution_mode="queue",
+    )
+    with patch("api.export.get_settings", return_value=settings):
+        with pytest.raises(HTTPException) as exc:
+            await create_export_job(
+                str(uuid.uuid4()), ExportManimRequest(), session
+            )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["error"]["code"] == "VIDEO_EXPORT_REQUIRES_TASK_ISOLATION"
+    assert session.get.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_queue_mode_persists_job_without_starting_api_background_task():
     from api.export import create_export_job
 
@@ -86,9 +108,8 @@ async def test_api_rejects_worker_mode_to_keep_execution_roles_separate():
     with patch(
         "api.export.get_settings",
         return_value=MagicMock(manim_execution_mode="worker"),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await create_export_job(str(uuid.uuid4()), ExportManimRequest(), session)
+    ), pytest.raises(HTTPException) as exc:
+        await create_export_job(str(uuid.uuid4()), ExportManimRequest(), session)
 
     assert exc.value.status_code == 503
     assert session.get.call_count == 0

@@ -21,6 +21,13 @@ psycopg[binary,pool]>=3.2.0
 # ── LLM & Embedding ───────────────────────────────────────
 openai>=1.58.0
 httpx>=0.28.0
+cryptography>=44.0.0
+opentelemetry-sdk>=1.29.0
+opentelemetry-exporter-otlp-proto-http>=1.29.0
+opentelemetry-instrumentation-fastapi>=0.50b0
+opentelemetry-instrumentation-sqlalchemy>=0.50b0
+opentelemetry-instrumentation-httpx>=0.50b0
+opentelemetry-instrumentation-redis>=0.50b0
 
 # ── Infrastructure ────────────────────────────────────────
 redis>=5.2.0

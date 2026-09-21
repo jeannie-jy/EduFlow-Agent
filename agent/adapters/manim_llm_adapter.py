@@ -11,8 +11,8 @@ import logging
 import re
 from typing import Any
 
-from agents.prompts import MANIM_CODER_SYSTEM_PROMPT
 from adapters.manim_adapter import generate_render_config, generate_subtitles_srt
+from agents.prompts import MANIM_CODER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +389,12 @@ def _format_issues_with_context(issues: list[dict[str, Any]], script: str) -> st
     return "\n\n".join(parts)
 
 
-def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | None) -> str:
+def _build_user_message(
+    dsl: dict[str, Any],
+    teaching_plan: dict[str, Any] | None,
+    *,
+    include_subtitles: bool = True,
+) -> str:
     """构建发送给 LLM 的上下文消息。"""
     compact_frames = []
     for f in dsl.get("frames", []):
@@ -443,6 +448,7 @@ def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | Non
         "topic": dsl.get("topic", ""),
         "total_frames": len(compact_frames),
         "frames": compact_frames,
+        "render_options": {"include_subtitles": include_subtitles},
     }
     if teaching_plan:
         input_data["teaching_plan"] = {
@@ -458,6 +464,10 @@ def _build_user_message(dsl: dict[str, Any], teaching_plan: dict[str, Any] | Non
 async def convert_dsl_to_manim_llm(
     dsl: dict[str, Any],
     teaching_plan: dict[str, Any] | None = None,
+    *,
+    quality: str = "h",
+    fps: int = 30,
+    include_subtitles: bool = True,
 ) -> dict[str, str]:
     """用 LLM 将 DSL 转化为 Manim 工程文件。
 
@@ -472,9 +482,17 @@ async def convert_dsl_to_manim_llm(
     Raises:
         ManimCodeValidationError: LLM 调用或校验失败（携带失败脚本供调试）
     """
-    from adapters.manim_validator import validate_script, has_errors
+    from adapters.manim_validator import (
+        has_errors,
+        validate_script,
+        validate_teaching_contract,
+    )
 
-    user_message = _build_user_message(dsl, teaching_plan)
+    user_message = _build_user_message(
+        dsl,
+        teaching_plan,
+        include_subtitles=include_subtitles,
+    )
 
     from agents.llm_client import call_llm
 
@@ -522,12 +540,24 @@ async def convert_dsl_to_manim_llm(
 
         # ── 校验 ──
         issues = validate_script(main_py)
+        issues.extend(validate_teaching_contract(
+            main_py,
+            expected_frames=len(dsl.get("frames", [])),
+            include_subtitles=include_subtitles,
+            has_narration=any(frame.get("narration") for frame in dsl.get("frames", [])),
+        ))
         if has_errors(issues):
             # 自动修复：undefined-name 命中白名单 → 模块级注入默认常量后复检
             patched = _inject_undefined_constants(main_py, issues)
             if patched != main_py:
                 main_py = patched
                 issues = validate_script(main_py)
+                issues.extend(validate_teaching_contract(
+                    main_py,
+                    expected_frames=len(dsl.get("frames", [])),
+                    include_subtitles=include_subtitles,
+                    has_narration=any(frame.get("narration") for frame in dsl.get("frames", [])),
+                ))
         if not has_errors(issues):
             if issues:
                 for i in issues:
@@ -559,8 +589,13 @@ async def convert_dsl_to_manim_llm(
             f"LLM 返回空内容，无法生成 Manim 代码（{last_empty_reason or '两次调用均无输出'}）"
         )
 
-    config = generate_render_config(dsl)
-    subtitles = generate_subtitles_srt(dsl)
+    config = generate_render_config(
+        dsl,
+        quality=quality,
+        fps=fps,
+        include_subtitles=include_subtitles,
+    )
+    subtitles = generate_subtitles_srt(dsl) if include_subtitles else ""
 
     logger.info("LLM 生成 Manim 代码: %d 字符", len(main_py))
 

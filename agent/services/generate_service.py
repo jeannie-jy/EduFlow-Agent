@@ -78,16 +78,48 @@ async def resume_generation_stream(
     project_id: str,
     resume_value: dict[str, Any],
 ) -> AsyncGenerator[str, None]:
-    """Resume the persisted HITL interrupt inside the canonical LangGraph."""
+    """Resume the persisted HITL interrupt inside the canonical LangGraph.
+
+    Once approval has been consumed, the checkpoint no longer contains an
+    interrupt. If the browser disconnects while the module node is running,
+    sending ``Command(resume=...)`` again would start duplicate resume runs
+    against a checkpoint that is already past the interrupt. In that case,
+    recover from the durable project snapshot and continue only the modules
+    that have not been checkpointed yet.
+    """
     from langgraph.types import Command
 
     try:
         graph = await _get_graph()
+        config = _thread_config(project_id)
+        try:
+            checkpoint = await graph.aget_state(config)
+        except Exception:
+            # Older/local checkpointers may not expose a readable state. Keep
+            # the original resume path as the compatibility fallback.
+            checkpoint = None
+
+        if checkpoint is not None and _extract_interrupt(checkpoint) is None:
+            recovery = await _load_pending_module_recovery(project_id)
+            if recovery is not None:
+                pending_modules, state = recovery
+                if not pending_modules:
+                    yield _sse_event("done", {
+                        "phase": "done",
+                        "pct": 100,
+                        "module_outputs": state.get("module_context_outputs", {}),
+                        "module_errors": state.get("module_errors", {}),
+                    })
+                    return
+                async for chunk in run_modules_stream(project_id, state, pending_modules):
+                    yield chunk
+                return
+
         with _workflow_llm_budget():
             async for chunk in _drive_graph(
                 graph,
                 Command(resume=resume_value),
-                _thread_config(project_id),
+                config,
                 project_id,
             ):
                 yield chunk
@@ -100,6 +132,52 @@ async def resume_generation_stream(
         })
 
 
+async def _load_pending_module_recovery(
+    project_id: str,
+) -> tuple[list[str], AgentState] | None:
+    """Build a module-only recovery state after an approved run disconnects."""
+    from api.deps import parse_project_id
+    from db.database import async_session_factory
+    from db.models import Project as ProjectModel
+
+    async with async_session_factory() as session:
+        project = await session.get(ProjectModel, parse_project_id(project_id))
+        if project is None or project.status != "generating":
+            return None
+        snapshot = project.dsl_snapshot if isinstance(project.dsl_snapshot, dict) else {}
+        requested = snapshot.get("_pending_modules") or snapshot.get("selected_modules")
+        if not isinstance(requested, list) or not requested:
+            return None
+        requested_modules = [module_id for module_id in requested if isinstance(module_id, str)]
+        existing_outputs = snapshot.get("module_outputs")
+        if not isinstance(existing_outputs, dict):
+            existing_outputs = {}
+        pending_modules = [module_id for module_id in requested_modules if module_id not in existing_outputs]
+        if not pending_modules:
+            # The prior stream may have delivered every module result before
+            # the browser disconnected, but never reached graph finalization.
+            # Close that durable project now instead of leaving it stuck in
+            # ``generating`` forever.
+            project.status = "done"
+            await session.commit()
+        state: AgentState = {
+            "workflow_entry": "modules",
+            "user_input": str(snapshot.get("input_content", snapshot.get("topic", ""))),
+            "project_id": project_id,
+            "teaching_plan": snapshot.get("teaching_plan", {}),
+            "knowledge_graph": snapshot.get("knowledge_graph", {}),
+            "constraints": snapshot.get("constraints", {}),
+            "selected_modules": pending_modules,
+            "module_context_outputs": existing_outputs,
+            "module_errors": snapshot.get("module_errors", {}),
+            "ensure_frames": False,
+            "status": "generating",
+            "reflection_count": 0,
+            "revision_history": [],
+        }
+        return pending_modules, state
+
+
 async def run_regenerate_stream(
     project_id: str,
     *,
@@ -108,12 +186,12 @@ async def run_regenerate_stream(
     actor_role: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Enter the canonical graph at Coder for a scoped regeneration."""
+    from sqlalchemy import select
+
     from api.deps import parse_project_id
     from db.database import async_session_factory
     from db.models import Frame as FrameModel
     from db.models import Project as ProjectModel
-    from sqlalchemy import select
-
     from services.regeneration import (
         normalize_regeneration_scope,
         resolve_target_frame_ids,
@@ -473,13 +551,13 @@ def _thread_config(project_id: str) -> dict[str, Any]:
 
 def _workflow_llm_budget():
     from config import get_settings
-
-    from services.telemetry import llm_budget_scope
+    from services.telemetry import current_llm_budget_limits, llm_budget_scope
 
     settings = get_settings()
+    limits = current_llm_budget_limits()
     return llm_budget_scope(
-        settings.llm_request_max_tokens,
-        settings.llm_request_max_cost_usd,
+        limits[0] if limits else settings.llm_request_max_tokens,
+        limits[1] if limits else settings.llm_request_max_cost_usd,
     )
 
 
@@ -523,6 +601,11 @@ async def run_generation_sync_with_usage(
         "project_id": project_id,
         "materials": materials or [],
         "constraints": constraints or {},
+        # Keep the synchronous/internal entrypoint aligned with the streaming
+        # production path: Knowledge must perform retrieval for benchmark and
+        # worker invocations as well, otherwise end-to-end eval silently tests
+        # a non-RAG graph.
+        "enable_retrieval": True,
         "approval_mode": False,
         "coder_batch_mode": True,
         "status": "draft",
@@ -597,7 +680,6 @@ async def _persist_dsl_result(
         from api.versions import save_version
         from db.database import async_session_factory
         from db.models import Project as ProjectModel
-
         from services.project_persistence import (
             merge_dsl_snapshot,
             persist_frames_to_table,
@@ -644,7 +726,6 @@ async def _persist_module_result(
         from api.versions import save_version
         from db.database import async_session_factory
         from db.models import Project as ProjectModel
-
         from services.project_persistence import (
             merge_dsl_snapshot,
             persist_frames_to_table,
@@ -696,7 +777,7 @@ def _sse_event(event: str, data: dict[str, Any]) -> dict[str, str]:
     sse-starlette 3.x 对 string 会二次包 data: → 前端收不到。
     返 dict({"event": ..., "data": json.dumps(...)}) 由 sse-starlette 正确格式化。
     """
-    return {"event": event, "data": json.dumps(data, ensure_ascii=False)}
+    return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
 
 
 async def with_sse_metadata(
@@ -729,7 +810,7 @@ async def with_sse_metadata(
             **event,
             "id": str(sequence),
             "event": event_name,
-            "data": json.dumps(payload, ensure_ascii=False),
+            "data": json.dumps(payload, ensure_ascii=False, default=str),
         }
         yield enriched
         if event_name in {"done", "error", "waiting_approval"}:

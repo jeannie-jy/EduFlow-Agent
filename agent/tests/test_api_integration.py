@@ -76,8 +76,8 @@ async def client():
     使用 FastAPI 内置的 dependency_overrides 替换 DB 会话，
     避免真实数据库连接。
     """
+    from db.database import get_readonly_session, get_session
     from main import app
-    from db.database import get_session, get_readonly_session
 
     mock_session = _make_session()
 

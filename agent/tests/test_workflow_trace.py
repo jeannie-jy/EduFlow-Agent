@@ -6,9 +6,10 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from db.models import Project, ToolCallTrace, WorkflowNodeRun, WorkflowRun
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from db.models import Project, ToolCallTrace, WorkflowNodeRun, WorkflowRun
 
 
 def test_safe_node_attributes_records_module_batch_without_content():
@@ -94,8 +95,9 @@ async def test_trace_persists_sanitized_node_usage(test_db):
 
 @pytest.mark.asyncio
 async def test_trace_api_hides_run_from_another_project(test_db):
-    from api.traces import get_workflow_run
     from fastapi import HTTPException
+
+    from api.traces import get_workflow_run
 
     first = uuid.uuid4()
     second = uuid.uuid4()

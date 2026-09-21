@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 async def cleanup_expired_materials() -> int:
     from db.database import async_session_factory
     from db.models import Material
-
     from services.artifact_store import get_artifact_store
 
     settings = get_settings()
@@ -24,7 +24,7 @@ async def cleanup_expired_materials() -> int:
     removed = 0
     async with async_session_factory() as session:
         rows = await session.scalars(
-            select(Material).where(Material.expires_at <= datetime.now(timezone.utc))
+            select(Material).where(Material.expires_at <= datetime.now(UTC))
         )
         for material in rows.all():
             if material.storage_key:
@@ -57,11 +57,13 @@ async def run_material_retention(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             await cleanup_expired_materials()
+            from services.account_deletion import process_due_deletions
+            removed_accounts = await process_due_deletions()
+            if removed_accounts:
+                logger.info("due accounts removed: count=%d", removed_accounts)
         except Exception:
             logger.exception("material retention cleanup failed")
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(
                 stop.wait(), timeout=settings.material_cleanup_interval_seconds
             )
-        except TimeoutError:
-            pass

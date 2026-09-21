@@ -41,6 +41,22 @@ class LLMBudgetState:
 _llm_budget_var: contextvars.ContextVar[LLMBudgetState | None] = contextvars.ContextVar(
     "llm_budget", default=None
 )
+_llm_budget_limits_var: contextvars.ContextVar[tuple[int, float] | None] = contextvars.ContextVar(
+    "llm_budget_limits", default=None
+)
+
+
+def current_llm_budget_limits() -> tuple[int, float] | None:
+    return _llm_budget_limits_var.get()
+
+
+@contextmanager
+def llm_budget_limits_scope(max_tokens: int, max_cost_usd: float) -> Iterator[None]:
+    token = _llm_budget_limits_var.set((max(1, int(max_tokens)), max(0.01, float(max_cost_usd))))
+    try:
+        yield
+    finally:
+        _llm_budget_limits_var.reset(token)
 
 
 def _metric_label(value: str) -> str:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -25,6 +26,375 @@ _EMPTY_QUEUE_SENTINELS = {
     "空队列",
 }
 _QUEUE_STATE_KEYS = ("queue", "priority_queue", "heap", "unvisited")
+_ALGORITHM_MARKERS = {
+    "dijkstra": ("dijkstra",),
+    "bellman_ford": ("bellman-ford", "bellman ford", "bellmanford"),
+    "bfs": ("bfs", "广度优先"),
+    "dfs": ("dfs", "深度优先"),
+}
+_ALGORITHM_NAME_ALIASES = {
+    "dijkstra": "dijkstra",
+    "dijkstras_algorithm": "dijkstra",
+    "bellman_ford": "bellman_ford",
+    "bellmanford": "bellman_ford",
+    "bfs": "bfs",
+    "breadth_first_search": "bfs",
+    "dfs": "dfs",
+    "depth_first_search": "dfs",
+    "generic": "generic",
+}
+
+
+_EDGE_TEXT_RE = re.compile(
+    r"(?P<source>[\w.-]+)\s*(?:→|->)\s*(?P<target>[\w.-]+)\s*"
+    r"\(\s*(?P<weight>-?\d+(?:\.\d+)?)\s*\)"
+)
+_EDGE_OBJECT_RE = re.compile(
+    r"@\{\s*from\s*=\s*(?P<source>[^;\s]+)\s*;\s*"
+    r"to\s*=\s*(?P<target>[^;\s]+)\s*;\s*"
+    r"weight\s*=\s*(?P<weight>-?\d+(?:\.\d+)?)\s*\}"
+)
+
+
+def _numeric_weight(value: Any) -> int | float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _parse_edge_text(value: Any) -> dict[str, Any] | None:
+    """Parse a declared edge string without inferring missing semantics.
+
+    The model has historically emitted graph state as ``@{from=...}`` strings
+    or as labels such as ``A→B(2)``.  These are equivalent encodings of an
+    explicitly declared edge, so converting them to the canonical object form
+    is a presentation/transport normalization, not a semantic repair.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _EDGE_OBJECT_RE.fullmatch(value.strip()) or _EDGE_TEXT_RE.fullmatch(value.strip())
+    if not match:
+        return None
+    weight = _numeric_weight(match.group("weight"))
+    if weight is None:
+        return None
+    return {
+        "source": match.group("source").strip(),
+        "target": match.group("target").strip(),
+        "weight": weight,
+    }
+
+
+def _parse_edge_texts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, str):
+        return []
+    edges: list[dict[str, Any]] = []
+    for match in _EDGE_TEXT_RE.finditer(value):
+        weight = _numeric_weight(match.group("weight"))
+        if weight is not None:
+            edges.append({
+                "source": match.group("source").strip(),
+                "target": match.group("target").strip(),
+                "weight": weight,
+            })
+    return edges
+
+
+def _canonical_edge(value: Any) -> dict[str, Any] | None:
+    """Convert supported edge encodings to the canonical edge object."""
+    if isinstance(value, dict):
+        source = value.get("source", value.get("from", value.get("u")))
+        target = value.get("target", value.get("to", value.get("v")))
+        weight = value.get("weight", 1)
+    elif isinstance(value, (list, tuple)):
+        if len(value) < 2:
+            return None
+        source, target = value[0], value[1]
+        weight = value[2] if len(value) > 2 else 1
+    else:
+        return _parse_edge_text(value)
+    if source is None or target is None:
+        return None
+    parsed_weight = _numeric_weight(weight)
+    source_text = _text(source).strip()
+    target_text = _text(target).strip()
+    if parsed_weight is None or not source_text or not target_text:
+        return None
+    return {"source": source_text, "target": target_text, "weight": parsed_weight}
+
+
+def _canonical_node(value: Any) -> tuple[dict[str, Any], dict[str, str]] | None:
+    if isinstance(value, dict):
+        node_id = value.get(
+            "id",
+            value.get("node_id", value.get("key", value.get("name", value.get("label")))),
+        )
+        label = value.get("label", value.get("name", node_id))
+        record = deepcopy(value)
+    else:
+        node_id, label, record = value, value, {}
+    if node_id is None:
+        return None
+    node_id_text = _text(node_id).strip()
+    label_text = _text(label, node_id_text).strip() or node_id_text
+    if not node_id_text:
+        return None
+    record["id"] = node_id_text
+    record["label"] = label_text
+    aliases = {
+        node_id_text: node_id_text,
+        label_text: node_id_text,
+        node_id_text.casefold(): node_id_text,
+        label_text.casefold(): node_id_text,
+    }
+    return record, aliases
+
+
+def _canonical_graph_payload(
+    graph: Any,
+    *,
+    label: Any = None,
+    extra_nodes: list[Any] | None = None,
+    extra_edges: list[Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return an executable graph payload and resolve label-to-id references."""
+    if not isinstance(graph, dict):
+        return None
+    raw_nodes = graph.get("nodes")
+    if not raw_nodes:
+        raw_nodes = graph.get("vertices")
+    raw_edges = graph.get("edges")
+    if not raw_edges:
+        raw_edges = graph.get("graph_edges")
+    if isinstance(raw_edges, (str, dict)):
+        raw_edges = [raw_edges]
+    edges: list[dict[str, Any]] = []
+    for raw_edge in raw_edges if isinstance(raw_edges, list) else []:
+        if (edge := _canonical_edge(raw_edge)) is not None:
+            edges.append(edge)
+    for raw_edge in extra_edges or []:
+        if (edge := _canonical_edge(raw_edge)) is not None:
+            edges.append(edge)
+    if not edges and isinstance(label, str):
+        edges = _parse_edge_texts(label)
+    if not edges:
+        return None
+
+    nodes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    aliases: dict[str, str] = {}
+
+    def add_node(raw_node: Any) -> None:
+        parsed = _canonical_node(raw_node)
+        if parsed is None:
+            return
+        node, node_aliases = parsed
+        if node["id"] not in seen:
+            nodes.append(node)
+            seen.add(node["id"])
+        aliases.update(node_aliases)
+
+    for raw_node in raw_nodes if isinstance(raw_nodes, list) else []:
+        add_node(raw_node)
+    for raw_node in extra_nodes or []:
+        add_node(raw_node)
+    unique_edges: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, int | float]] = set()
+    for edge in edges:
+        edge["source"] = aliases.get(edge["source"], aliases.get(edge["source"].casefold(), edge["source"]))
+        edge["target"] = aliases.get(edge["target"], aliases.get(edge["target"].casefold(), edge["target"]))
+        edge_key = (edge["source"], edge["target"], edge["weight"])
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        unique_edges.append(edge)
+        for endpoint in (edge["source"], edge["target"]):
+            if endpoint not in seen:
+                nodes.append({"id": endpoint, "label": endpoint})
+                seen.add(endpoint)
+    return {"nodes": nodes, "edges": unique_edges, "directed": graph.get("directed", True)}
+
+
+def _secondary_graph_visual(visual: dict[str, Any]) -> bool:
+    role = _text(visual.get("graph_role", visual.get("role", "primary"))).casefold()
+    identity = " ".join(_text(visual.get(key)) for key in ("id", "label", "title")).casefold()
+    return role in {"secondary", "derived", "counterexample", "negative_cycle"} or any(
+        marker in identity
+        for marker in ("负环示例", "反例", "counterexample", "negative cycle example")
+    )
+
+
+def _inject_explicit_graphs(item: dict[str, Any], *, repairs: list[str]) -> None:
+    """Expose graph state and dispersed node/edge visuals as one primary graph."""
+    visuals = item.get("visual_objects", [])
+    if not isinstance(visuals, list):
+        return
+    snapshot = item.get("state_snapshot")
+    state_graph = snapshot.get("graph") if isinstance(snapshot, dict) else None
+    payload = _canonical_graph_payload(state_graph)
+
+    for visual in visuals:
+        if not isinstance(visual, dict) or visual.get("type") != "graph" or _secondary_graph_visual(visual):
+            continue
+        identity = " ".join(_text(visual.get(key)) for key in ("id", "label", "title"))
+        candidate = _canonical_graph_payload(visual, label=identity)
+        if candidate is None:
+            continue
+        if payload is None:
+            payload = candidate
+        else:
+            payload = _canonical_graph_payload(
+                payload,
+                extra_nodes=candidate["nodes"],
+                extra_edges=candidate["edges"],
+            )
+        if visual.get("graph_role") is None and visual.get("role") is None:
+            visual["graph_role"] = "primary"
+
+    extra_nodes = [
+        visual for visual in visuals
+        if isinstance(visual, dict) and visual.get("type") == "node"
+    ]
+    extra_edges = [
+        visual for visual in visuals
+        if isinstance(visual, dict)
+        and visual.get("type") == "edge"
+        and not _secondary_graph_visual(visual)
+    ]
+    if payload is not None and (extra_nodes or extra_edges):
+        payload = _canonical_graph_payload(
+            payload,
+            extra_nodes=extra_nodes,
+            extra_edges=extra_edges,
+        )
+    elif payload is None and extra_edges:
+        payload = _canonical_graph_payload({"edges": extra_edges}, extra_nodes=extra_nodes)
+    if payload is None:
+        return
+
+    primary = next(
+        (
+            visual for visual in visuals
+            if isinstance(visual, dict)
+            and visual.get("type") == "graph"
+            and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+        ),
+        None,
+    )
+    if primary is None:
+        primary = {"id": "primary_graph", "type": "graph", "graph_role": "primary"}
+        visuals.insert(0, primary)
+        repairs.append("explicit_graph_state_to_visual")
+    before = (primary.get("nodes"), primary.get("edges"), primary.get("directed"))
+    primary["nodes"] = deepcopy(payload["nodes"])
+    primary["edges"] = deepcopy(payload["edges"])
+    primary["directed"] = payload.get("directed", True)
+    primary["graph_role"] = "primary"
+    after = (primary.get("nodes"), primary.get("edges"), primary.get("directed"))
+    if before != after:
+        repairs.append("graph_edges_to_canonical_objects")
+
+
+def _map_snapshot_vertices(snapshot: Any, item: dict[str, Any], *, repairs: list[str]) -> Any:
+    """Map state labels to graph IDs after the primary graph is synthesized."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    visuals = item.get("visual_objects", [])
+    graph = next(
+        (
+            visual for visual in visuals
+            if isinstance(visual, dict)
+            and visual.get("type") == "graph"
+            and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+        ),
+        None,
+    )
+    if not isinstance(graph, dict):
+        return snapshot
+    aliases: dict[str, str] = {}
+    for node in graph.get("nodes", []):
+        parsed = _canonical_node(node)
+        if parsed is not None:
+            _, node_aliases = parsed
+            aliases.update(node_aliases)
+    if not aliases:
+        return snapshot
+
+    def map_vertex(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return aliases.get(value, aliases.get(value.casefold(), value))
+
+    result = deepcopy(snapshot)
+    for key in ("dist", "predecessor"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            result[key] = {map_vertex(name): map_vertex(vertex) for name, vertex in value.items()}
+    for key in ("visited", "processed"):
+        if isinstance(result.get(key), list):
+            result[key] = [map_vertex(vertex) for vertex in result[key]]
+    if isinstance(result.get("current"), str):
+        result["current"] = map_vertex(result["current"])
+    if isinstance(result.get("queue"), list):
+        for entry in result["queue"]:
+            if isinstance(entry, dict):
+                for key in ("vertex", "node", "id"):
+                    if isinstance(entry.get(key), str):
+                        entry[key] = map_vertex(entry[key])
+    for key in ("edge_scan", "events"):
+        values = result.get(key)
+        if not isinstance(values, list):
+            continue
+        for entry in values:
+            if not isinstance(entry, dict):
+                continue
+            for field in ("source", "target", "from", "to", "vertex", "node"):
+                if isinstance(entry.get(field), str):
+                    entry[field] = map_vertex(entry[field])
+    if result != snapshot:
+        repairs.append("graph_label_to_node_id")
+    return result
+
+
+def _map_visual_edge_vertices(item: dict[str, Any], *, repairs: list[str]) -> None:
+    """Keep legacy standalone edge visuals consistent with primary graph IDs."""
+    visuals = item.get("visual_objects", [])
+    if not isinstance(visuals, list):
+        return
+    graph = next(
+        (
+            visual for visual in visuals
+            if isinstance(visual, dict)
+            and visual.get("type") == "graph"
+            and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+        ),
+        None,
+    )
+    if not isinstance(graph, dict):
+        return
+    aliases: dict[str, str] = {}
+    for node in graph.get("nodes", []):
+        parsed = _canonical_node(node)
+        if parsed is not None:
+            _, node_aliases = parsed
+            aliases.update(node_aliases)
+    for visual in visuals:
+        if not isinstance(visual, dict) or visual.get("type") != "edge":
+            continue
+        changed = False
+        for field in ("source", "target"):
+            value = visual.get(field)
+            if isinstance(value, str):
+                mapped = aliases.get(value, aliases.get(value.casefold(), value))
+                if mapped != value:
+                    visual[field] = mapped
+                    changed = True
+        if changed:
+            repairs.append("graph_edge_label_to_node_id")
 
 
 def _normalise_queue_sentinels(snapshot: Any) -> Any:
@@ -36,6 +406,190 @@ def _normalise_queue_sentinels(snapshot: Any) -> Any:
         value = result.get(key)
         if isinstance(value, str) and value.strip().casefold() in _EMPTY_QUEUE_SENTINELS:
             result[key] = []
+    return result
+
+
+def _infer_algorithm(topic: Any) -> str | None:
+    text = _text(topic).casefold()
+    for algorithm, markers in _ALGORITHM_MARKERS.items():
+        if any(marker in text for marker in markers):
+            return algorithm
+    return None
+
+
+def _canonical_algorithm_name(value: Any, *, fallback: str | None = None) -> str | None:
+    """Map model vocabulary to the finite algorithm-trace protocol."""
+    raw = _text(value).strip().casefold()
+    if not raw:
+        return fallback
+    slug = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    canonical = _ALGORITHM_NAME_ALIASES.get(slug)
+    if canonical is not None:
+        return canonical
+    # A known lesson topic is stronger evidence than an invented model enum.
+    # Other algorithms still use the common trace fields through ``generic``.
+    return fallback or "generic"
+
+
+def _queue_entry(value: Any) -> dict[str, Any] | None:
+    """Convert supported legacy queue encodings to one canonical object."""
+    if isinstance(value, dict):
+        vertex = value.get("vertex", value.get("node", value.get("id")))
+        priority = value.get("priority", value.get("distance", value.get("key")))
+    elif isinstance(value, (list, tuple)):
+        vertex = value[0] if value else None
+        priority = value[1] if len(value) > 1 else None
+    elif isinstance(value, str):
+        text = value.strip()
+        match = re.fullmatch(r"(.+?)\s*\(([^()]*)\)", text)
+        if match:
+            vertex, priority = match.group(1).strip(), match.group(2).strip()
+        else:
+            vertex, priority = text, None
+    else:
+        vertex, priority = value, None
+    if vertex is None or not str(vertex).strip():
+        return None
+    return {"vertex": str(vertex).strip(), "priority": priority}
+
+
+def _edge_scan_entry(value: Any) -> dict[str, Any] | None:
+    """Convert a Bellman-Ford edge token into the non-priority scan form."""
+    if isinstance(value, dict):
+        source = value.get("source", value.get("from"))
+        target = value.get("target", value.get("to"))
+        weight = value.get("weight", value.get("priority"))
+        if source is not None and target is not None:
+            parsed_weight = _numeric_weight(weight)
+            return {"source": _text(source), "target": _text(target), "weight": parsed_weight}
+        value = value.get("vertex", value.get("id"))
+    if isinstance(value, str):
+        edge = _parse_edge_text(value)
+        if edge is not None:
+            return edge
+        match = re.fullmatch(r"(.+?)\s*(?:→|->)\s*(.+)", value.strip())
+        if match:
+            return {"source": match.group(1).strip(), "target": match.group(2).strip(), "weight": None}
+    return None
+
+
+def _normalise_algorithm_snapshot(
+    snapshot: Any,
+    *,
+    algorithm: str | None,
+    repairs: list[str],
+) -> Any:
+    """Canonicalize algorithm state aliases without changing semantic values."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    result = _normalise_queue_sentinels(snapshot)
+    raw_algorithm = result.get("algorithm")
+    inferred = _canonical_algorithm_name(raw_algorithm, fallback=algorithm)
+    # Topic inference alone is not enough to opt every explanatory/comparison
+    # frame into the executable protocol.  Only frames that actually carry
+    # algorithm state (or explicitly declare ``algorithm``) receive the
+    # versioned schema; otherwise concept-only frames would fail because they
+    # have no queue/dist fields to validate.
+    has_algorithm_state = bool(result.get("algorithm")) or any(
+        key in result
+        for key in ("dist", "distances", "visited", "processed", *_QUEUE_STATE_KEYS)
+    )
+    if not has_algorithm_state:
+        return result
+    if inferred:
+        if result.get("algorithm") != inferred:
+            result["algorithm"] = inferred
+            if inferred == "generic" and _text(raw_algorithm).strip().casefold() != "generic":
+                repairs.append("unsupported_algorithm_to_generic")
+            else:
+                repairs.append("algorithm_alias")
+        if result.get("schema_version") != "algorithm-trace-v1":
+            result["schema_version"] = "algorithm-trace-v1"
+            repairs.append("algorithm_schema_version")
+    canonical_algorithm = str(inferred) if inferred else None
+
+    if "dist" not in result:
+        for alias in ("distances", "distance"):
+            if isinstance(result.get(alias), dict):
+                result["dist"] = deepcopy(result[alias])
+                repairs.append(f"{alias}_to_dist")
+                break
+    if canonical_algorithm:
+        for alias in ("distances", "distance"):
+            if alias in result:
+                result.pop(alias, None)
+    if "visited" not in result and isinstance(result.get("processed"), list):
+        result["visited"] = list(result["processed"])
+        repairs.append("processed_to_visited")
+    if canonical_algorithm:
+        result.pop("processed", None)
+
+    if "predecessor" not in result:
+        for alias in ("prev", "predecessors", "parents", "parent"):
+            if isinstance(result.get(alias), dict):
+                result["predecessor"] = deepcopy(result[alias])
+                repairs.append(f"{alias}_to_predecessor")
+                break
+    if canonical_algorithm:
+        for alias in ("prev", "predecessors", "parents", "parent"):
+            result.pop(alias, None)
+
+    if canonical_algorithm and "edge_scan" in result:
+        raw_edge_scan = result.get("edge_scan")
+        scan_items = raw_edge_scan if isinstance(raw_edge_scan, list) else [raw_edge_scan]
+        canonical_scan = [
+            entry
+            for item in scan_items
+            if (entry := _edge_scan_entry(item)) is not None
+        ]
+        if canonical_scan != raw_edge_scan:
+            repairs.append("edge_scan_to_canonical_objects")
+        result["edge_scan"] = canonical_scan
+
+    queue_key = next((key for key in _QUEUE_STATE_KEYS if key in result), None)
+    if queue_key is not None and canonical_algorithm:
+        raw_queue = result.get(queue_key)
+        if isinstance(raw_queue, str) and raw_queue.strip().casefold() in _EMPTY_QUEUE_SENTINELS:
+            result["queue"] = []
+        elif isinstance(raw_queue, list):
+            result["queue"] = [
+                entry
+                for item in raw_queue
+                if (entry := _queue_entry(item)) is not None
+            ]
+        else:
+            result["queue"] = []
+        if canonical_algorithm == "bellman_ford":
+            raw_items = raw_queue if isinstance(raw_queue, list) else []
+            scan = [entry for item in raw_items if (entry := _edge_scan_entry(item)) is not None]
+            # Bellman-Ford scans a declared edge list; it does not maintain a
+            # Dijkstra-style priority queue.  Preserve the edge sequence under
+            # edge_scan and keep the canonical queue empty.
+            if scan and all("source" in entry and "target" in entry for entry in scan):
+                result["edge_scan"] = scan
+                result["queue"] = []
+                repairs.append("bellman_queue_to_edge_scan")
+            if queue_key != "queue":
+                repairs.append(f"{queue_key}_to_queue")
+        elif queue_key != "queue":
+            repairs.append(f"{queue_key}_to_queue")
+        if any(isinstance(item, (list, tuple, str)) for item in (raw_queue or []) if isinstance(raw_queue, list)):
+            repairs.append("queue_entries_to_objects")
+        for alias in _QUEUE_STATE_KEYS:
+            if alias != "queue":
+                result.pop(alias, None)
+    elif canonical_algorithm:
+        # Explanatory/summary frames may omit queue, but the versioned
+        # protocol carries an explicit empty value after normalization.
+        result["queue"] = []
+        repairs.append("bellman_queue_default" if canonical_algorithm == "bellman_ford" else "algorithm_queue_default")
+    elif queue_key is not None:
+        # Generic lessons may still use legacy queue fields. Preserve those
+        # keys for backwards-compatible rendering; algorithm lessons opt into
+        # the single canonical queue field above.
+        for alias in _QUEUE_STATE_KEYS:
+            if alias in result:
+                result[alias] = _normalise_queue_sentinels({alias: result[alias]})[alias]
     return result
 
 
@@ -167,7 +721,39 @@ def _normalise_parameter(parameter: Any) -> dict[str, Any] | None:
     return item
 
 
-def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
+def _normalise_mindmap_node(value: Any, *, repairs: list[str] | None = None) -> dict[str, Any]:
+    """Convert legacy scalar mindmap nodes into the canonical node shape."""
+    if isinstance(value, dict):
+        node = deepcopy(value)
+    else:
+        node = {"name": _text(value)}
+        if repairs is not None:
+            repairs.append("mindmap_scalar_to_node")
+
+    if "name" not in node:
+        node["name"] = _text(node.get("label", node.get("id", "")))
+
+    raw_children = node.get("children", [])
+    if raw_children is None:
+        raw_children = []
+    elif not isinstance(raw_children, list):
+        raw_children = [raw_children]
+        if repairs is not None:
+            repairs.append("mindmap_children_to_list")
+    node["children"] = [
+        _normalise_mindmap_node(child, repairs=repairs)
+        for child in raw_children
+        if child is not None
+    ]
+    return node
+
+
+def _normalise_visual_object(
+    value: Any,
+    index: int,
+    *,
+    repairs: list[str] | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     item = deepcopy(value)
@@ -241,8 +827,66 @@ def _normalise_visual_object(value: Any, index: int) -> dict[str, Any] | None:
             cell if isinstance(cell, dict) else {"index": position, "value": cell}
             for position, cell in enumerate(cells)
         ]
-    elif object_type == "mindmap" and not isinstance(item.get("root"), dict):
-        item["root"] = {"label": _text(item.get("root"), item.get("label", ""))}
+    elif object_type == "graph":
+        # Older generators wrapped graph payloads under ``data`` and used
+        # ``vertices``/``from``/``to`` aliases.  Expose the same payload on
+        # the canonical graph fields so renderers and reference checks inspect
+        # the actual topology instead of an empty shell.
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        raw_nodes = item.get("nodes")
+        if not raw_nodes:
+            raw_nodes = item.get("vertices")
+        if not raw_nodes:
+            raw_nodes = data.get("nodes") or data.get("vertices")
+        raw_edges = item.get("edges")
+        if not raw_edges:
+            raw_edges = item.get("graph_edges")
+        if not raw_edges:
+            raw_edges = data.get("edges") or data.get("graph_edges")
+        if isinstance(raw_nodes, list):
+            nodes = []
+            seen_nodes: set[str] = set()
+            for node in raw_nodes:
+                if isinstance(node, dict):
+                    node_id = node.get("id", node.get("label"))
+                    normalised_node = dict(node)
+                    if node_id is not None:
+                        normalised_node["id"] = _text(node_id)
+                else:
+                    node_id = node
+                    normalised_node = {"id": _text(node_id), "label": _text(node_id)}
+                if node_id is not None and _text(node_id) not in seen_nodes:
+                    nodes.append(normalised_node)
+                    seen_nodes.add(_text(node_id))
+            item["nodes"] = nodes
+        if isinstance(raw_edges, list):
+            edges = []
+            for edge in raw_edges:
+                if (canonical_edge := _canonical_edge(edge)) is not None:
+                    edges.append(canonical_edge)
+            item["edges"] = edges
+    elif object_type == "mindmap":
+        root = _normalise_mindmap_node(
+            item.get("root", item.get("label", "")),
+            repairs=repairs,
+        )
+        raw_children = item.get("children")
+        if raw_children is None:
+            children = deepcopy(root["children"])
+        elif isinstance(raw_children, list):
+            children = [
+                _normalise_mindmap_node(child, repairs=repairs)
+                for child in raw_children
+                if child is not None
+            ]
+        else:
+            children = [_normalise_mindmap_node(raw_children, repairs=repairs)]
+            if repairs is not None:
+                repairs.append("mindmap_children_to_list")
+        if children and not root["children"]:
+            root["children"] = deepcopy(children)
+        item["root"] = root
+        item["children"] = children
     elif object_type == "code_block":
         if _text(item.get("language"), "text").casefold() in {"pseudocode", "pseudo"}:
             item["language"] = "text"
@@ -325,18 +969,39 @@ def _normalise_check(value: Any) -> dict[str, Any] | None:
     return item
 
 
-def _normalise_frame(frame: Any) -> dict[str, Any] | None:
+def _normalise_frame(
+    frame: Any,
+    *,
+    algorithm: str | None = None,
+    repairs: list[str] | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(frame, dict):
         return None
     item = deepcopy(frame)
     if "state_snapshot" in item:
-        item["state_snapshot"] = _normalise_queue_sentinels(item["state_snapshot"])
+        item["state_snapshot"] = _normalise_algorithm_snapshot(
+            item["state_snapshot"],
+            algorithm=algorithm,
+            repairs=repairs if repairs is not None else [],
+        )
     visual_objects = item.get("visual_objects", [])
     item["visual_objects"] = [
         normalised
         for index, value in enumerate(visual_objects if isinstance(visual_objects, list) else [])
-        if (normalised := _normalise_visual_object(value, index)) is not None
+        if (normalised := _normalise_visual_object(
+            value,
+            index,
+            repairs=repairs if repairs is not None else [],
+        )) is not None
     ]
+    _inject_explicit_graphs(item, repairs=repairs if repairs is not None else [])
+    if "state_snapshot" in item:
+        item["state_snapshot"] = _map_snapshot_vertices(
+            item["state_snapshot"],
+            item,
+            repairs=repairs if repairs is not None else [],
+        )
+    _map_visual_edge_vertices(item, repairs=repairs if repairs is not None else [])
     for field, normaliser in (
         ("animations", _normalise_animation),
         ("interaction_hooks", _normalise_hook),
@@ -362,6 +1027,7 @@ def normalize_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(dsl, dict):
         return {}
     result = deepcopy(dsl)
+    repairs: list[str] = []
     result["audience"] = _canonical_audience(result.get("audience"))
     difficulty = _text(result.get("difficulty"), "intermediate").casefold()
     result["difficulty"] = difficulty if difficulty in _DIFFICULTIES else "intermediate"
@@ -372,11 +1038,40 @@ def normalize_dsl(dsl: dict[str, Any]) -> dict[str, Any]:
         if (normalised := _normalise_parameter(value)) is not None
     ]
     frames = result.get("frames", [])
+    algorithm = _infer_algorithm(result.get("topic"))
     result["frames"] = [
         normalised
         for value in (frames if isinstance(frames, list) else [])
-        if (normalised := _normalise_frame(value)) is not None
+        if (normalised := _normalise_frame(value, algorithm=algorithm, repairs=repairs)) is not None
     ]
+    # A graph is often declared only on the first frame while later state
+    # snapshots continue to use human-readable labels. Reuse the canonical
+    # primary graph aliases across the whole frame sequence.
+    primary_graphs = [
+        visual
+        for frame in result["frames"]
+        if isinstance(frame, dict)
+        for visual in frame.get("visual_objects", [])
+        if isinstance(visual, dict)
+        and visual.get("type") == "graph"
+        and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+    ]
+    if primary_graphs:
+        alias_item = {"visual_objects": [primary_graphs[0]]}
+        for frame in result["frames"]:
+            if isinstance(frame, dict) and "state_snapshot" in frame:
+                frame["state_snapshot"] = _map_snapshot_vertices(
+                    frame["state_snapshot"],
+                    alias_item,
+                    repairs=repairs,
+                )
+    if repairs:
+        result["normalization_report"] = {
+            "applied": True,
+            "schema_version": "algorithm-trace-v1" if algorithm else None,
+            "repair_types": sorted(set(repairs)),
+            "repair_count": len(repairs),
+        }
     return result
 
 

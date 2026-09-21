@@ -14,7 +14,6 @@ from schema.dsl import (
     ArrayObject,
     Asset,
     CardObject,
-    Check,
     CodeBlockObject,
     CompareAnimation,
     ConceptEdge,
@@ -42,7 +41,6 @@ from schema.dsl import (
     RenderScript,
     ScheduleAnimation,
     SplitAnimation,
-    Style,
     SwapAnimation,
     TableObject,
     TeachingStrategy,
@@ -53,7 +51,6 @@ from schema.dsl import (
     UpdateValueAnimation,
     VisualObjectType,
 )
-
 
 # ============================================================================
 # VisualObject — 全部 14 种类型实例化
@@ -293,7 +290,6 @@ class TestFrameEdgeCases:
 
     def test_frame_mixed_visual_objects(self):
         """一帧中的 visual_objects 可以混合多种类型。"""
-        from schema.dsl import Animation, VisualObject
 
         f = Frame(
             frame_id="f_001",

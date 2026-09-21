@@ -1,0 +1,86 @@
+{
+  "project_id": "replay-bfs-label-edge-fragments",
+  "topic": "BFS 广度优先搜索：用队列逐层访问图",
+  "frames": [
+    {
+      "frame_id": "f_001",
+      "title": "初始化队列",
+      "narration": "BFS 使用先进先出的队列，从 S 开始，先把起点入队。",
+      "visual_objects": [
+        {"type": "node", "id": "node-s", "label": "S"},
+        {"type": "node", "id": "node-a", "label": "A"},
+        {"type": "node", "id": "node-b", "label": "B"},
+        {"type": "node", "id": "node-c", "label": "C"},
+        {"type": "node", "id": "node-d", "label": "D"},
+        {"type": "edge", "id": "edge-ac", "source": "A", "target": "C"},
+        {"type": "edge", "id": "edge-bd", "source": "B", "target": "D"},
+        {
+          "type": "graph",
+          "id": "graph-fragment",
+          "nodes": [
+            {"id": "node-s", "label": "S"},
+            {"id": "node-a", "label": "A"},
+            {"id": "node-b", "label": "B"},
+            {"id": "node-c", "label": "C"},
+            {"id": "node-d", "label": "D"}
+          ],
+          "edges": [["S", "A"], ["S", "B"]]
+        }
+      ],
+      "state_snapshot": {"visited": [], "queue": ["S"]}
+    },
+    {
+      "frame_id": "f_002",
+      "title": "访问 S 并入队 A、B",
+      "narration": "出队 S 后访问它，按边顺序将 A、B 入队，队列仍是 FIFO。",
+      "state_snapshot": {
+        "visited": ["S"],
+        "queue": ["A", "B"],
+        "events": [
+          {"operation": "dequeue", "target": "S"},
+          {"operation": "visit", "target": "S"},
+          {"operation": "enqueue", "target": "A"},
+          {"operation": "enqueue", "target": "B"}
+        ]
+      }
+    },
+    {
+      "frame_id": "f_003",
+      "title": "访问 A 并入队 C",
+      "narration": "下一次出队 A，逐层访问 A，并把尚未发现的 C 入队。",
+      "state_snapshot": {
+        "visited": ["S", "A"],
+        "queue": ["B", "C"],
+        "events": [
+          {"operation": "dequeue", "target": "A"},
+          {"operation": "visit", "target": "A"},
+          {"operation": "enqueue", "target": "C"}
+        ]
+      }
+    },
+    {
+      "frame_id": "f_004",
+      "title": "访问 B 并入队 D",
+      "narration": "继续出队 B，再访问同一层节点，并将 D 加入队列。",
+      "state_snapshot": {
+        "visited": ["S", "A", "B"],
+        "queue": ["C", "D"],
+        "events": [
+          {"operation": "dequeue", "target": "B"},
+          {"operation": "visit", "target": "B"},
+          {"operation": "enqueue", "target": "D"}
+        ]
+      }
+    },
+    {
+      "frame_id": "f_005",
+      "title": "总结：完成逐层遍历",
+      "narration": "队列为空，BFS 按 S、A、B、C、D 的顺序完成逐层访问。",
+      "state_snapshot": {
+        "visited": ["S", "A", "B", "C", "D"],
+        "queue": [],
+        "events": [{"operation": "complete"}]
+      }
+    }
+  ]
+}

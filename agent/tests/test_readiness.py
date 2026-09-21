@@ -46,3 +46,23 @@ async def test_readiness_exposes_dependency_failure_without_raising():
         "redis": "unavailable",
         "artifact_store": "unavailable",
     }
+
+
+@pytest.mark.asyncio
+async def test_readiness_bounds_a_hung_artifact_store_probe():
+    import main
+
+    async def hanging_ready():
+        await __import__("asyncio").sleep(60)
+
+    artifact_store = MagicMock()
+    artifact_store.ready = hanging_ready
+    with (
+        patch("main.get_settings", return_value=MagicMock(readiness_timeout_seconds=0.01)),
+        patch("db.database.async_session_factory", side_effect=ConnectionError("down")),
+        patch("api.export._get_redis", new=AsyncMock(return_value=None)),
+        patch("services.artifact_store.get_artifact_store", return_value=artifact_store),
+    ):
+        checks = await main.readiness_checks()
+
+    assert checks["artifact_store"] == "unavailable"

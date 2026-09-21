@@ -6,21 +6,57 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 
 logger = logging.getLogger(__name__)
 STREAM_END_EVENTS = {"done", "error", "waiting_approval"}
 
+# A durable stream producer must not be owned by the HTTP response task.  Keep
+# a strong reference until it finishes so an SSE consumer can disappear
+# without cancelling the actual generation.  The database lease still makes
+# this safe when several API processes observe the same stream.
+_background_producers: set[asyncio.Task[None]] = set()
+
 
 def new_stream_id() -> str:
     return str(uuid.uuid4())
+
+
+async def register_sse_stream(
+    session: AsyncSession, *, stream_id: str, project_id: str, kind: str
+) -> None:
+    """Persist a stream before its URL is returned to the client.
+
+    Keeping this in the caller's transaction makes the project state, quota
+    reservation, and replay handle one atomic admission decision.  The
+    consumer-side ``_ensure_stream`` remains as a compatibility fallback for
+    older callers that create a stream lazily.
+    """
+    from db.models import SSEStream
+
+    parsed_stream = uuid.UUID(stream_id)
+    parsed_project = uuid.UUID(project_id)
+    existing = await session.get(SSEStream, parsed_stream)
+    if existing is not None:
+        if existing.project_id != parsed_project:
+            raise PermissionError("SSE stream belongs to another project")
+        return
+    session.add(
+        SSEStream(
+            id=parsed_stream,
+            project_id=parsed_project,
+            kind=kind[:50],
+            status="active",
+        )
+    )
+    await session.flush()
 
 
 def _wire_event(event_id: int, event_name: str, payload: dict) -> dict[str, str]:
@@ -28,7 +64,7 @@ def _wire_event(event_id: int, event_name: str, payload: dict) -> dict[str, str]
     return {
         "id": str(event_id),
         "event": event_name,
-        "data": json.dumps(enriched, ensure_ascii=False),
+        "data": json.dumps(enriched, ensure_ascii=False, default=str),
     }
 
 
@@ -37,7 +73,7 @@ async def _ensure_stream(stream_id: uuid.UUID, project_id: uuid.UUID, kind: str)
     from db.models import SSEStream
 
     async with async_session_factory() as session:
-        retention_cutoff = datetime.now(timezone.utc) - timedelta(
+        retention_cutoff = datetime.now(UTC) - timedelta(
             hours=get_settings().sse_event_retention_hours
         )
         await session.execute(
@@ -84,7 +120,7 @@ async def _claim(stream_id: uuid.UUID, producer_id: str) -> bool:
     from db.models import SSEStream
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with async_session_factory() as session:
         result = await session.execute(
             update(SSEStream)
@@ -119,7 +155,7 @@ async def _renew(stream_id: uuid.UUID, producer_id: str) -> bool:
                 SSEStream.status == "active",
                 SSEStream.producer_id == producer_id,
             )
-            .values(lease_expires_at=datetime.now(timezone.utc) + timedelta(
+            .values(lease_expires_at=datetime.now(UTC) + timedelta(
                 seconds=settings.sse_stream_lease_seconds
             ))
         )
@@ -181,22 +217,153 @@ async def _append(
         stream.last_event_id = event_id
         if event_name in STREAM_END_EVENTS:
             stream.status = "completed"
-            stream.completed_at = datetime.now(timezone.utc)
+            stream.completed_at = datetime.now(UTC)
             stream.producer_id = None
             stream.lease_expires_at = None
         await session.commit()
         return _wire_event(event_id, event_name, payload)
 
 
+async def _produce_durable_sse(
+    source: AsyncIterable[dict[str, str]],
+    *,
+    stream_id: str,
+    project_id: str,
+    kind: str,
+    on_terminal: Callable[[str], Awaitable[None]] | None = None,
+) -> None:
+    """Run a stream source independently from any SSE HTTP consumer."""
+    parsed_stream = uuid.UUID(stream_id)
+    parsed_project = uuid.UUID(project_id)
+    await _ensure_stream(parsed_stream, parsed_project, kind)
+    producer_id = uuid.uuid4().hex
+    claimed = False
+    heartbeat: asyncio.Task[None] | None = None
+
+    try:
+        while True:
+            _, completed = await _read_events(parsed_stream, 0)
+            if completed:
+                return
+            if await _claim(parsed_stream, producer_id):
+                claimed = True
+                break
+            await asyncio.sleep(get_settings().sse_stream_poll_seconds)
+
+        stop = asyncio.Event()
+        heartbeat = asyncio.create_task(_heartbeat(parsed_stream, producer_id, stop))
+        async for event in source:
+            committed = await _append(parsed_stream, producer_id, event)
+            if committed["event"] in STREAM_END_EVENTS:
+                if on_terminal is not None:
+                    try:
+                        await on_terminal(committed["event"])
+                    except Exception:
+                        # The terminal event is already durable. Quota
+                        # settlement is idempotent and can be retried by the
+                        # next replay/operational repair without hiding a
+                        # successful generation from the client.
+                        logger.exception("durable SSE terminal finalization failed")
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("durable SSE producer failed")
+        if claimed:
+            try:
+                committed = await _append(
+                    parsed_stream,
+                    producer_id,
+                    {
+                        "event": "error",
+                        "data": json.dumps(
+                            {
+                                "phase": "error",
+                                "message": "生成后台任务失败，请稍后重试",
+                                "error_code": "BACKGROUND_STREAM_FAILED",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                )
+                if on_terminal is not None and committed["event"] in STREAM_END_EVENTS:
+                    try:
+                        await on_terminal("error")
+                    except Exception:
+                        logger.exception("durable SSE error finalization failed")
+            except Exception:
+                logger.exception("durable SSE failure event could not be committed")
+        else:
+            raise
+    finally:
+        if claimed:
+            stop.set()
+            if heartbeat is not None:
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            await _release(parsed_stream, producer_id)
+
+
+def _retain_background_producer(task: asyncio.Task[None]) -> None:
+    _background_producers.add(task)
+
+    def discard(done: asyncio.Task[None]) -> None:
+        _background_producers.discard(done)
+        if not done.cancelled():
+            error = done.exception()
+            if error is not None:
+                logger.error(
+                    "durable SSE producer failed: %s",
+                    error,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+    task.add_done_callback(discard)
+
+
 async def durable_sse_stream(
     source: AsyncIterable[dict[str, str]], *, stream_id: str, project_id: str,
     kind: str, last_event_id: int = 0,
+    background: bool = False,
+    on_terminal: Callable[[str], Awaitable[None]] | None = None,
 ) -> AsyncGenerator[dict[str, str], None]:
-    """Replay committed events, then exclusively produce and persist new ones."""
+    """Replay committed events and optionally consume a detached producer.
+
+    The default inline mode is retained for small internal callers and tests.
+    HTTP generation streams use ``background=True`` so closing the response
+    only stops this consumer; the producer continues until a terminal event.
+    """
     parsed_stream = uuid.UUID(stream_id)
     parsed_project = uuid.UUID(project_id)
     await _ensure_stream(parsed_stream, parsed_project, kind)
     cursor = max(last_event_id, 0)
+
+    if background:
+        producer = asyncio.create_task(
+            _produce_durable_sse(
+                source,
+                stream_id=stream_id,
+                project_id=project_id,
+                kind=kind,
+                on_terminal=on_terminal,
+            )
+        )
+        _retain_background_producer(producer)
+        while True:
+            replay, completed = await _read_events(parsed_stream, cursor)
+            for event in replay:
+                cursor = int(event["id"])
+                yield event
+            if completed:
+                return
+            if producer.done():
+                if producer.cancelled():
+                    raise RuntimeError("durable SSE producer was cancelled")
+                error = producer.exception()
+                if error is not None:
+                    raise error
+                raise RuntimeError("durable SSE producer stopped before a terminal event")
+            await asyncio.sleep(get_settings().sse_stream_poll_seconds)
+
     producer_id = uuid.uuid4().hex
 
     while True:

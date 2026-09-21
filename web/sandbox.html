@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'self'; img-src data: blob:; media-src blob:; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'"
+    />
+    <title>EduFlow 交互沙箱</title>
+  </head>
+  <body>
+    <!--
+      Keep the bootstrap inline. This document runs in an iframe without
+      allow-same-origin, so its effective origin is opaque. Loading an ES
+      module from /src (or a built asset) would then require a CORS request
+      from origin "null" and can fail before the message listener exists.
+    -->
+    <script>
+      (() => {
+        const MAX_SANDBOX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+
+        window.addEventListener("message", (event) => {
+          let parentOrigin = "";
+          try {
+            parentOrigin = document.referrer ? new URL(document.referrer).origin : "";
+          } catch {
+            return;
+          }
+
+          const message = event.data;
+          if (event.source !== window.parent || !parentOrigin || event.origin !== parentOrigin) return;
+          if (!message || typeof message !== "object") return;
+          if (message.type !== "eduflow:sandbox-document" || typeof message.html !== "string") return;
+          if (new Blob([message.html]).size > MAX_SANDBOX_DOCUMENT_BYTES) return;
+
+          document.open();
+          document.write(message.html);
+          document.close();
+        });
+      })();
+    </script>
+  </body>
+</html>

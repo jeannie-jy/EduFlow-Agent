@@ -16,6 +16,7 @@ import { connectSSE, type SSEOptions } from "./sse";
 export interface GenerateRequest {
   action?: "full" | "plan_only" | "modules";
   modules?: string[];
+  constraints?: Record<string, unknown>;
 }
 
 export interface GenerateResponse {
@@ -73,6 +74,15 @@ type ActiveStreamSession = {
 
 const activeStreamKey = (projectId: string) => `eduflow:active-stream:${projectId}`;
 
+function sameOriginApiBase(): string {
+  const configured = import.meta.env.VITE_API_BASE_URL ?? "/api";
+  try {
+    return new URL(configured, window.location.origin).pathname.replace(/\/$/, "");
+  } catch {
+    return "/api";
+  }
+}
+
 function projectIdFromStreamUrl(url: string): string | null {
   const match = url.match(/\/projects\/([^/]+)\//);
   return match ? decodeURIComponent(match[1]) : null;
@@ -100,20 +110,39 @@ function clearActiveStream(projectId: string, url: string) {
   } catch { /* Ignore malformed or unavailable session storage. */ }
 }
 
+/** Forget every local replay cursor for a generation the user explicitly cancelled. */
+export function forgetProjectStream(projectId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(activeStreamKey(projectId));
+  } catch { /* Storage may be disabled by browser policy. */ }
+}
+
 // ============================================================================
 // 方法
 // ============================================================================
 
-export function startGeneration(projectId: string, action: GenerateRequest["action"] = "full", modules?: string[]) {
+export function startGeneration(
+  projectId: string,
+  action: GenerateRequest["action"] = "full",
+  modules?: string[],
+  constraints?: Record<string, unknown>,
+) {
   const body: GenerateRequest = { action };
   if (modules !== undefined) body.modules = modules;
+  if (constraints !== undefined) body.constraints = constraints;
   return api.post<GenerateResponse>(`/projects/${projectId}/generate`, body);
 }
 
+export function cancelGeneration(projectId: string) {
+  return api.delete<{ project_id: string; status: "cancelled" }>(
+    `/projects/${projectId}/generate`,
+  );
+}
+
 export function streamGeneration(projectId: string, options: SSEOptions) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
   return streamFromUrl(
-    `${baseUrl}/projects/${projectId}/generate/stream?stream_id=${crypto.randomUUID()}`,
+    `${sameOriginApiBase()}/projects/${projectId}/generate/stream?stream_id=${crypto.randomUUID()}`,
     options,
   );
 }
@@ -123,10 +152,19 @@ export function streamGeneration(projectId: string, options: SSEOptions) {
  * 用于 HITL 审批的 resume 流。stream_url 已含 /api 前缀，需用 origin 拼接而非 VITE_API_BASE_URL。
  */
 export function streamFromUrl(streamUrl: string, options: SSEOptions) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
-  // baseUrl 形如 http://host/api —— 取其 origin 再拼后端返回的绝对路径
-  const origin = baseUrl.replace(/\/api\/?$/, "");
-  const url = streamUrl.startsWith("http") ? streamUrl : `${origin}${streamUrl}`;
+  // Backend-issued /api URLs stay same-origin.  In development Vite proxies
+  // them to the API server, avoiding cross-origin cookie/CORS/CSP differences
+  // that are especially fragile for long-lived streaming responses.
+  let url = streamUrl;
+  try {
+    const parsed = new URL(streamUrl, window.location.origin);
+    const apiBase = sameOriginApiBase();
+    if (parsed.pathname === apiBase || parsed.pathname.startsWith(`${apiBase}/`)) {
+      url = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+  } catch {
+    // connectSSE will report a malformed URL through its normal error path.
+  }
   const projectId = projectIdFromStreamUrl(url);
   if (projectId) storeActiveStream(projectId, {
     url,
@@ -208,9 +246,8 @@ export function startModuleGeneration(projectId: string, modules: string[]) {
 
 /** 连接模块生成 SSE 流 */
 export function streamModuleGeneration(projectId: string, options: SSEOptions) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
   return streamFromUrl(
-    `${baseUrl}/projects/${projectId}/generate/modules/stream?stream_id=${crypto.randomUUID()}`,
+    `${sameOriginApiBase()}/projects/${projectId}/generate/modules/stream?stream_id=${crypto.randomUUID()}`,
     options,
   );
 }
@@ -255,9 +292,8 @@ export function rejectPlan(projectId: string, feedback: string) {
 
 /** 重新生成单个模块（SSE 流） */
 export function regenerateModule(projectId: string, moduleId: string, options: SSEOptions) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
   return streamFromUrl(
-    `${baseUrl}/projects/${projectId}/generate/module/${moduleId}/stream?stream_id=${crypto.randomUUID()}`,
+    `${sameOriginApiBase()}/projects/${projectId}/generate/module/${moduleId}/stream?stream_id=${crypto.randomUUID()}`,
     options,
   );
 }

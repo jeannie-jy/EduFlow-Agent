@@ -47,6 +47,8 @@ async def test_live_workflow_adapter_uses_production_graph_and_reports_usage():
     args = generate.await_args.args
     assert args[1] == "冒泡排序"
     assert generate.await_args.kwargs["constraints"]["eval_case_id"] == "alg_live_workflow"
+    assert generate.await_args.kwargs["constraints"]["eval_output_profile"] == "compact"
+    assert generate.await_args.kwargs["constraints"]["eval_max_frames"] == 8
     assert generate.await_args.kwargs["thread_id"].startswith(
         "eval:alg_live_workflow:"
     )
@@ -64,6 +66,22 @@ async def test_live_workflow_adapter_rejects_missing_dsl():
         await generate_workflow_case(_case())
 
 
+@pytest.mark.asyncio
+async def test_live_workflow_adapter_rejects_zero_token_provider_fallback():
+    """Online reports must not count deterministic fallback as model quality."""
+    generated_state = {
+        "dsl": {"topic": "冒泡排序", "frames": [{"frame_id": "f_001"}]},
+    }
+    with (
+        patch(
+            "services.generate_service.run_generation_sync_with_usage",
+            new=AsyncMock(return_value=(generated_state, {"cost_usd": 0.0})),
+        ),
+        pytest.raises(RuntimeError, match="no candidate LLM tokens"),
+    ):
+        await generate_workflow_case(_case())
+
+
 def test_manual_quality_workflow_uses_production_adapter_and_auditable_outputs():
     workflow = (
         Path(__file__).parents[2] / ".github/workflows/online-quality-bench.yml"
@@ -72,7 +90,19 @@ def test_manual_quality_workflow_uses_production_adapter_and_auditable_outputs()
     assert "workflow_dispatch:" in workflow
     assert "evals.generators.live_workflow:generate_workflow_case" in workflow
     assert "EDUFLOW_ALLOW_ONLINE_EVAL=1" in workflow
+    assert "python -m scripts.seed_embeddings" in workflow
+    assert "python -m scripts.retrieval_health" in workflow
+    assert "--repetitions" in workflow
+    assert "--fail-on-flaky" in workflow
     assert "--dataset evals/datasets/eduflowbench_v1.jsonl" in workflow
+    assert "embedding_endpoint:" in workflow
+    assert "embedding_model:" in workflow
+    assert "embedding_dimension:" in workflow
+    assert "EMBEDDING_ENDPOINT: ${{ inputs.embedding_endpoint }}" in workflow
+    assert "EMBEDDING_MODEL: ${{ inputs.embedding_model }}" in workflow
+    assert "EMBEDDING_DIMENSION: ${{ inputs.embedding_dimension }}" in workflow
+    assert '-e EDUFLOW_EVAL_LLM_API_KEY="$EDUFLOW_EVAL_LLM_API_KEY"' in workflow
+    assert '-e EDUFLOW_EVAL_EMBEDDING_API_KEY="$EDUFLOW_EVAL_EMBEDDING_API_KEY"' in workflow
     assert "--concurrency 1" in workflow
     assert "--budget-usd" in workflow
     assert "evals.generators.live_judge:judge_workflow_case" in workflow

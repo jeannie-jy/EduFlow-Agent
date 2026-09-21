@@ -129,7 +129,7 @@ class MisconceptionGenerator(BaseGenerator):
             return issues
         items = output.get("items", [])
         if not isinstance(items, list):
-            issues.append({"severity": "high", "type": "invalid_items", "description": f"items 应为列表"})
+            issues.append({"severity": "high", "type": "invalid_items", "description": "items 应为列表"})
             return issues
         if len(items) == 0:
             issues.append({"severity": "high", "type": "empty_items", "description": "未生成任何误区"})

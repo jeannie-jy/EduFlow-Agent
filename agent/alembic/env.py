@@ -18,14 +18,17 @@ if config.config_file_name is not None:
 # 注意：get_settings().database_url 返回 postgresql+asyncpg://（SQLAlchemy async 引擎要求），
 # 因此 online 模式必须使用 async engine + run_sync（见 run_migrations_online）。
 from config import get_settings
+
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from db.models import Base
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

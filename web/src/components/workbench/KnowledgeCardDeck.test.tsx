@@ -45,4 +45,22 @@ describe("KnowledgeCardDeck", () => {
     fireEvent.click(screen.getByRole("button", { name: "f_001" }));
     expect(onFrameClick).toHaveBeenCalledWith("f_001");
   });
+
+  it("renders card formulas as mathematics instead of raw LaTeX", () => {
+    const formula = String.raw`\text{MST} = \arg\min_{T \subseteq E} \sum_{e \in T} w(e)`;
+    const { container } = render(
+      <KnowledgeCardDeck
+        cards={[{
+          id: "formula-card",
+          title: "生成树与最小生成树",
+          formula,
+        }]}
+      />,
+    );
+
+    const visibleMath = container.querySelector(".katex-html");
+    expect(visibleMath).toBeInTheDocument();
+    expect(visibleMath?.textContent).toContain("MST");
+    expect(visibleMath?.textContent).not.toContain("\\arg");
+  });
 });

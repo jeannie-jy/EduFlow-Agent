@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -27,7 +27,7 @@ def _event(event_id: int, details=None):
         resource_id="project-1",
         request_id="request-1",
         details=details or {"field": "title"},
-        created_at=datetime(2026, 1, event_id, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, event_id, tzinfo=UTC),
     )
 
 
@@ -61,7 +61,7 @@ async def audit_db():
 
 @pytest.mark.asyncio
 async def test_archive_is_download_verified_before_exact_rows_are_purged(audit_db, tmp_path):
-    old = datetime.now(timezone.utc) - timedelta(days=100)
+    old = datetime.now(UTC) - timedelta(days=100)
     audit_db.add_all([
         AuditEvent(
             actor_id=None,
@@ -88,7 +88,7 @@ async def test_archive_is_download_verified_before_exact_rows_are_purged(audit_d
     result = await archive_audit_events(
         audit_db,
         store,
-        before=datetime.now(timezone.utc) - timedelta(days=90),
+        before=datetime.now(UTC) - timedelta(days=90),
         signing_key=KEY,
         max_events=100,
         purge_after_verify=True,

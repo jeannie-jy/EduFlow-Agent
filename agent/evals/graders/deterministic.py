@@ -196,6 +196,20 @@ def _reference_integrity(frames: list[dict[str, Any]]) -> tuple[bool, list[str]]
             for obj in objects
             if isinstance(obj, dict) and obj.get("id")
         }
+        # Graph edges reference vertex ids, not only RenderScript visual
+        # object ids.  Count declared graph vertices as visible in the same
+        # frame so a legacy standalone edge (A -> B) is not reported as a
+        # missing visual reference when the graph declares nodes A and B.
+        for obj in objects:
+            if not isinstance(obj, dict) or obj.get("type") != "graph":
+                continue
+            data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+            nodes = obj.get("nodes") or obj.get("vertices") or data.get("nodes") or data.get("vertices")
+            if isinstance(nodes, list):
+                for node in nodes:
+                    node_id = node.get("id", node.get("label")) if isinstance(node, dict) else node
+                    if node_id is not None:
+                        frame_ids.add(str(node_id))
         visible_ids = known_ids | frame_ids
         for obj in objects:
             if not isinstance(obj, dict) or obj.get("type") != "edge":
@@ -296,6 +310,13 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
     ]
     frame_count_ok = case.expected.min_frames <= len(frames) <= case.expected.max_frames
     oracle_ok, oracle_issues = _grade_oracle(case, frames)
+    compilation_report = artifact.get("algorithm_trace_compilation", {}) if isinstance(artifact, dict) else {}
+    compilation_issues = (
+        compilation_report.get("issues", [])
+        if isinstance(compilation_report, dict)
+        else []
+    )
+    compilation_ok = not compilation_issues
 
     metrics: dict[str, bool | float | int | None] = {
         "dsl_schema_pass": bool(schema["valid"]),
@@ -307,6 +328,7 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
         "forbidden_claim_pass": not forbidden_hits,
         "frame_count": len(frames),
         "frame_count_pass": frame_count_ok,
+        "algorithm_trace_compilation_pass": compilation_ok,
         "oracle_pass": oracle_ok,
     }
     blocking_checks = [
@@ -317,6 +339,7 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
         bool(metrics["reference_integrity_pass"]),
         bool(metrics["forbidden_claim_pass"]),
         bool(metrics["frame_count_pass"]),
+        bool(metrics["algorithm_trace_compilation_pass"]),
         concept_coverage == 1.0,
     ]
     if oracle_ok is not None:
@@ -338,6 +361,10 @@ async def grade_artifact(case: EvalCase, artifact: dict[str, Any]) -> dict[str, 
             f"frame count {len(frames)} outside [{case.expected.min_frames}, {case.expected.max_frames}]"
         )
     issues.extend(oracle_issues)
+    issues.extend(
+        f"algorithm trace compilation: {issue.get('description', str(issue)) if isinstance(issue, dict) else issue}"
+        for issue in compilation_issues
+    )
 
     return {
         "case_id": case.case_id,

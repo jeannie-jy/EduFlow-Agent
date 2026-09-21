@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -79,7 +79,7 @@ async def cancel_background_job(
         return {"job_id": str(job.id), "status": "cancelled"}
     if job.status in {"completed", "failed"}:
         raise HTTPException(status_code=409, detail="Background job is already terminal")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job.status = "cancelled"
     job.worker_id = None
     job.lease_expires_at = None
