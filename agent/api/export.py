@@ -54,10 +54,12 @@ class ExportWorkspaceLimitError(RuntimeError):
 
 def _prepare_dsl_for_export(dsl: dict) -> dict:
     """Recompile persisted model output at the final trusted boundary."""
+    from tools.compile_video_storyboard import compile_video_storyboard
     from tools.finalize_dsl import finalize_dsl
     from tools.validate_dsl import check_visual_completeness
 
     prepared = finalize_dsl(dsl, compile_sorting=True)
+    prepared = compile_video_storyboard(prepared)
     visual_result = check_visual_completeness(prepared.get("frames", []))
     if not visual_result["complete"]:
         details = "; ".join(
