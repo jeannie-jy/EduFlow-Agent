@@ -50,6 +50,7 @@ def test_graph_storyboard_removes_incidental_code_and_adds_state_panel():
         assert [obj["type"] for obj in frame["visual_objects"]] == ["graph", "table"]
         panel = frame["visual_objects"][1]
         assert panel["headers"] == ["节点", "距离", "前驱"]
+        assert panel["rows"][0] == ["A", "0", "—"]
 
     assert compiled["frames"][1]["video_transition"]["persistent_object_ids"] == [
         "primary_graph",
@@ -74,6 +75,20 @@ def test_explicit_implementation_lesson_keeps_only_bounded_code_scenes():
     ]
     assert code_counts == [1, 0]
     assert compiled["video_storyboard_report"]["code_scene_count"] == 1
+
+
+def test_code_lesson_prefers_the_scene_that_actually_explains_code():
+    dsl = _dijkstra_dsl()
+    dsl["topic"] = "用 Python 实现 Dijkstra"
+    dsl["frames"][1]["title"] = "代码实现"
+
+    compiled = compile_video_storyboard(dsl)
+
+    code_counts = [
+        sum(obj["type"] == "code_block" for obj in frame["visual_objects"])
+        for frame in compiled["frames"]
+    ]
+    assert code_counts == [0, 1]
 
 
 def test_lone_code_object_is_not_removed_into_a_blank_scene():

@@ -14,7 +14,6 @@ import math
 from copy import deepcopy
 from typing import Any
 
-
 _CODE_INTENT_MARKERS = (
     "代码",
     "伪代码",
@@ -35,8 +34,8 @@ def _text(frame: dict[str, Any]) -> str:
     return f"{frame.get('title', '')} {frame.get('learning_goal', '')} {frame.get('narration', '')}".casefold()
 
 
-def _explicit_code_lesson(topic: str, frame: dict[str, Any]) -> bool:
-    text = f"{topic} {_text(frame)}".casefold()
+def _contains_code_intent(text: str) -> bool:
+    text = text.casefold()
     return any(marker in text for marker in _CODE_INTENT_MARKERS)
 
 
@@ -59,6 +58,10 @@ def _display_value(value: Any) -> str:
         return "∞"
     text = str(value)
     return "∞" if text.casefold() in {"inf", "infinity", "null", "none"} else text
+
+
+def _display_predecessor(value: Any) -> str:
+    return "—" if value is None or str(value).casefold() in {"null", "none", ""} else str(value)
 
 
 def _graph_node_order(graph: dict[str, Any], distances: dict[str, Any]) -> list[str]:
@@ -85,7 +88,11 @@ def _state_panel(frame: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any]
     if not isinstance(predecessors, dict):
         predecessors = {}
     rows = [
-        [node_id, _display_value(distances.get(node_id)), _display_value(predecessors.get(node_id, "—"))]
+        [
+            node_id,
+            _display_value(distances.get(node_id)),
+            _display_predecessor(predecessors.get(node_id)),
+        ]
         for node_id in _graph_node_order(graph, distances)
     ]
     return {
@@ -111,15 +118,17 @@ def compile_video_storyboard(dsl: dict[str, Any]) -> dict[str, Any]:
     frames = [frame for frame in raw_frames if isinstance(frame, dict)] if isinstance(raw_frames, list) else []
     topic = str(result.get("topic") or "")
     code_budget = max(1, math.ceil(len(frames) * 0.2)) if frames else 0
-    explicit_code_frames = [
+    code_frames = [
         index
         for index, frame in enumerate(frames)
-        if _explicit_code_lesson(topic, frame)
-        and any(
+        if any(
             isinstance(obj, dict) and obj.get("type") == "code_block"
             for obj in frame.get("visual_objects", [])
         )
     ]
+    explicit_code_frames = [index for index in code_frames if _contains_code_intent(_text(frames[index]))]
+    if not explicit_code_frames and _contains_code_intent(topic):
+        explicit_code_frames = code_frames
     kept_code_frames = set(explicit_code_frames[:code_budget])
 
     removed_code_blocks = 0
