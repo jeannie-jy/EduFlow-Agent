@@ -132,3 +132,57 @@ def test_generated_graph_renders_stateful_mp4(tmp_path):
         if "partial_movie_files" not in str(p)
     ]
     assert mp4s and max(p.stat().st_size for p in mp4s) > 0
+
+
+def test_generated_storyboard_renders_persistent_state_transitions(tmp_path):
+    """Stable graph/table ids must morph across scenes without a full reset."""
+    graph = {
+        "id": "primary_graph",
+        "type": "graph",
+        "nodes": [{"id": "A"}, {"id": "B"}],
+        "edges": [{"source": "A", "target": "B", "weight": 2}],
+    }
+    dsl = {
+        "project_id": "persistent-storyboard",
+        "topic": "Dijkstra",
+        "frames": [
+            {
+                "frame_id": "f_001",
+                "title": "Initialize",
+                "visual_objects": [
+                    graph,
+                    {"id": "state", "type": "table", "headers": ["v", "d"], "rows": [["A", "0"], ["B", "inf"]]},
+                ],
+                "state_snapshot": {"current": "A", "visited": [], "dist": {"A": 0, "B": None}},
+                "animations": [],
+            },
+            {
+                "frame_id": "f_002",
+                "title": "Relax B",
+                "visual_objects": [
+                    graph,
+                    {"id": "state", "type": "table", "headers": ["v", "d"], "rows": [["A", "0"], ["B", "2"]]},
+                ],
+                "state_snapshot": {"current": "B", "visited": ["A"], "dist": {"A": 0, "B": 2}},
+                "animations": [{"type": "relax_edge", "target": "primary_graph"}],
+            },
+        ],
+    }
+    script = convert_dsl_to_manim(dsl)["main.py"]
+    assert "Transform(primary_graph_0, primary_graph_1)" in script
+    assert "FadeOut(*self.mobjects), run_time=0.25" not in script
+    script_path = tmp_path / "main.py"
+    script_path.write_text(script, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "manim", str(script_path), "-ql",
+         "--format=mp4", f"--media_dir={tmp_path / 'videos'}"],
+        capture_output=True, text=True, timeout=600,
+    )
+
+    assert result.returncode == 0, f"persistent storyboard render failed:\n{result.stderr[-3000:]}"
+    mp4s = [
+        path for path in tmp_path.rglob("*.mp4")
+        if "partial_movie_files" not in str(path)
+    ]
+    assert mp4s and max(path.stat().st_size for path in mp4s) > 0
