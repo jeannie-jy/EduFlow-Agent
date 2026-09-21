@@ -2,6 +2,7 @@
 
 POST   /api/projects/{id}/generate             启动生成
 GET    /api/projects/{id}/generate/stream       SSE 进度流
+DELETE /api/projects/{id}/generate              取消当前生成
 POST   /api/projects/{id}/regenerate           局部重生成
 GET    /api/projects/{id}/generate/modules     获取可用模块列表
 POST   /api/projects/{id}/generate/modules     提交模块选择开始生成
@@ -551,6 +552,71 @@ async def _recover_or_resume_generation(
         "已回收未建立连接的生成流: project=%s | stream=%s", project_id, raw_stream_id
     )
     return None
+
+
+@router.delete("/{project_id}/generate", status_code=200)
+async def cancel_generation(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+) -> dict[str, str]:
+    """Idempotently retire a project's active generation and release its lock.
+
+    Closing an SSE response only disconnects one browser consumer.  The
+    durable stream, project workflow status, and quota reservation are server
+    state and must be retired explicitly or the abandoned project continues
+    to count as an active generation.
+    """
+    from db.models import Project as ProjectModel
+    from db.models import SSEStream
+
+    parsed_project_id = parse_project_id(project_id)
+    project = await session.get(ProjectModel, parsed_project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_access(project, current_user)
+
+    now = datetime.now(UTC)
+    active_streams = list((await session.scalars(
+        select(SSEStream).where(
+            SSEStream.project_id == parsed_project_id,
+            SSEStream.status == "active",
+        )
+    )).all())
+    for stream in active_streams:
+        stream.status = "completed"
+        stream.completed_at = now
+        stream.producer_id = None
+        stream.lease_expires_at = None
+
+    snapshot = dict(project.dsl_snapshot) if isinstance(project.dsl_snapshot, dict) else {}
+    quota_ref = snapshot.get("_quota_ref")
+    stream_id = (
+        str(quota_ref.get("stream_id"))
+        if isinstance(quota_ref, dict) and quota_ref.get("stream_id")
+        else None
+    )
+    await _finalize_stream_quota(
+        session,
+        current_user,
+        project_id=project_id,
+        stream_id=stream_id,
+        status="cancelled",
+        quota_ref=quota_ref if isinstance(quota_ref, dict) else None,
+    )
+
+    for key in ("_quota_ref", "_pending_action", "_pending_modules"):
+        snapshot.pop(key, None)
+    project.dsl_snapshot = snapshot
+    if project.status in {"planning", "generating", "reviewing"}:
+        project.status = "draft"
+
+    logger.info(
+        "生成已取消: project=%s | retired_streams=%d",
+        project_id,
+        len(active_streams),
+    )
+    return {"project_id": project_id, "status": "cancelled"}
 
 
 @router.post("/{project_id}/generate", status_code=202)

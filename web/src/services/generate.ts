@@ -110,6 +110,14 @@ function clearActiveStream(projectId: string, url: string) {
   } catch { /* Ignore malformed or unavailable session storage. */ }
 }
 
+/** Forget every local replay cursor for a generation the user explicitly cancelled. */
+export function forgetProjectStream(projectId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(activeStreamKey(projectId));
+  } catch { /* Storage may be disabled by browser policy. */ }
+}
+
 // ============================================================================
 // 方法
 // ============================================================================
@@ -124,6 +132,12 @@ export function startGeneration(
   if (modules !== undefined) body.modules = modules;
   if (constraints !== undefined) body.constraints = constraints;
   return api.post<GenerateResponse>(`/projects/${projectId}/generate`, body);
+}
+
+export function cancelGeneration(projectId: string) {
+  return api.delete<{ project_id: string; status: "cancelled" }>(
+    `/projects/${projectId}/generate`,
+  );
 }
 
 export function streamGeneration(projectId: string, options: SSEOptions) {

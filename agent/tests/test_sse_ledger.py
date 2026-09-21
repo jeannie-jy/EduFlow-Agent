@@ -67,6 +67,78 @@ async def test_start_generation_returns_a_persisted_stream(test_db):
 
 
 @pytest.mark.asyncio
+async def test_cancel_generation_retires_stream_and_releases_project_lock(test_db):
+    from api.generate import cancel_generation
+    from services.quota import reserve_quota
+
+    user_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    stream_id = uuid.uuid4()
+    quota_key = "cancel-active-generation"
+    user = User(
+        id=user_id,
+        email="cancel-generation@example.com",
+        nickname="Cancel generation",
+        password_hash="test",
+    )
+    project = Project(
+        id=project_id,
+        title="Abandoned generation",
+        owner_id=str(user_id),
+        status="generating",
+        dsl_snapshot={
+            "input_content": "BFS",
+            "_pending_action": "modules",
+            "_pending_modules": ["video"],
+            "_quota_ref": {
+                "resource": "generation",
+                "idempotency_key": quota_key,
+                "stream_id": str(stream_id),
+            },
+        },
+    )
+    stream = SSEStream(
+        id=stream_id,
+        project_id=project_id,
+        kind="generation",
+        status="active",
+        producer_id="producer",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=1),
+    )
+    test_db.add_all([user, project, stream])
+    await test_db.flush()
+    await reserve_quota(
+        test_db,
+        user_id=user_id,
+        resource="generation",
+        idempotency_key=quota_key,
+        details={"project_id": str(project_id), "stream_id": str(stream_id)},
+    )
+
+    result = await cancel_generation(str(project_id), test_db, SimpleNamespace(id=user_id))
+
+    assert result == {"project_id": str(project_id), "status": "cancelled"}
+    assert project.status == "draft"
+    assert project.dsl_snapshot == {"input_content": "BFS"}
+    assert stream.status == "completed"
+    assert stream.completed_at is not None
+    assert stream.producer_id is None
+    ledger = list((await test_db.scalars(select(UsageLedger).where(
+        UsageLedger.user_id == user_id,
+        UsageLedger.resource == "generation",
+    ))).all())
+    assert any(
+        isinstance(row.details, dict)
+        and row.details.get("_quota_state") == "settled"
+        and row.details.get("_quota_reservation") == quota_key
+        for row in ledger
+    )
+    assert await cancel_generation(
+        str(project_id), test_db, SimpleNamespace(id=user_id)
+    ) == {"project_id": str(project_id), "status": "cancelled"}
+
+
+@pytest.mark.asyncio
 async def test_missing_unstarted_stream_releases_quota_and_restores_project(test_db):
     from api.generate import _recover_or_resume_generation
     from services.quota import reserve_quota

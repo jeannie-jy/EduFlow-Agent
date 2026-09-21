@@ -7,6 +7,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { screen, waitFor, cleanup } from "@testing-library/react";
 import { render } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/handlers";
@@ -75,6 +76,49 @@ describe("ProjectWorkspace", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "确认教学计划" })).toBeInTheDocument();
+    });
+  });
+
+  it("cancels and deletes an abandoned new project before returning to selection", async () => {
+    const user = userEvent.setup();
+    const requests: string[] = [];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(
+          'event: progress\ndata: {"phase":"planning","pct":10,"message":"正在规划"}\n\n',
+        ));
+      },
+    });
+    server.use(
+      http.get("*/api/projects/new-proj-001/generate/stream", () => new HttpResponse(stream, {
+        headers: { "Content-Type": "text/event-stream" },
+      })),
+      http.delete("http://localhost:8000/api/projects/:id/generate", ({ params }) => {
+        requests.push(`cancel:${String(params.id)}`);
+        return HttpResponse.json({ project_id: params.id, status: "cancelled" });
+      }),
+      http.delete("http://localhost:8000/api/projects/:id", ({ params }) => {
+        requests.push(`delete:${String(params.id)}`);
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.post("http://localhost:8000/api/projects/:id/generate", ({ params }) => HttpResponse.json({
+        stream_url: `/api/projects/${String(params.id)}/generate/stream`,
+      }, { status: 202 })),
+    );
+
+    renderWorkspace("/app/project/_new");
+    await user.type(await screen.findByPlaceholderText("例如：Dijkstra 最短路径算法"), "可取消的 BFS");
+    await user.click(await screen.findByRole("button", { name: /开始生成/ }));
+    await user.click(await screen.findByRole("button", { name: "取消" }));
+
+    await waitFor(() => {
+      expect(requests).toEqual([
+        "cancel:new-proj-001",
+        "delete:new-proj-001",
+      ]);
+      expect(window.sessionStorage.getItem("eduflow:active-stream:new-proj-001")).toBeNull();
+      expect(screen.getByRole("heading", { level: 2, name: "选择模块" })).toBeInTheDocument();
     });
   });
 });

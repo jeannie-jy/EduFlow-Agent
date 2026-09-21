@@ -25,7 +25,10 @@ import {
 import {
   getProject,
   createProject,
+  deleteProject,
   startGeneration,
+  cancelGeneration,
+  forgetProjectStream,
   streamFromUrl,
   approvePlan,
   rejectPlan,
@@ -234,7 +237,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   topic: string;
   setTitle: (v: string) => void;
   setTopic: (v: string) => void;
-  onCreated?: (realId: string) => void;
+  onCreated?: (realId: string | null) => void;
   refreshProject?: () => Promise<void>;
 }) {
   const realIdRef = useRef<string | null>(null);
@@ -253,8 +256,10 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const materialInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(false);
+  const generationAttemptRef = useRef(0);
   const resumeAttemptedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const [cancelling, setCancelling] = useState(false);
 
   // 模块选择状态（Phase A）
   const [availableModules, setAvailableModules] = useState<ModuleInfo[]>([]);
@@ -395,6 +400,19 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, []);
 
+  const discardCreatedProject = useCallback(async (id: string) => {
+    forgetProjectStream(id);
+    try {
+      await cancelGeneration(id);
+    } catch {
+      // Deleting the transient project below is authoritative and also
+      // cascades its durable streams. Keep going if cancellation raced it.
+    }
+    await deleteProject(id);
+    if (realIdRef.current === id) realIdRef.current = null;
+    onCreated?.(null);
+  }, [onCreated]);
+
   useEffect(() => {
     if (isNew || resumeAttemptedRef.current || !project?.status) return;
     if (!new Set(["planning", "generating", "reviewing"]).has(project.status)) return;
@@ -499,6 +517,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
 
   const handleStart = useCallback(async (selected: string[]) => {
     if (startedRef.current) return;
+    const attempt = ++generationAttemptRef.current;
     if (allowMaterialModelProcessing) {
       const pendingMaterial = selectedMaterialIds.some((id) => (
         materials.find((material) => material.id === id)?.status !== "parsed"
@@ -532,7 +551,17 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         effectiveProjectId = res.id;
         realIdRef.current = res.id;
         onCreated?.(res.id);
+        if (attempt !== generationAttemptRef.current) {
+          try {
+            await discardCreatedProject(res.id);
+          } catch (err) {
+            setPhase("error");
+            setErrorMsg(err instanceof Error ? err.message : "取消后清理临时推演失败");
+          }
+          return;
+        }
       } catch (err) {
+        if (attempt !== generationAttemptRef.current) return;
         setPhase("idle");
         startedRef.current = false;
         setErrorMsg(err instanceof NetworkError ? "无法连接到服务器" : err instanceof ApiError ? err.message : "创建失败，请重试");
@@ -561,6 +590,17 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           material_ids: selectedMaterialIds,
         },
       );
+      if (attempt !== generationAttemptRef.current) {
+        if (isNew && effectiveProjectId) {
+          try {
+            await discardCreatedProject(effectiveProjectId);
+          } catch (err) {
+            setPhase("error");
+            setErrorMsg(err instanceof Error ? err.message : "取消后清理临时推演失败");
+          }
+        }
+        return;
+      }
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
@@ -601,12 +641,53 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
         },
       });
     } catch (err) {
+      if (attempt !== generationAttemptRef.current) return;
       setPhase("idle");
       startedRef.current = false;
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "生成启动失败");
     }
-  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing, selectedMaterialIds, materials]);
+  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing, selectedMaterialIds, materials, discardCreatedProject]);
+
+  const handleCancelGeneration = useCallback(async () => {
+    generationAttemptRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+    const effectiveProjectId = realIdRef.current || (!isNew ? projectId : null);
+    setCancelling(true);
+    setErrorMsg(null);
+    try {
+      if (effectiveProjectId) {
+        if (isNew) {
+          await discardCreatedProject(effectiveProjectId);
+        } else {
+          forgetProjectStream(effectiveProjectId);
+          await cancelGeneration(effectiveProjectId);
+        }
+      }
+      setTeachingPlan(null);
+      setQualityReport(null);
+      setModuleStatuses(new Map());
+      setProgress(0);
+      setMessage("");
+      setPhase("idle");
+      startedRef.current = false;
+      onStepChange("select");
+    } catch (err) {
+      setPhase("error");
+      setErrorMsg(
+        err instanceof NetworkError
+          ? "取消生成失败，无法连接到服务器"
+          : err instanceof Error
+            ? err.message
+            : "取消生成失败，请重试",
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }, [discardCreatedProject, isNew, onStepChange, projectId]);
 
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
@@ -887,12 +968,15 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           )}
 
           <div className="text-center">
-            <Button variant="outline" size="sm" onClick={() => {
-              abortRef.current?.abort();
-              setPhase("idle");
-              startedRef.current = false;
-            }} className="gap-2">
-              <XCircle size={16} /> 取消
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleCancelGeneration()}
+              disabled={cancelling}
+              className="gap-2"
+            >
+              {cancelling ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
+              {cancelling ? "正在取消..." : "取消"}
             </Button>
           </div>
         </div>
