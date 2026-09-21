@@ -14,6 +14,15 @@ envsubst '${PORT}' \
   < /etc/eduflow/nginx.conf.template \
   > /tmp/nginx.conf
 
+# Render provides a fresh ephemeral /tmp at runtime, so directories created in
+# the image layer are not guaranteed to exist when Nginx starts.
+mkdir -p \
+  /tmp/nginx/client \
+  /tmp/nginx/proxy \
+  /tmp/nginx/fastcgi \
+  /tmp/nginx/uwsgi \
+  /tmp/nginx/scgi
+
 # Free Render services do not support pre-deploy commands. This limited
 # deployment has one web instance, so migrations run before either process starts.
 alembic upgrade head
@@ -33,4 +42,3 @@ wait -n "$api_pid" "$nginx_pid"
 exit_code=$?
 shutdown
 exit "$exit_code"
-
