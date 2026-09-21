@@ -158,19 +158,36 @@ MANIM_X_LIMITS = (-7.0, 7.0)
 MANIM_Y_LIMITS = (-4.0, 4.0)
 MAX_GENERATED_LABEL_CHARS = 20
 MAX_GENERATED_NARRATION_CHARS = 200
-MAX_SUBTITLE_LINE_CHARS = 32
-MAX_SUBTITLE_HEIGHT = 1.25
+MAX_SUBTITLE_LINE_CHARS = 28
+MAX_SUBTITLE_LINES = 2
+MAX_SUBTITLE_HEIGHT = 1.05
+MAX_SUBTITLE_WIDTH = 11.4
+
+
+def _subtitle_pages(
+    text: str,
+    *,
+    width: int = MAX_SUBTITLE_LINE_CHARS,
+    max_lines: int = MAX_SUBTITLE_LINES,
+) -> list[str]:
+    """Compile narration into bounded two-line subtitle pages."""
+    normalized = " ".join(str(text).split())
+    if not normalized:
+        return []
+    lines = [
+        normalized[index : index + width]
+        for index in range(0, len(normalized), width)
+    ]
+    return [
+        "\n".join(lines[index : index + max_lines])
+        for index in range(0, len(lines), max_lines)
+    ]
 
 
 def _wrap_subtitle_text(text: str, width: int = MAX_SUBTITLE_LINE_CHARS) -> str:
-    """Wrap narration into bounded lines so subtitles stay inside the frame."""
-    normalized = " ".join(str(text).split())
-    if not normalized:
-        return ""
-    return "\n".join(
-        normalized[index : index + width]
-        for index in range(0, len(normalized), width)
-    )
+    """Compatibility helper returning the first safe subtitle page."""
+    pages = _subtitle_pages(text, width=width)
+    return pages[0] if pages else ""
 
 
 def _map_dsl_position(position: dict[str, Any]) -> tuple[float, float]:
@@ -501,6 +518,13 @@ class ManimScriptGenerator:
             "    if bottom < -2.35:",
             "        mobject.shift(UP * (-2.35 - bottom))",
             "    return mobject",
+            "",
+            "def eduflow_shrink_to_fit(mobject, max_width, max_height):",
+            '    """Shrink to both bounds without ever enlarging readable content."""',
+            "    width_ratio = max_width / max(float(mobject.width), 1e-6)",
+            "    height_ratio = max_height / max(float(mobject.height), 1e-6)",
+            "    mobject.scale(min(1.0, width_ratio, height_ratio))",
+            "    return mobject",
         ]
 
         # 收集需要的动画类
@@ -571,8 +595,7 @@ class ManimScriptGenerator:
                     f"        frame_title = Text({title[:32]!r}, font=EDUFLOW_CJK_FONT, "
                     "font_size=22, weight=SEMIBOLD, color=WHITE)"
                 )
-                lines.append("        frame_title.scale_to_fit_width(11.2)")
-                lines.append("        frame_title.scale_to_fit_height(0.55)")
+                lines.append("        eduflow_shrink_to_fit(frame_title, 11.2, 0.55)")
                 lines.append("        frame_title.to_edge(UP, buff=0.25)")
                 lines.append("        self.play(FadeIn(frame_title), run_time=0.25)")
 
@@ -591,23 +614,29 @@ class ManimScriptGenerator:
             narration = frame.get("narration", "")
             if narration and self.include_subtitles:
                 safe_narration = " ".join(str(narration).split())[:MAX_GENERATED_NARRATION_CHARS]
-                subtitle_text = _wrap_subtitle_text(safe_narration)
                 lines.append(f'        # Narration: "{safe_narration}"')
-                lines.append(
-                    f"        subtitle_text = Text({subtitle_text!r}, "
-                    "font=EDUFLOW_CJK_FONT, font_size=24, line_spacing=0.75, color=WHITE)"
-                )
-                lines.append("        subtitle_text.scale_to_fit_width(11.8)")
-                lines.append(f"        subtitle_text.scale_to_fit_height({MAX_SUBTITLE_HEIGHT})")
-                lines.append("        subtitle_text.to_edge(DOWN, buff=0.3)")
-                lines.append(
-                    "        subtitle_bg = BackgroundRectangle(subtitle_text, "
-                    "color=BLACK, fill_opacity=0.72, buff=0.18)"
-                )
-                lines.append("        subtitle = VGroup(subtitle_bg, subtitle_text)")
-                lines.append("        self.play(FadeIn(subtitle), run_time=0.5)")
-                lines.append("        self.wait(2)")
-                lines.append("        self.play(FadeOut(subtitle), run_time=0.3)")
+                for page_index, subtitle_text in enumerate(_subtitle_pages(safe_narration)):
+                    subtitle_var = f"subtitle_{i}_{page_index}"
+                    text_var = f"{subtitle_var}_text"
+                    bg_var = f"{subtitle_var}_bg"
+                    lines.append(
+                        f"        {text_var} = Text({subtitle_text!r}, "
+                        "font=EDUFLOW_CJK_FONT, font_size=24, line_spacing=0.75, color=WHITE)"
+                    )
+                    lines.append(
+                        f"        eduflow_shrink_to_fit({text_var}, "
+                        f"{MAX_SUBTITLE_WIDTH}, {MAX_SUBTITLE_HEIGHT})"
+                    )
+                    lines.append(f"        {text_var}.to_edge(DOWN, buff=0.3)")
+                    lines.append(
+                        f"        {bg_var} = BackgroundRectangle({text_var}, "
+                        "color=BLACK, fill_opacity=0.72, buff=0.18)"
+                    )
+                    lines.append(f"        {subtitle_var} = VGroup({bg_var}, {text_var})")
+                    lines.append(f"        self.play(FadeIn({subtitle_var}), run_time=0.25)")
+                    page_seconds = max(1.4, len(subtitle_text.replace("\n", "")) * 0.07)
+                    lines.append(f"        self.wait({page_seconds:.2f})")
+                    lines.append(f"        self.play(FadeOut({subtitle_var}), run_time=0.2)")
 
             # 帧间等待
             wait_time = sum(
@@ -748,7 +777,10 @@ class ManimScriptGenerator:
                     code_lines.append(
                         f"        {node_var}_label = Text({(node_label + distance_suffix)!r}, "
                         "font=EDUFLOW_CJK_FONT, font_size=16, color=WHITE)"
-                        f".scale_to_fit_width(0.72).move_to({node_var})"
+                    )
+                    code_lines.append(
+                        f"        eduflow_shrink_to_fit({node_var}_label, 0.72, 0.58)"
+                        f".move_to({node_var})"
                     )
                     code_lines.append(
                         f"        {node_var}_group = VGroup({node_var}, {node_var}_label)"
@@ -840,7 +872,10 @@ class ManimScriptGenerator:
                     code_lines.append(
                         f"        {cell_var}_text = Text({str(value)[:16]!r}, "
                         "font=EDUFLOW_CJK_FONT, font_size=24, "
-                        f"color={text_color!r}).scale_to_fit_width(0.62)"
+                        f"color={text_color!r})"
+                    )
+                    code_lines.append(
+                        f"        eduflow_shrink_to_fit({cell_var}_text, 0.62, 0.55)"
                         f".move_to({cell_var}_box)"
                     )
                     code_lines.append(
@@ -939,7 +974,10 @@ class ManimScriptGenerator:
                 code_lines.append(
                     f"        {var_name}_body = Text({fallback_body!r}, "
                     "font=EDUFLOW_CJK_FONT, font_size=14, color='#CBD5E1')"
-                    f".scale_to_fit_width(4.2).next_to({var_name}_title, DOWN, buff=0.25)"
+                )
+                code_lines.append(
+                    f"        eduflow_shrink_to_fit({var_name}_body, 4.2, 1.15)"
+                    f".next_to({var_name}_title, DOWN, buff=0.25)"
                 )
                 code_lines.append(
                     f"        {var_name} = VGroup({var_name}_box, {var_name}_title, {var_name}_body)"
@@ -1070,25 +1108,33 @@ def generate_subtitles_srt(dsl: dict[str, Any]) -> str:
     srt_lines = []
     time_cursor_ms = 0
 
-    for i, frame in enumerate(frames):
-        narration = frame.get("narration", "")
+    cue_index = 1
+    for frame in frames:
+        narration = " ".join(str(frame.get("narration", "")).split())[
+            :MAX_GENERATED_NARRATION_CHARS
+        ]
         if not narration:
+            continue
+        pages = _subtitle_pages(narration)
+        if not pages:
             continue
 
         # 估算：动画时长 + 阅读时间
         anim_ms = sum(a.get("duration_ms", 500) for a in frame.get("animations", []))
-        frame_duration_ms = max(anim_ms, len(narration) * 60)  # 中文约 60ms/字
-        frame_duration_ms = max(frame_duration_ms, 2000)  # 最少 2 秒
+        frame_duration_ms = max(anim_ms, len(narration) * 70, len(pages) * 1400)
+        page_duration_ms = max(1400, frame_duration_ms // len(pages))
 
-        start_ms = time_cursor_ms
-        end_ms = start_ms + frame_duration_ms
-
-        srt_lines.append(str(i + 1))
-        srt_lines.append(f"{_ms_to_srt_time(start_ms)} --> {_ms_to_srt_time(end_ms)}")
-        srt_lines.append(narration.strip())
-        srt_lines.append("")
-
-        time_cursor_ms = end_ms
+        for page in pages:
+            start_ms = time_cursor_ms
+            end_ms = start_ms + page_duration_ms
+            srt_lines.append(str(cue_index))
+            srt_lines.append(
+                f"{_ms_to_srt_time(start_ms)} --> {_ms_to_srt_time(end_ms)}"
+            )
+            srt_lines.append(page)
+            srt_lines.append("")
+            cue_index += 1
+            time_cursor_ms = end_ms
 
     return "\n".join(srt_lines)
 

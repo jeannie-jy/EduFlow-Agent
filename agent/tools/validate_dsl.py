@@ -5,6 +5,7 @@ DSL 校验工具：确定性检查，不依赖 LLM。
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -1318,6 +1319,119 @@ def check_visual_completeness(frames: list[dict[str, Any]]) -> dict[str, Any]:
                     report(frame_id, visual_id, "mindmap 缺少 root")
 
     return {"complete": not issues, "issues": issues}
+
+
+def check_sorting_invariants(
+    frames: list[dict[str, Any]], *, topic: str = ""
+) -> dict[str, Any]:
+    """Prove that sorting frames preserve element identity and visible state.
+
+    Sorting may reorder values but must never create, delete, or duplicate an
+    element.  The snapshot and every array visual in a frame must also agree;
+    otherwise the narration, web preview, and video can show three different
+    executions while remaining schema-valid.
+    """
+    topic_text = str(topic).casefold()
+    markers = (
+        "sort", "排序", "bubble", "冒泡", "insertion", "插入",
+        "selection", "选择排序", "merge sort", "归并", "quick", "快速排序",
+    )
+    snapshot_algorithms = {
+        str(frame.get("state_snapshot", {}).get("sorting_algorithm", ""))
+        for frame in frames
+        if isinstance(frame, dict) and isinstance(frame.get("state_snapshot"), dict)
+    }
+    checked = any(marker in topic_text for marker in markers) or any(snapshot_algorithms)
+    if not checked:
+        return {"checked": False, "consistent": True, "issues": []}
+
+    def values_from_visual(visual: dict[str, Any]) -> list[Any] | None:
+        cells = visual.get("cells")
+        if not isinstance(cells, list) or not cells:
+            return None
+        return [
+            cell.get("value") if isinstance(cell, dict) else cell
+            for cell in cells
+        ]
+
+    def multiset(values: list[Any]) -> list[str]:
+        return sorted(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            for value in values
+        )
+
+    issues: list[dict[str, Any]] = []
+    baseline: list[Any] | None = None
+    last_snapshot: list[Any] | None = None
+    last_snapshot_state: dict[str, Any] | None = None
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        frame_id = str(frame.get("frame_id") or f"frames.{index}")
+        snapshot = frame.get("state_snapshot")
+        snapshot_array = snapshot.get("array") if isinstance(snapshot, dict) else None
+        if not isinstance(snapshot_array, list) or not snapshot_array:
+            snapshot_array = None
+        if baseline is None and snapshot_array is not None:
+            baseline = deepcopy(snapshot_array)
+        if snapshot_array is not None:
+            last_snapshot = snapshot_array
+            last_snapshot_state = snapshot
+            if baseline is not None and multiset(snapshot_array) != multiset(baseline):
+                issues.append({
+                    "frame_id": frame_id,
+                    "description": "排序数组改变了元素多重集合，出现元素丢失、重复或凭空新增",
+                })
+
+        for visual in frame.get("visual_objects", []):
+            if not isinstance(visual, dict) or visual.get("type") != "array":
+                continue
+            visible = values_from_visual(visual)
+            if visible is None:
+                continue
+            if baseline is None:
+                baseline = deepcopy(visible)
+            if multiset(visible) != multiset(baseline):
+                issues.append({
+                    "frame_id": frame_id,
+                    "visual_id": str(visual.get("id") or "?"),
+                    "description": "可见数组改变了初始元素多重集合",
+                })
+            if snapshot_array is not None and visible != snapshot_array:
+                issues.append({
+                    "frame_id": frame_id,
+                    "visual_id": str(visual.get("id") or "?"),
+                    "description": "可见数组与 state_snapshot.array 不一致",
+                })
+
+    if baseline is None:
+        issues.append({
+            "frame_id": "?",
+            "description": "排序主题没有提供可执行的初始数组",
+        })
+    elif last_snapshot is not None and last_snapshot_state is not None:
+        phase = str(last_snapshot_state.get("phase") or "").casefold()
+        terminal_declared = phase in {"complete", "completed", "done", "final"}
+        terminal_declared = terminal_declared or (
+            last_snapshot_state.get("sorted_prefix") == len(baseline)
+            or last_snapshot_state.get("sorted_suffix") == len(baseline)
+        )
+        expected = sorted(
+            baseline,
+            key=lambda value: (
+                0 if isinstance(value, (int, float)) and not isinstance(value, bool) else 1,
+                float(value)
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                else str(value),
+            ),
+        )
+        if terminal_declared and last_snapshot != expected:
+            issues.append({
+                "frame_id": str(frames[-1].get("frame_id", "?")) if frames else "?",
+                "description": "排序终态不是由初始数组得到的升序结果",
+            })
+
+    return {"checked": True, "consistent": not issues, "issues": issues}
 
 
 async def check_algorithm_invariants(

@@ -382,10 +382,10 @@ class TestManimScriptGenerator:
     def test_narration_generates_subtitle(self, minimal_dsl):
         gen = ManimScriptGenerator(minimal_dsl)
         script = gen.generate()
-        assert "subtitle_text.to_edge(DOWN, buff=0.3)" in script
-        assert "BackgroundRectangle(subtitle_text" in script
-        assert "FadeIn(subtitle)" in script
-        assert "FadeOut(subtitle)" in script
+        assert "subtitle_0_0_text.to_edge(DOWN, buff=0.3)" in script
+        assert "BackgroundRectangle(subtitle_0_0_text" in script
+        assert "FadeIn(subtitle_0_0)" in script
+        assert "FadeOut(subtitle_0_0)" in script
 
     def test_long_narration_subtitle_is_wrapped_and_scaled(self):
         dsl = {
@@ -393,7 +393,8 @@ class TestManimScriptGenerator:
             "topic": "Subtitle",
             "frames": [{
                 "frame_id": "f_001",
-                "narration": "这是一个很长的字幕内容，用于验证视频字幕会自动换行并限制在画布内部，不会因为文字太长而跑出边框。",
+                "narration": "这是一个很长的字幕内容，用于验证视频字幕会自动换行并限制在画布内部，不会因为文字太长而跑出边框。"
+                "每一个字幕页最多只能显示两行，其余内容必须自动进入下一页继续展示，字号也不能被反向放大。",
                 "visual_objects": [],
                 "animations": [],
             }],
@@ -402,8 +403,9 @@ class TestManimScriptGenerator:
         script = ManimScriptGenerator(dsl).generate()
 
         assert "\\n" in script
-        assert "subtitle_text.scale_to_fit_width(11.8)" in script
-        assert "subtitle_text.scale_to_fit_height(1.25)" in script
+        assert "subtitle_0_1_text = Text" in script
+        assert "eduflow_shrink_to_fit(subtitle_0_0_text, 11.4, 1.05)" in script
+        assert "scale_to_fit_height" not in script.split("# Narration:", 1)[1]
 
     def test_subtitles_can_be_disabled(self, minimal_dsl):
         script = ManimScriptGenerator(
@@ -436,7 +438,7 @@ class TestManimScriptGenerator:
         assert "eduflow_fit_to_safe_area(table_0" in script
         assert "frame_title.to_edge(UP, buff=0.25)" in script
         assert "font_size=22, weight=SEMIBOLD" in script
-        assert "frame_title.scale_to_fit_height(0.55)" in script
+        assert "eduflow_shrink_to_fit(frame_title, 11.2, 0.55)" in script
 
     def test_special_characters_in_topic(self):
         """话题包含特殊字符应被安全处理。"""
@@ -804,6 +806,19 @@ class TestSubtitlesSRT:
         assert "-->" in lines[1]  # 时间戳
         assert lines[2] == "Test"  # 内容
         assert lines[3] == ""  # 空行分隔
+
+    def test_long_srt_narration_is_paginated_to_two_lines_per_cue(self):
+        narration = "字幕必须保持在安全区域内。" * 12
+        srt = generate_subtitles_srt({
+            "frames": [{"frame_id": "f_001", "narration": narration, "animations": []}],
+        })
+
+        cues = [cue for cue in srt.strip().split("\n\n") if cue]
+        assert len(cues) > 1
+        for cue in cues:
+            lines = cue.splitlines()
+            assert len(lines[2:]) <= 2
+            assert all(len(line) <= 28 for line in lines[2:])
 
 
 # ============================================================================

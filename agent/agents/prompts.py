@@ -657,12 +657,14 @@ box.animate.set_stroke(color="#F4D03F", fill_color="...")    # 错误！
 - 表格或代码块必须先限制 `width <= 5.8`、`height <= 4.5`，再放入左右分栏
 - 不得依靠 `Text(width=...)` 换行；应先在字符串中插入 `\n`，正文最多两行
 - `render_options.include_subtitles=false` 时禁止创建旁白/字幕 Text
-- `render_options.include_subtitles=true` 时每帧只能存在一个字幕组：最多两行、宽度不超过 11.8、高度不超过 1.25，并带半透明黑色底板
+- `render_options.include_subtitles=true` 时每帧只能存在一个字幕组：最多两行、宽度不超过 11.4、高度不超过 1.05，并带半透明黑色底板
+- 字幕、标题和单元格文字只能按 `min(1, max_width / width, max_height / height)` 等比缩小；禁止先 `scale_to_fit_width()` 再无条件 `scale_to_fit_height()`，后者会把文字重新放大并推出画布
 
 ## 常见模式：如何可视化教学概念
 
 ### 数组/排序
 用一排正方形 + 内部数字。当前比较的染金色，已就位的染绿色。交换时两个框交换位置。
+数组值必须逐字取自当前帧的 `state_snapshot.array`，不得根据旁白猜测或重新生成；相邻帧只能执行 trace 中声明的 compare/swap/write，排序全过程必须保持初始元素多重集合不变。
 ```python
 boxes = VGroup()
 for v in values:

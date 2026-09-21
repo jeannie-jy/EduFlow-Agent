@@ -138,6 +138,71 @@ def _export_dsl() -> dict:
     }
 
 
+def test_export_boundary_recompiles_invalid_sorting_frames():
+    from api.export import _prepare_dsl_for_export
+
+    dsl = {
+        "project_id": "p-sort",
+        "topic": "冒泡排序",
+        "frames": [
+            {
+                "frame_id": "f_001",
+                "title": "初始数组",
+                "narration": "从初始数组开始。",
+                "visual_objects": [{
+                    "id": "arr", "type": "array",
+                    "cells": [{"value": value} for value in [5, 3, 8, 1]],
+                }],
+                "state_snapshot": {"array": [5, 3, 8, 1]},
+                "animations": [],
+            },
+            {
+                "frame_id": "f_002",
+                "title": "错误的模型状态",
+                "narration": "模型意外复制了元素。",
+                "visual_objects": [{
+                    "id": "arr", "type": "array",
+                    "cells": [{"value": value} for value in [5, 5, 8, 1]],
+                }],
+                "state_snapshot": {"array": [5, 5, 8, 1]},
+                "animations": [],
+            },
+            {
+                "frame_id": "f_003",
+                "title": "排序完成",
+                "narration": "得到升序结果。",
+                "visual_objects": [{
+                    "id": "arr", "type": "array",
+                    "cells": [{"value": value} for value in [1, 3, 5, 8]],
+                }],
+                "state_snapshot": {"array": [1, 3, 5, 8]},
+                "animations": [],
+            },
+        ],
+    }
+
+    prepared = _prepare_dsl_for_export(dsl)
+
+    for frame in prepared["frames"]:
+        values = frame["state_snapshot"]["array"]
+        visible = [cell["value"] for cell in frame["visual_objects"][0]["cells"]]
+        assert sorted(values) == [1, 3, 5, 8]
+        assert visible == values
+    assert prepared["frames"][-1]["state_snapshot"]["array"] == [1, 3, 5, 8]
+
+
+def test_executable_lessons_require_deterministic_renderer():
+    from api.export import _requires_deterministic_renderer
+
+    assert _requires_deterministic_renderer({
+        "frames": [{"state_snapshot": {"array": [5, 3, 8, 1]}}]
+    })
+    assert _requires_deterministic_renderer({
+        "frames": [{"state_snapshot": {"queue": ["A"], "visited": ["A"]}}]
+    })
+    assert not _requires_deterministic_renderer(_export_dsl())
+
+
 @pytest.mark.asyncio
 async def test_llm_static_validation_failure_falls_back_without_job_retry(tmp_path):
     from api.export import _do_export_async

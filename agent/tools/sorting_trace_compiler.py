@@ -129,10 +129,6 @@ def _insertion_states(values: list[Any]) -> list[dict[str, Any]]:
         while cursor >= 0 and _sort_key(work[cursor]) > _sort_key(key):
             work[cursor + 1] = work[cursor]
             cursor -= 1
-            states.append(_state(
-                work, "insertion_sort", "shift", i=index, j=cursor, key=key,
-                sorted_prefix=index,
-            ))
         work[cursor + 1] = key
         states.append(_state(
             work, "insertion_sort", "insert", i=index, j=cursor + 1, key=key,
@@ -238,15 +234,31 @@ _STATE_BUILDERS = {
 }
 
 
-def _compile_visual_array(visual: dict[str, Any], values: list[Any]) -> None:
+def _compile_visual_array(visual: dict[str, Any], state: dict[str, Any]) -> None:
+    values = state["array"]
     cells = visual.get("cells", visual.get("values", []))
     if not isinstance(cells, list):
         return
     output: list[dict[str, Any]] = []
+    active_indices = {
+        int(state[key])
+        for key in ("i", "j", "minimum", "pivot_index")
+        if isinstance(state.get(key), int)
+    }
+    sorted_prefix = int(state.get("sorted_prefix", 0) or 0)
+    sorted_suffix = int(state.get("sorted_suffix", 0) or 0)
     for index, value in enumerate(values):
         cell = deepcopy(cells[index]) if index < len(cells) and isinstance(cells[index], dict) else {}
+        for key in ("highlight", "active", "comparing", "sorted", "complete", "finalized"):
+            cell.pop(key, None)
         cell["index"] = index
         cell["value"] = value
+        if index in active_indices:
+            cell["highlight"] = True
+        if index < sorted_prefix or (
+            sorted_suffix > 0 and index >= len(values) - sorted_suffix
+        ):
+            cell["sorted"] = True
         output.append(cell)
     visual["cells"] = output
     visual.pop("values", None)
@@ -303,7 +315,7 @@ def compile_sorting_trace(
         frame["state_snapshot"] = snapshot
         for visual in frame.get("visual_objects", []):
             if isinstance(visual, dict) and visual.get("type") == "array":
-                _compile_visual_array(visual, expected["array"])
+                _compile_visual_array(visual, expected)
         report["frames_compiled"] += 1
     report["state_count"] = len(states)
     report["applied"] = report["frames_compiled"] > 0

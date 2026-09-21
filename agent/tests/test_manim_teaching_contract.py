@@ -95,3 +95,25 @@ class Demo(Scene):
     )
 
     assert "subtitles-disabled" in rules
+
+
+def test_contract_rejects_height_fit_that_can_re_enlarge_subtitles():
+    script = """
+from manim import *
+class Demo(Scene):
+    def construct(self):
+        self.next_section(name="one")
+        subtitle_text = Text("already width-bounded")
+        subtitle_text.scale_to_fit_width(11.4)
+        subtitle_text.scale_to_fit_height(1.05)
+        subtitle = VGroup(BackgroundRectangle(subtitle_text), subtitle_text)
+"""
+
+    rules = _rules(
+        script,
+        expected_frames=1,
+        include_subtitles=True,
+        has_narration=True,
+    )
+
+    assert "subtitle-upscale-risk" in rules

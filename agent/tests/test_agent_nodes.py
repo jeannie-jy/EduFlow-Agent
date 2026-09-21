@@ -850,6 +850,37 @@ class TestQualityNode:
         assert any(issue["type"] == "visual_completeness" for issue in report["issues"])
 
     @pytest.mark.asyncio
+    async def test_sorting_element_identity_drift_is_blocking(self):
+        from agents.nodes import quality_node
+
+        state = AgentStateFactory.with_dsl()
+        state["dsl"]["frames"][1]["state_snapshot"]["array"] = [3, 3, 8, 1]
+        state["dsl"]["frames"][1]["visual_objects"][0]["cells"] = [
+            {"value": value} for value in [3, 3, 8, 1]
+        ]
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = {
+                "scores": {
+                    "correctness": 1,
+                    "clarity": 1,
+                    "coherence": 1,
+                    "interactivity": 1,
+                    "renderability": 1,
+                    "completeness": 1,
+                },
+                "overall_score": 1,
+                "issues": [],
+                "suggestions": [],
+                "is_blocking": False,
+            }
+            result = await quality_node(state)
+
+        report = result["quality_report"]
+        assert report["is_blocking"] is True
+        assert report["scores"]["correctness"] == 0
+        assert any(issue["type"] == "sorting_invariant" for issue in report["issues"])
+
+    @pytest.mark.asyncio
     async def test_state_inconsistency_detected(self):
         """帧间状态不一致应被检测到。"""
         from agents.nodes import quality_node

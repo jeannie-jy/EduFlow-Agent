@@ -110,12 +110,31 @@ def validate_teaching_contract(
                 "line": None,
                 "detail": "开启字幕时必须使用 BackgroundRectangle 提供统一字幕底板",
             })
-        if "scale_to_fit_width" not in lowered:
+        if (
+            "scale_to_fit_width" not in lowered
+            and "eduflow_shrink_to_fit" not in lowered
+        ):
             issues.append({
                 "rule": "subtitle-width-unbounded",
                 "severity": "error",
                 "line": None,
                 "detail": "开启字幕时必须限制字幕宽度，防止文字越过画布边缘",
+            })
+        unsafe_height_fit = re.search(
+            r"\b(?:subtitle|caption|narration)(?:_\w+)?"
+            r"\.scale_to_fit_height\s*\(",
+            script,
+            re.IGNORECASE,
+        )
+        if unsafe_height_fit:
+            issues.append({
+                "rule": "subtitle-upscale-risk",
+                "severity": "error",
+                "line": script[:unsafe_height_fit.start()].count("\n") + 1,
+                "detail": (
+                    "字幕禁止无条件 scale_to_fit_height；该 API 可能把已经满足宽度的"
+                    "文本重新放大并推出画布"
+                ),
             })
     elif not include_subtitles and re.search(
         r"\b(?:subtitle|caption|narration)(?:_\w+)?\s*=\s*(?:Text|Paragraph)\s*\(",

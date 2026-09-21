@@ -52,6 +52,48 @@ class ExportWorkspaceLimitError(RuntimeError):
     """The renderer exceeded its per-job file-count or byte budget."""
 
 
+def _prepare_dsl_for_export(dsl: dict) -> dict:
+    """Recompile persisted model output at the final trusted boundary."""
+    from tools.finalize_dsl import finalize_dsl
+    from tools.validate_dsl import check_visual_completeness
+
+    prepared = finalize_dsl(dsl, compile_sorting=True)
+    visual_result = check_visual_completeness(prepared.get("frames", []))
+    if not visual_result["complete"]:
+        details = "; ".join(
+            f"{issue.get('frame_id', '?')}/{issue.get('visual_id', '?')}: "
+            f"{issue.get('description', '视觉组件不完整')}"
+            for issue in visual_result["issues"][:8]
+        )
+        raise ValueError(f"视频分镜包含不完整视觉组件，已阻止导出: {details}")
+    return prepared
+
+
+def _requires_deterministic_renderer(dsl: dict) -> bool:
+    """Keep executable teaching state out of the creative rendering path."""
+    for key in ("sorting_trace_compilation", "algorithm_trace_compilation"):
+        if (dsl.get(key) or {}).get("applied"):
+            return True
+
+    executable_state_keys = {
+        "array",
+        "dist",
+        "distance",
+        "visited",
+        "queue",
+        "stack",
+        "predecessor",
+        "events",
+    }
+    for frame in dsl.get("frames", []):
+        if not isinstance(frame, dict):
+            continue
+        snapshot = frame.get("state_snapshot")
+        if isinstance(snapshot, dict) and executable_state_keys.intersection(snapshot):
+            return True
+    return False
+
+
 async def _get_redis():
     """获取 Redis 客户端（线程安全）。"""
     global _redis_client
@@ -488,19 +530,20 @@ async def _do_export_async(
         # default; the optional LLM director can never be a single point of
         # failure because it falls back before rendering.
         from adapters.manim_validator import has_errors, validate_script
-        from tools.validate_dsl import check_visual_completeness
-
-        visual_result = check_visual_completeness(dsl.get("frames", []))
-        if not visual_result["complete"]:
-            details = "; ".join(
-                f"{issue.get('frame_id', '?')}/{issue.get('visual_id', '?')}: "
-                f"{issue.get('description', '视觉组件不完整')}"
-                for issue in visual_result["issues"][:8]
-            )
-            raise ValueError(f"视频分镜包含不完整视觉组件，已阻止导出: {details}")
+        # Projects created by older generators and scoped regeneration may
+        # still contain model-authored intermediate state.  Recompile at the
+        # last trustworthy boundary so exports always consume executable,
+        # canonical snapshots (sorting arrays, graph traces, aliases, etc.).
+        dsl = _prepare_dsl_for_export(dsl)
 
         settings = get_settings()
         script_mode = getattr(settings, "manim_script_mode", "deterministic")
+        if script_mode == "llm" and _requires_deterministic_renderer(dsl):
+            logger.info(
+                "Executable lesson state requires deterministic renderer: job=%s",
+                job_id,
+            )
+            script_mode = "deterministic"
         quality = config.get("quality", "h")
         fps = config.get("fps", 30)
         include_subtitles = config.get("include_subtitles", True)
