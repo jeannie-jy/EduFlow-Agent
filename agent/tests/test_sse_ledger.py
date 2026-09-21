@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -257,6 +258,65 @@ async def test_events_are_committed_before_replay_and_terminal_does_not_rerun(te
     assert stream.status == "completed"
     assert stream.last_event_id == 2
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_background_producer_survives_consumer_disconnect(test_db):
+    """Closing the HTTP-side consumer must not cancel generation."""
+    from services.sse_ledger import durable_sse_stream
+
+    project_id = uuid.uuid4()
+    stream_id = uuid.uuid4()
+    test_db.add(Project(id=project_id, title="Detached SSE producer"))
+    await test_db.commit()
+    factory = async_sessionmaker(test_db.bind, expire_on_commit=False)
+
+    async def source():
+        yield {"event": "progress", "data": json.dumps({"phase": "planner", "pct": 10})}
+        await asyncio.sleep(0.01)
+        yield {"event": "done", "data": json.dumps({"phase": "done", "pct": 100})}
+
+    settings = SimpleNamespace(
+        sse_event_retention_hours=24,
+        sse_stream_poll_seconds=0.001,
+        sse_stream_lease_seconds=5,
+    )
+    with patch("db.database.async_session_factory", factory), patch(
+        "services.sse_ledger.get_settings", return_value=settings
+    ):
+        consumer = durable_sse_stream(
+            source(),
+            stream_id=str(stream_id),
+            project_id=str(project_id),
+            kind="generation",
+            background=True,
+        )
+        first = await anext(consumer)
+        assert first["event"] == "progress"
+        await consumer.aclose()
+
+        for _ in range(100):
+            async with factory() as session:
+                stream = await session.get(SSEStream, stream_id)
+                if stream is not None and stream.status == "completed":
+                    break
+            await asyncio.sleep(0.005)
+        else:
+            pytest.fail("detached producer did not commit its terminal event")
+
+        await asyncio.sleep(0.05)
+
+        async with factory() as session:
+            events = list(
+                (
+                    await session.scalars(
+                        select(SSEEvent)
+                        .where(SSEEvent.stream_id == stream_id)
+                        .order_by(SSEEvent.event_id)
+                    )
+                ).all()
+            )
+        assert [event.event_name for event in events] == ["progress", "done"]
 
 
 @pytest.mark.asyncio

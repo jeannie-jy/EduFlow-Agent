@@ -1,6 +1,5 @@
 import { type CSSProperties, type PropsWithChildren } from "react";
 import { useLocation } from "react-router-dom";
-import { EllipsisIcon } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -8,7 +7,6 @@ import {
   BreadcrumbPage,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
 import {
   SidebarInset,
   SidebarProvider,
@@ -64,9 +62,6 @@ export function AppShell({ children }: PropsWithChildren) {
           </div>
           <div className="flex items-center gap-2">
             <ThemeSwitcher />
-            <Button variant="outline" size="icon" aria-label="更多操作">
-              <EllipsisIcon />
-            </Button>
           </div>
         </header>
         <div

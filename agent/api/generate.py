@@ -373,6 +373,32 @@ async def _finalize_stream_quota(
         )
 
 
+async def _finalize_stream_quota_detached(
+    *,
+    owner_id,
+    project_id: str,
+    stream_id: str | None,
+    status: str,
+    quota_ref: dict | None = None,
+) -> None:
+    """Finalize quota from a detached producer after the HTTP request ends."""
+    if owner_id is None:
+        return
+    from types import SimpleNamespace
+
+    from db.database import async_session_factory
+
+    async with async_session_factory() as session:
+        await _finalize_stream_quota(
+            session,
+            SimpleNamespace(id=owner_id),
+            project_id=project_id,
+            stream_id=stream_id,
+            status=status,
+            quota_ref=quota_ref,
+        )
+
+
 @router.get("/{project_id}/generate/active-stream")
 async def get_active_stream(
     project_id: str,
@@ -481,8 +507,12 @@ def _resume_capable_stream(
                 project_id=project_id,
                 kind=kind,
                 last_event_id=_last_event_id(request),
+                background=True,
+                on_terminal=on_terminal,
             ),
-            on_terminal=on_terminal,
+            # The detached producer owns terminal/quota finalization.  A
+            # disconnected consumer must never be interpreted as cancellation.
+            on_terminal=None,
         )
     return _instrument_sse(
         with_sse_metadata(source, last_event_id=_last_event_id(request)),
@@ -857,9 +887,6 @@ async def generation_stream(
             actor_role=current_user.role if current_user is not None else None,
         )
         async for sse_chunk in _credentialed_events(source, credentials, llm_limits):
-            # 检查客户端是否断开
-            if await request.is_disconnected():
-                break
             yield sse_chunk
 
     return EventSourceResponse(
@@ -869,8 +896,10 @@ async def generation_stream(
             project_id=project_id,
             kind="generation",
             stream_id=stream_id,
-            on_terminal=lambda terminal_status: _finalize_stream_quota(
-                session, current_user, project_id=project_id, stream_id=stream_id,
+            on_terminal=lambda terminal_status: _finalize_stream_quota_detached(
+                owner_id=getattr(current_user, "id", None),
+                project_id=project_id,
+                stream_id=stream_id,
                 status=terminal_status,
             ),
         ),
@@ -927,8 +956,6 @@ async def generation_resume_stream(
     async def event_generator():
         source = resume_generation_stream(project_id, resume_value)
         async for sse_chunk in _credentialed_events(source, credentials, llm_limits):
-            if await request.is_disconnected():
-                break
             yield sse_chunk
 
     return EventSourceResponse(
@@ -938,9 +965,12 @@ async def generation_resume_stream(
             project_id=project_id,
             kind="resume",
             stream_id=stream_id,
-            on_terminal=lambda terminal_status: _finalize_stream_quota(
-                session, current_user, project_id=project_id, stream_id=stream_id,
-                status=terminal_status, quota_ref=quota_ref,
+            on_terminal=lambda terminal_status: _finalize_stream_quota_detached(
+                owner_id=getattr(current_user, "id", None),
+                project_id=project_id,
+                stream_id=stream_id,
+                status=terminal_status,
+                quota_ref=quota_ref,
             ),
         ),
         ping=15,
@@ -1123,8 +1153,6 @@ async def regenerate_stream(
             actor_role=current_user.role if current_user is not None else None,
         )
         async for sse_chunk in _credentialed_events(source, credentials, llm_limits):
-            if await request.is_disconnected():
-                break
             yield sse_chunk
 
     return EventSourceResponse(
@@ -1134,8 +1162,10 @@ async def regenerate_stream(
             project_id=project_id,
             kind="regenerate",
             stream_id=stream_id,
-            on_terminal=lambda terminal_status: _finalize_stream_quota(
-                session, current_user, project_id=project_id, stream_id=stream_id,
+            on_terminal=lambda terminal_status: _finalize_stream_quota_detached(
+                owner_id=getattr(current_user, "id", None),
+                project_id=project_id,
+                stream_id=stream_id,
                 status=terminal_status,
             ),
         ),
@@ -1493,8 +1523,6 @@ async def module_generation_stream(
     async def event_generator():
         source = run_modules_stream(project_id, state, selected_modules)
         async for sse_chunk in _credentialed_events(source, credentials, llm_limits):
-            if await request.is_disconnected():
-                break
             yield sse_chunk
 
     return EventSourceResponse(
@@ -1504,8 +1532,10 @@ async def module_generation_stream(
             project_id=project_id,
             kind="modules",
             stream_id=stream_id,
-            on_terminal=lambda terminal_status: _finalize_stream_quota(
-                session, current_user, project_id=project_id, stream_id=stream_id,
+            on_terminal=lambda terminal_status: _finalize_stream_quota_detached(
+                owner_id=getattr(current_user, "id", None),
+                project_id=project_id,
+                stream_id=stream_id,
                 status=terminal_status,
             ),
         ),
@@ -1569,8 +1599,6 @@ async def single_module_stream(
     async def event_generator():
         source = run_modules_stream(project_id, state, [module_id])
         async for chunk in _credentialed_events(source, credentials, llm_limits):
-            if await request.is_disconnected():
-                break
             yield chunk
 
     return EventSourceResponse(
@@ -1580,8 +1608,10 @@ async def single_module_stream(
             project_id=project_id,
             kind=f"module:{module_id}",
             stream_id=stream_id,
-            on_terminal=lambda terminal_status: _finalize_stream_quota(
-                session, current_user, project_id=project_id, stream_id=stream_id,
+            on_terminal=lambda terminal_status: _finalize_stream_quota_detached(
+                owner_id=getattr(current_user, "id", None),
+                project_id=project_id,
+                stream_id=stream_id,
                 status=terminal_status,
             ),
         ),
