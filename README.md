@@ -23,10 +23,10 @@
 
 > **v1.0.0 — 发布前质量与安全验收**
 >
-> 后端回归、真实视频渲染、安全边界、故障恢复、对象存储迁移与公开部署保护门禁已完成工程化验收；前端当前仍有 1 项 AppShell 导航测试待修复；EduFlowBench v1 核心案例已完成一次带显式凭据和成本授权的在线质量基线，人工校准与真实 Tool Calling 评测仍待完成。
+> 真实视频渲染、安全边界、故障恢复、对象存储迁移与公开部署保护门禁已完成工程化验收；前端门禁已全绿；Python 3.12 后端回归当前仍有 1 项 SSE 后台生产者测试失败；EduFlowBench v1 核心案例已完成一次带显式凭据和成本授权的在线质量基线，人工校准与真实 Tool Calling 评测仍待完成。
 **本次更新 (v1.0.0)：**
-- **前端回归状态**：当前 Vitest 收集 44 个测试文件 / 313 项测试；仍有 1 项 AppShell 导航测试待修复，前端不再宣称全绿。
-- **后端质量基线**：常规非在线、非渲染回归通过 `1204 passed，1 skipped，6 deselected`。
+- **前端回归状态**：当前 Vitest 收集 44 个测试文件 / 316 项测试，`npm run verify`（类型检查、测试、生产构建与 Bundle Budget）已全部通过。
+- **后端回归状态**：Python 3.12 常规非在线、非渲染回归为 `1241 passed，1 failed，1 skipped，8 deselected`；失败项为 `test_background_producer_survives_consumer_disconnect`，对应最新持久化 SSE 后台生产者链路。
 - **真实视频验收**：Manim/FFmpeg golden smoke、确定性布局审计（重叠/越界/文本截断）、双 Worker 并行与 Redis/PostgreSQL/MinIO 故障恢复验证通过。
 - **渲染安全加固**：无网络/无凭据 Sandbox、脚本摘要校验、路径与 symlink 越界拒绝、超时/OOM/工作区配额、恶意脚本、容器中断重启及孤儿 claim 回收验证通过。
 - **公开部署保护**：公开视频默认关闭；生产环境未完成任务级隔离与安全审批时 fail-closed。
@@ -55,6 +55,7 @@ EduFlow-Agent 是一个有状态 Agent 教学推演系统。用户通过自然�
 
 - **统一 Agent 工作流**：Planner → Knowledge → Coder → Quality → Reflection 五个功能节点共享状态并形成生成、校验与修订闭环
 - **Human-in-the-Loop 审批**：Planner 输出后中断等待教师确认/拒绝教学计划，支持从中断点恢复生成
+- **持久化 SSE 事件流**：生成进度先写入事件账本，支持断线重放、活动流发现与后台生产者和 HTTP 消费者解耦
 - **DSL 驱动的双路径渲染**：同一份中间表示（DSL）驱动 Web 交互推演 + Manim 视频导出
 - **逐帧交互式推演**：支持暂停、回退、调速，以及参数影响预览与受控重算
 - **教师工作台**：逐帧编辑、锁定、局部重生成、版本管理、反馈收集
@@ -66,14 +67,14 @@ EduFlow-Agent 是一个有状态 Agent 教学推演系统。用户通过自然�
 
 | 层次 | 技术 | 说明 |
 |------|------|------|
-| **LLM** | DeepSeek（主）/阿里百炼（Qwen） | 生产通过服务端 KMS BYOK 调用固定官方端点；默认 DeepSeek `deepseek-chat` |
+| **LLM** | DeepSeek（主）/阿里百炼（Qwen） | 生产通过服务端 KMS BYOK 调用固定官方端点；工作流默认模型为 `deepseek-v4-flash`，用户连接配置优先 |
 | **Embedding** | 阿里百炼 `text-embedding-v4`（1024维） | 生产 BYOK 语义检索；未配置时明确降级为关键词检索 |
 | **Agent 编排** | LangGraph | 5 节点 StateGraph + HITL interrupt + Postgres Checkpointer |
 | **后端** | Python 3.12+ / FastAPI | 异步 REST API + SSE 流式推送 + Alembic 数据库迁移 |
 | **前端** | React 18 + TypeScript + Vite 8 | Tailwind CSS 4 + Base UI + 纸张质感主题系统 |
 | **数据库** | PostgreSQL 16 + pgvector + Redis 7 | 向量检索 + 任务队列 + 缓存 |
 | **存储** | ArtifactStore（MinIO / 本地） | Compose 将导出产物和上传素材写入 MinIO；本地后端用于开发与测试 |
-| **视频导出** | Manim CE + FFmpeg | LLM 驱动代码生成（默认） + 确定性规则回退 + Validator 质量检测 |
+| **视频导出** | Manim CE + FFmpeg | 确定性 DSL 编译（默认） + 可选 LLM 视觉编排 + Validator 质量检测 |
 
 ## 快速开始
 
@@ -159,7 +160,7 @@ cp .env.example .env
 
 启动后访问 `http://localhost:5173`。Web 通过同源 `/api` 反向代理后端。
 
-默认启动 7 个容器；`video` profile 增加 2 个视频服务，`observability` profile
+默认启动 9 个容器；`video` profile 增加 2 个视频服务，`observability` profile
 增加 Prometheus 和 Grafana：
 
 | 服务 | 端口 | 说明 |
@@ -171,6 +172,7 @@ cp .env.example .env
 | `redis` | 6379 | Redis 7 缓存 + 导出状态追踪 |
 | `minio` | 9000/9001 | S3 兼容对象存储（持久化导出产物与上传素材） |
 | `task-worker` | 无 | 持久化反馈 Reflection 与材料解析准备器 |
+| `maintenance` | 无 | 单实例素材保留、账户删除冷静期与运行时状态清理 |
 | `material-sandbox` | 无 | 无网络、无服务凭据的 PDF/PPTX/文本解析器 |
 | `render-worker` | 无 | 有凭据的任务领取与 Manim 脚本准备器（`video` profile） |
 | `render-sandbox` | 无 | 无网络、无服务凭据的 Manim 执行器（`video` profile） |
@@ -218,7 +220,7 @@ Compose 不再为数据库和 MinIO 提供隐式默认口令，启动前必须�
 
 ```bash
 curl http://localhost:8000/api/health
-# → {"status":"ok","version":"0.9.0"}
+# → {"status":"ok","version":"1.0.0"}
 curl http://localhost:8000/api/ready
 # → PostgreSQL、Redis、ArtifactStore 均可用时返回 {"status":"ready",...}
 ```
@@ -309,8 +311,8 @@ python -m scripts.seed_embeddings
 
 ## 可复现工程基线
 
-- 后端常规本地回归：**1204 passed，1 skipped，6 deselected**（真实 Manim 渲染和显式授权的在线评测按环境单独执行；symlink 能力按平台单独跳过）。
-- 前端测试当前收集：**44 files / 313 tests**；TypeScript、生产构建与 gzip Bundle Budget 的历史门禁数据保留，当前仍有 1 项 AppShell 导航测试失败，需修复后再宣称 `npm run verify` 全绿。
+- 后端常规本地回归（Python 3.12）：**1241 passed，1 failed，1 skipped，8 deselected**（真实 Manim 渲染和显式授权的在线评测按环境单独执行；当前失败项为持久化 SSE 后台生产者测试）。
+- 前端测试当前收集：**44 files / 316 tests**；TypeScript、测试、生产构建与 gzip Bundle Budget 均通过，`npm run verify` 已全绿。
 - EduFlowBench：50 个核心案例、8 个 Prompt Injection 案例、10 个检索案例、16 个确定性 Tool 案例及 8 个真实模型 Tool 在线案例。
 - EduFlowBench 核心 50 例在线基线已记录确定性通过率、独立 Judge、成本与延迟；Tool 选择率和至少 20% 人工校准仍待完成，不以 fixture 分数替代真实模型结论。
 
@@ -326,6 +328,8 @@ python -m scripts.seed_embeddings
 | [开发任务与接口规范](docs/开发任务与接口规范.md) | Phase 1-3 任务拆分 + API 契约 + DSL Schema 速查 |
 | [术语表](docs/GLOSSARY.md) | 中英术语对照 |
 | [贡献指南](CONTRIBUTING.md) | 分支策略与协作规范 |
+| [部署指南](DEPLOY.md) | Docker Compose、本地启动与生产部署注意事项 |
+| [生产部署契约](ops/production/README.md) | HTTPS、KMS、备份、恢复和生产门禁 |
 | [工程化改造与 EduFlowBench 计划](docs/工程化改造与EduFlowBench实施计划.md) | 缺陷、优先级、验收标准与实施进度 |
 | [当前与目标架构](docs/architecture.md) | 运行架构、目标演进图与 Agent 时序 |
 | [故障案例矩阵](docs/failure-cases.md) | 已验证故障、防护和仍待运行的压力测试 |
@@ -383,7 +387,7 @@ uv pip compile requirements.txt --python-version 3.12 --universal -o requirement
 
 ### 数据库迁移
 
-业务表由 Alembic 管理（基线迁移 `agent/alembic/versions/0001_baseline.py`：8 张 ORM 表 + knowledge_base），
+业务表由 Alembic 管理（基线迁移 `agent/alembic/versions/0001_baseline.py` 初始创建 8 张 ORM 表；当前模型已扩展至 28 张 ORM 表 + knowledge_base），
 Docker Compose 由一次性 `migrate` 服务执行 `alembic upgrade head`，成功后才启动 API；
 托管部署应使用同样的独立发布 Job，禁止每个 API 副本自行迁移。手动部署需先执行一次：
 

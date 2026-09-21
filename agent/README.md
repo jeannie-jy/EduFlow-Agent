@@ -247,7 +247,7 @@ python -m pytest tests/test_api_integration.py -v
 python -m pytest tests/ --cov=. --cov-report=html
 ```
 
-最近一次常规本地后端回归为 **1165 passed，6 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）。前端最近一次为 **42 files / 302 tests**，TypeScript、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
+最近一次 Python 3.12 常规本地后端回归为 **1241 passed，1 failed，1 skipped，8 deselected**（排除需要额外环境的真实 Manim 渲染和显式授权的在线评测）；失败项为持久化 SSE 后台生产者测试。前端最近一次为 **44 files / 316 tests**，TypeScript、测试、生产构建和 Bundle Budget 通过。离线回归覆盖 Agent 节点、受控 Tool Calling、Workflow/Tool Trace、EduFlowBench、API 集成、数据库、DSL Schema、LLM Gateway、任务恢复、持久化 SSE 重放、提示注入与 Manim 静态验证。
 
 ## 数据流
 

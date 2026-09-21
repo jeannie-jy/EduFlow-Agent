@@ -52,7 +52,7 @@ docker compose --profile observability up -d
 
 # 4. 验证
 curl http://localhost:8000/api/health
-# → {"status":"ok","version":"0.9.0"}
+# → {"status":"ok","version":"1.0.0"}
 ```
 
 ## 服务架构
