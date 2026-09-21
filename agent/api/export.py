@@ -71,31 +71,6 @@ def _prepare_dsl_for_export(dsl: dict) -> dict:
     return prepared
 
 
-def _requires_deterministic_renderer(dsl: dict) -> bool:
-    """Keep executable teaching state out of the creative rendering path."""
-    for key in ("sorting_trace_compilation", "algorithm_trace_compilation"):
-        if (dsl.get(key) or {}).get("applied"):
-            return True
-
-    executable_state_keys = {
-        "array",
-        "dist",
-        "distance",
-        "visited",
-        "queue",
-        "stack",
-        "predecessor",
-        "events",
-    }
-    for frame in dsl.get("frames", []):
-        if not isinstance(frame, dict):
-            continue
-        snapshot = frame.get("state_snapshot")
-        if isinstance(snapshot, dict) and executable_state_keys.intersection(snapshot):
-            return True
-    return False
-
-
 async def _get_redis():
     """获取 Redis 客户端（线程安全）。"""
     global _redis_client
@@ -540,12 +515,6 @@ async def _do_export_async(
 
         settings = get_settings()
         script_mode = getattr(settings, "manim_script_mode", "deterministic")
-        if script_mode == "llm" and _requires_deterministic_renderer(dsl):
-            logger.info(
-                "Executable lesson state requires deterministic renderer: job=%s",
-                job_id,
-            )
-            script_mode = "deterministic"
         quality = config.get("quality", "h")
         fps = config.get("fps", 30)
         include_subtitles = config.get("include_subtitles", True)

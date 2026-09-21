@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeFrameChanges, normalizeFramesArtifact } from "./artifact-model";
+import { describeFrameChanges, normalizeFramesArtifact, normalizeVideoArtifact } from "./artifact-model";
 
 describe("artifact-model", () => {
   it("normalizes legacy frame outputs and fills safe defaults", () => {
@@ -51,5 +51,20 @@ describe("artifact-model", () => {
       current_value: 2,
       constraints: { min: 1 },
     });
+  });
+
+  it("normalizes a video-specific storyboard", () => {
+    const video = normalizeVideoArtifact({
+      status: "ready",
+      storyboard: [{ frame_id: "scene-1", title: "选择节点", visual_objects: [] }],
+      storyboard_report: { compiled: true },
+    });
+
+    expect(video.storyboard?.[0]).toMatchObject({
+      frame_id: "scene-1",
+      title: "选择节点",
+      narration: "",
+    });
+    expect(video.storyboard_report).toEqual({ compiled: true });
   });
 });

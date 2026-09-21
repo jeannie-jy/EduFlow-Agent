@@ -1169,7 +1169,8 @@ async def _generate_coder_batches(
             f"{batch_context}\n\n<frame_batch>\n"
             f"这是第 {start // batch_size + 1} 批，只生成 f_{batch_start:03d} 到 "
             f"f_{batch_end:03d}，共 {count} 帧；不要生成其他帧。\n"
-            "每帧保持 2-3 个 visual_objects，narration 简洁，优先保证 JSON 完整。\n"
+            "每帧保持 1-2 个主 visual_objects，优先数据结构与状态面板；只有代码教学镜头才使用 code_block。"
+            "narration 简洁，优先保证 JSON 完整。\n"
             "除第一批外，只返回 frames，不要重复输出 parameters 或 assets。\n"
             "每个必需知识点至少在一个 frame 的 narration、visual label 或 code_block 中原样出现："
             f"{_prompt_json(required_concepts)}。\n"
@@ -1331,6 +1332,17 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                         "type": "string",
                                         "enum": ["primary", "derived", "secondary"],
                                     },
+                                    "nodes": {
+                                        "type": "array",
+                                        "maxItems": 32,
+                                        "items": {"type": "object"},
+                                    },
+                                    "edges": {
+                                        "type": "array",
+                                        "maxItems": 64,
+                                        "items": {"type": "object"},
+                                    },
+                                    "root_id": {"type": "string"},
                                     # 数组
                                     "cells": {"type": "array", "maxItems": 32},
                                     # 表格
@@ -1471,6 +1483,10 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
                                     },
                                     "target": {"type": "string"},
                                     "target_2": {"type": "string"},
+                                    "duration_ms": {"type": "integer"},
+                                    "params": {"type": "object"},
+                                    "from_value": {},
+                                    "to_value": {},
                                 },
                                 "required": ["type", "target"],
                             },
@@ -1778,14 +1794,30 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
         try:
             # 构建精简的帧摘要（避免 token 超限）
             frame_summaries = []
+            previous_snapshot: dict[str, Any] = {}
             for f in frames[:30]:  # 最多评 30 帧
                 vos = [vo.get("type", "?") for vo in f.get("visual_objects", [])]
+                snapshot = f.get("state_snapshot")
+                snapshot = snapshot if isinstance(snapshot, dict) else {}
+                changed_state_keys = sorted(
+                    key
+                    for key in set(previous_snapshot) | set(snapshot)
+                    if json.dumps(previous_snapshot.get(key), ensure_ascii=False, sort_keys=True, default=str)
+                    != json.dumps(snapshot.get(key), ensure_ascii=False, sort_keys=True, default=str)
+                )
                 frame_summaries.append({
                     "frame_id": f.get("frame_id", "?"),
                     "title": f.get("title", ""),
                     "narration": (f.get("narration", "") or "")[:200],
                     "object_types": vos[:5],
+                    "object_ids": [
+                        str(vo.get("id", "?"))
+                        for vo in f.get("visual_objects", [])[:5]
+                    ],
+                    "state_keys": sorted(snapshot),
+                    "changed_state_keys": changed_state_keys,
                 })
+                previous_snapshot = snapshot
 
             user_message = (
                 f"<topic>\n{_prompt_text(topic)}\n</topic>\n"

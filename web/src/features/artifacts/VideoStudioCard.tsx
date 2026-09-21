@@ -73,7 +73,11 @@ export function VideoStudioCard({
   targetFrameId?: string;
 }) {
   const video = useMemo(() => normalizeVideoArtifact(videoValue), [videoValue]);
-  const frames = useMemo(() => normalizeFramesArtifact(framesValue), [framesValue]);
+  const sourceFrames = useMemo(() => normalizeFramesArtifact(framesValue), [framesValue]);
+  const frames = useMemo(() => ({
+    ...sourceFrames,
+    frames: video.storyboard?.length ? video.storyboard : sourceFrames.frames,
+  }), [sourceFrames, video.storyboard]);
   const storedSession = useMemo(() => loadVideoJobSession(projectId), [projectId]);
   const defaultConfig: ExportManimRequest = {
     quality: productionQuality(video.config?.quality ?? "h"),

@@ -66,6 +66,52 @@ def test_execution_states_without_primary_graph_are_rejected():
 
 
 def test_non_traversal_topic_is_not_subject_to_motion_gate():
-    result = check_storyboard_dynamics([], topic="冒泡排序")
+    result = check_storyboard_dynamics([], topic="哈希表概览")
 
     assert result == {"checked": False, "dynamic": True, "issues": []}
+
+
+def test_sorting_storyboard_requires_multiple_array_states():
+    frames = [
+        {
+            "frame_id": "f_001",
+            "visual_objects": [{"id": "arr", "type": "array", "cells": [{"value": 3}, {"value": 1}]}],
+            "state_snapshot": {"array": [3, 1]},
+        },
+        {
+            "frame_id": "f_002",
+            "visual_objects": [{"id": "arr", "type": "array", "cells": [{"value": 1}, {"value": 3}]}],
+            "state_snapshot": {"array": [1, 3]},
+        },
+    ]
+
+    result = check_storyboard_dynamics(frames, topic="冒泡排序")
+
+    assert result["checked"] is True
+    assert result["dynamic"] is False
+    assert any("3 个" in issue["description"] for issue in result["issues"])
+
+
+def test_non_code_algorithm_rejects_code_on_every_scene():
+    frames = [
+        {
+            "frame_id": f"f_{index:03d}",
+            "title": "Dijkstra 演示",
+            "visual_objects": [
+                {"id": "primary_graph", "type": "graph", "graph_role": "primary"},
+                {"id": "code", "type": "code_block", "code": "relax()"},
+            ],
+            "state_snapshot": {
+                "algorithm": "dijkstra",
+                "dist": {"A": 0, "B": 4 - index},
+                "visited": ["A"] if index == 1 else ["A", "B"],
+            },
+        }
+        for index in range(1, 4)
+    ]
+
+    result = check_storyboard_dynamics(frames, topic="Dijkstra 最短路径")
+
+    assert result["dynamic"] is False
+    assert any("代码镜头" in issue["description"] for issue in result["issues"])
+    assert result["metrics"]["code_scene_count"] == 3

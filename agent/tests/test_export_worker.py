@@ -191,18 +191,6 @@ def test_export_boundary_recompiles_invalid_sorting_frames():
     assert prepared["frames"][-1]["state_snapshot"]["array"] == [1, 3, 5, 8]
 
 
-def test_executable_lessons_require_deterministic_renderer():
-    from api.export import _requires_deterministic_renderer
-
-    assert _requires_deterministic_renderer({
-        "frames": [{"state_snapshot": {"array": [5, 3, 8, 1]}}]
-    })
-    assert _requires_deterministic_renderer({
-        "frames": [{"state_snapshot": {"queue": ["A"], "visited": ["A"]}}]
-    })
-    assert not _requires_deterministic_renderer(_export_dsl())
-
-
 @pytest.mark.asyncio
 async def test_llm_static_validation_failure_falls_back_without_job_retry(tmp_path):
     from api.export import _do_export_async
