@@ -48,6 +48,8 @@ export type VideoArtifact = {
   status?: string;
   message?: string;
   config?: Record<string, unknown>;
+  storyboard?: ArtifactFrame[];
+  storyboard_report?: Record<string, unknown>;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -112,6 +114,10 @@ export function normalizeVideoArtifact(value: unknown): VideoArtifact {
     status: source.status ? String(source.status) : undefined,
     message: source.message ? String(source.message) : undefined,
     config: asRecord(source.config),
+    storyboard: Array.isArray(source.storyboard)
+      ? normalizeFramesArtifact({ frames: source.storyboard }).frames
+      : undefined,
+    storyboard_report: asRecord(source.storyboard_report),
   };
 }
 

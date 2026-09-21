@@ -24,6 +24,12 @@ VIDEO_OUTPUT_SCHEMA: dict[str, Any] = {
         "job_id": {"type": "string"},
         "status": {"type": "string"},
         "config": {"type": "object"},
+        "storyboard": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {"type": "object"},
+        },
+        "storyboard_report": {"type": "object"},
         "message": {"type": "string"},
     },
     "required": ["status"],
@@ -102,10 +108,15 @@ class VideoGenerator(BaseGenerator):
                 "config": {},
             }
 
+        from tools.compile_video_storyboard import compile_video_storyboard
+
+        video_dsl = compile_video_storyboard(dsl)
         return {
             "schema_version": "1.0",
             "source_frames_version": str(dsl.get("artifact_version", "")),
             "status": "ready",
+            "storyboard": video_dsl.get("frames", []),
+            "storyboard_report": video_dsl.get("video_storyboard_report", {}),
             "config": {
                 "quality": "h",
                 "format": "mp4",

@@ -329,6 +329,46 @@ class TestDispatchModulesErrors:
         assert error_data["error"] == "模块生成失败，请稍后重试"
         assert "Simulated generator failure" not in error_events[0]["data"]
 
+    async def test_non_finite_module_output_is_json_safe_and_does_not_abort(self):
+        from services.module_dispatcher import dispatch_modules
+
+        class NonFiniteGen(_MockWorkingGen):
+            module_id = "non_finite"
+            display_name = "Non-finite values"
+
+            async def generate(self, **kwargs):
+                return {
+                    "distances": {
+                        "reachable": 2,
+                        "unreachable": float("inf"),
+                        "negative": float("-inf"),
+                        "unknown": float("nan"),
+                    }
+                }
+
+        register_generator(NonFiniteGen())
+        events = [
+            event
+            async for event in dispatch_modules(
+                "test-proj-001",
+                _make_minimal_state(),
+                ["non_finite"],
+                ensure_frames=False,
+                persist_result=False,
+            )
+        ]
+
+        done = next(event for event in events if event["event"] == "module_done")
+        output = json.loads(done["data"])["output"]
+        assert output["distances"] == {
+            "reachable": 2,
+            "unreachable": "∞",
+            "negative": "-∞",
+            "unknown": "NaN",
+        }
+        terminal = json.loads(events[-1]["data"])
+        assert terminal["module_outputs"]["non_finite"] == output
+
     async def test_unknown_module_produces_error(self):
         from services.module_dispatcher import dispatch_modules
 

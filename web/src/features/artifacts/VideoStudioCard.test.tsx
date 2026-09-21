@@ -155,6 +155,30 @@ describe("VideoStudioCard", () => {
     await waitFor(() => expect(exportMocks.getExportStatus).toHaveBeenCalledWith("job-new"));
   });
 
+  it("previews the compiled video storyboard instead of raw interactive frames", () => {
+    render(
+      <VideoStudioCard
+        projectId="project-storyboard"
+        videoValue={{
+          status: "ready",
+          storyboard: [{
+            frame_id: "f1",
+            title: "视频状态面板",
+            narration: "只展示状态变化",
+            visual_objects: [{ id: "state", type: "table", rows: [["A", "0"]] }],
+          }],
+        }}
+        framesValue={{
+          artifact_version: "v1",
+          frames: [{ frame_id: "f1", title: "原始代码帧", visual_objects: [] }],
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("视频状态面板").length).toBeGreaterThan(0);
+    expect(screen.queryByText("原始代码帧")).not.toBeInTheDocument();
+  });
+
   it("migrates legacy 480p settings to the 720p production floor", () => {
     render(
       <VideoStudioCard

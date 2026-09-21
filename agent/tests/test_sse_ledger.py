@@ -261,6 +261,45 @@ async def test_events_are_committed_before_replay_and_terminal_does_not_rerun(te
 
 
 @pytest.mark.asyncio
+async def test_non_finite_event_payload_is_normalized_before_jsonb_write(test_db):
+    from services.sse_ledger import durable_sse_stream
+
+    project_id = uuid.uuid4()
+    stream_id = uuid.uuid4()
+    test_db.add(Project(id=project_id, title="Strict JSON event"))
+    await test_db.commit()
+    factory = async_sessionmaker(test_db.bind, expire_on_commit=False)
+
+    async def source():
+        yield {
+            "event": "done",
+            "data": json.dumps(
+                {"distance": float("inf"), "score": float("nan")}
+            ),
+        }
+
+    with patch("db.database.async_session_factory", factory):
+        events = [
+            event
+            async for event in durable_sse_stream(
+                source(),
+                stream_id=str(stream_id),
+                project_id=str(project_id),
+                kind="generation",
+            )
+        ]
+
+    assert json.loads(events[0]["data"])["distance"] == "∞"
+    async with factory() as session:
+        row = await session.scalar(
+            select(SSEEvent).where(SSEEvent.stream_id == stream_id)
+        )
+    assert row is not None
+    assert row.payload["distance"] == "∞"
+    assert row.payload["score"] == "NaN"
+
+
+@pytest.mark.asyncio
 async def test_background_producer_survives_consumer_disconnect(test_db):
     """Closing the HTTP-side consumer must not cancel generation."""
     from services.sse_ledger import durable_sse_stream

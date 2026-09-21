@@ -129,7 +129,12 @@ def merge_dsl_snapshot(
         for module_id in (module_outputs or {}):
             existing_errs.pop(module_id, None)
         snap["module_errors"] = existing_errs
-    return snap
+    # PostgreSQL JSONB rejects Python's non-standard NaN/Infinity encoding.
+    # Keep this boundary defensive because snapshots may also come from
+    # plugins, migrations, and generators that do not use ModuleDispatcher.
+    from services.json_safety import normalize_json_value
+
+    return normalize_json_value(snap)
 
 
 def compact_frames_artifact_reference(

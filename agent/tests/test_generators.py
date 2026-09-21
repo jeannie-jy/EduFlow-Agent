@@ -573,6 +573,8 @@ class TestVideoGenerator:
 
         assert result["status"] == "ready"
         assert result["source_frames_version"] == "frames-v1"
+        assert result["storyboard"][0]["frame_id"] == "f_001"
+        assert result["storyboard_report"]["compiled"] is True
         assert "job_id" not in result
 
 

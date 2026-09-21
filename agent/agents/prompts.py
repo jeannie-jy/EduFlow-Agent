@@ -128,12 +128,12 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
   visual_objects: [array/table 展示原始数据, formula 展示问题描述]
   例：`[{"id":"arr","type":"array","cells":[{"value":5},{"value":3},{"value":8},{"value":4}]}, {"id":"goal","type":"formula","label":"目标","latex":"升序排列"}]`
 
-**第2帧 — 算法思路**：展示核心操作 + 伪代码
-  visual_objects: [array/table 标注操作目标, code_block 高亮第1行]
+**第2帧 — 算法思路**：展示核心操作；仅当学习目标明确要求代码实现时才展示伪代码
+  visual_objects: [array/table 标注操作目标，可选 code_block]
   例：`[{"id":"arr","type":"array","cells":[{"value":5},{"value":3,"highlight":true},{"value":8},{"value":4}]}, {"id":"code","type":"code_block","language":"pseudocode","code":"for i in 0..n-1:\n  for j in 0..n-1-i:\n    if a[j] > a[j+1]:\n      swap(a[j], a[j+1])","highlight_lines":[1,2]}]`
 
-**第3-N帧 — 逐步执行**：每帧展示一步操作结果
-  visual_objects: [array/table 显示当前数据状态(变化格高亮), code_block 高亮当前行]
+**第3-N帧 — 逐步执行**：每帧只展示一步操作及其状态变化
+  visual_objects: [array/table/graph 显示当前数据状态与变化位置]
   动画: highlight 或 update_value 标记变化位置
 
 **最后一帧 — 结果**：展示最终有序/完成状态
@@ -152,7 +152,7 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
 首选：
 - **array** — 排序/搜索/线性结构的每一步数据状态。cells 中变化的格子加 highlight:true
 - **table** — 距离表、DP表、变量追踪表。headers+rows 展示结构
-- **code_block** — 伪代码，highlight_lines 始终指向当前执行行（每帧必有）
+- **code_block** — 仅用于“代码实现/伪代码映射”镜头；普通算法推演默认不用
 - **node + edge** — 图/树节点，变化的边或节点用 style.color 区别
 - **formula** — 关键公式/条件，放在舞台顶部或底部，不超 4 个
 
@@ -171,7 +171,7 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
   id, type:"table", label, headers["列1","列2"], rows[["v1","v2"]]
   例：`{"id":"tab","type":"table","label":"距离表","headers":["节点","dist","prev"],"rows":[["A","0","-"],["B","3","A"]]}`
 
-**code_block**（算法类每帧必须）
+**code_block**（仅代码教学镜头使用）
   id, type:"code_block", label, language:"text", code:"...", highlight_lines[行号]
   注意：highlight_lines 必须每帧更新指向当前执行行
   注意：language 仅支持 python, cpp, java, javascript, bash, text。
@@ -238,15 +238,18 @@ appear, disappear, highlight, update_value, compare, swap, move, relax_edge
 
 1. 默认帧数 = teaching_plan.estimated_total_frames，最多 12 帧；如果用户消息包含
    `<frame_batch>`，只生成其中指定的帧范围，不要重复或提前生成其他帧。
-2. **每帧 2-3 个 visual_objects**：数据展示 + code_block（算法类），不要塞满舞台
+2. **每帧 1-2 个主 visual_objects**：优先“数据结构 + 状态面板”，不要为了凑数加入代码
 3. **禁止 card 类型出现在 visual_objects 中**
 4. 帧间 visual_objects id 保持一致，只变内容（cells/highlight_lines/rows）
 5. narration 30-60 字，说清楚这一帧发生了什么即可
 6. 变化的位置必须有 highlight 或 update_value 动画
-7. code_block 的 highlight_lines 每帧更新
+7. 只有用户或教学计划明确要求代码实现时才使用 code_block；代码镜头不得超过总帧数的 20%，
+   且 highlight_lines 必须指向本镜头讲解的行
 
 8. 如果上下文提供了 `required_concepts`，每个术语必须至少在一个帧的 narration、visual
    label 或 code_block 中原样出现；不能只放在 teaching_plan 或 knowledge_graph 元数据中。
+9. 相邻执行帧必须复用稳定的 visual_object id 和布局；每帧只推进一个 select、relax、
+   compare、swap、visit 或 update 动作。不要把完整舞台清空后重新介绍同一批对象
 
 ## 图算法状态不变量（Dijkstra / 最短路径主题必须遵守）
 
@@ -294,6 +297,8 @@ array 的 `cells` 必须是对象数组（如 `[{"index":0,"value":3}]`），不
 缺少 headers/rows；code_block/formula/timeline/memory_block/mindmap 不得缺少各自内容字段。
 测验题使用 `interaction_hooks`/`checks`，不要把 `quiz` 当作 visual_object 类型。
 保持前一帧的图结构、变量命名和状态演进；不要重复 parameters/assets，不要输出 markdown。
+普通算法推演不要携带 code_block；只有明确讲解实现或伪代码映射的镜头才展示代码，
+且代码镜头不得超过总帧数的 20%。相邻执行帧复用稳定对象 id，每帧只推进一个语义动作。
 如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足
 dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `id=primary_graph`、
 `graph_role=primary`；其他反例/练习图必须标记为 `secondary`，不要让它们重置主轨迹。
@@ -416,6 +421,10 @@ REFLECTION_SYSTEM_PROMPT = """你是一位教学修订专家，负责根据质�
   若教学目标没有明确要求该反例，则直接删除反例并保留“要求非负权重”的准确说明。
 - 如果报告指出交互性不足，优先在已有帧补充一个 `checks` 或 `interaction_hooks`，
    不要为了增加交互而重写无关帧。
+- `storyboard_dynamics` 问题必须通过补足逐步变化的 state_snapshot、复用稳定视觉对象 id、
+  删除重复静态镜头来修复；每个执行帧只推进一个语义动作。
+- 非代码教学中若代码镜头超限，删除冗余 code_block，保留数据结构和状态面板；
+  不得把相同代码复制到每个执行帧。
 - `required_concept_missing` 必须通过在可见帧的 narration、visual label 或 code_block
   中补写原术语修复；不要只把术语放回 metadata。
 
@@ -652,7 +661,8 @@ box.animate.set_stroke(color="#F4D03F", fill_color="...")    # 错误！
 - 标题区固定为 y∈[2.7, 3.65]；核心内容只能位于 y∈[-2.35, 2.65]
 - 字幕区固定为 y∈[-3.65, -2.55]，主体、表格、代码不得进入字幕区
 - 同一时刻最多展示两个主组件；三项以上信息必须拆帧，不得缩成密集小字
-- 每个 DSL frame 都是完整快照。进入下一帧前必须 FadeOut/remove 上一帧的全部对象，或显式 Transform 需要保留的对象；禁止残留对象叠加
+- 每个 DSL frame 都提供完整状态，但视觉对象应按稳定 id 持续存在。相邻帧优先用 Transform
+  更新数值、颜色和位置；只有真正退出舞台的对象才 FadeOut/remove
 - 每帧使用一个 `frame_group = VGroup(...)` 管理主体，转场统一清理该 group
 - 表格或代码块必须先限制 `width <= 5.8`、`height <= 4.5`，再放入左右分栏
 - 不得依靠 `Text(width=...)` 换行；应先在字符串中插入 `\n`，正文最多两行

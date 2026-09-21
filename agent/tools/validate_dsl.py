@@ -1152,19 +1152,33 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
 def check_storyboard_dynamics(
     frames: list[dict[str, Any]], *, topic: str = ""
 ) -> dict[str, Any]:
-    """Require graph-traversal lessons to show state progression, not only terminal slides."""
+    """Require algorithm storyboards to expose a visible state trajectory.
+
+    Renderability alone is not a teaching-quality signal.  A sequence of
+    code-heavy slides can be perfectly valid Python while never showing an
+    algorithm state change.  This gate therefore checks the semantic state
+    carried by the storyboard and caps incidental code scenes.
+    """
     topic_text = str(topic).casefold()
     requested: list[str] = []
     if "bfs" in topic_text or "广度" in topic_text:
         requested.append("bfs")
     if "dfs" in topic_text or "深度" in topic_text:
         requested.append("dfs")
+    if "dijkstra" in topic_text or "迪杰斯特拉" in topic_text:
+        requested.append("dijkstra")
+    if "bellman" in topic_text or "贝尔曼" in topic_text:
+        requested.append("bellman_ford")
+    if any(marker in topic_text for marker in ("排序", "bubble", "冒泡", "insertion sort", "插入排序", "selection sort", "选择排序", "merge sort", "归并排序", "quick sort", "快速排序")):
+        requested.append("sorting")
+    if any(marker in topic_text for marker in ("动态规划", "dynamic programming", "dp ")):
+        requested.append("dynamic_programming")
     if not requested:
         return {"checked": False, "dynamic": True, "issues": []}
 
     issues: list[dict[str, Any]] = []
     for algorithm in requested:
-        distinct_states: set[tuple[str, ...]] = set()
+        distinct_states: set[str] = set()
         execution_frames = 0
         missing_graph_frames: list[str] = []
         for frame in frames:
@@ -1175,28 +1189,55 @@ def check_storyboard_dynamics(
                 continue
             frame_text = f"{frame.get('title', '')} {frame.get('narration', '')}".casefold()
             frame_algorithm = str(snapshot.get("algorithm") or "").casefold()
-            if frame_algorithm != algorithm and algorithm not in frame_text:
+            matching_algorithm = frame_algorithm == algorithm
+            if algorithm == "sorting":
+                matching_algorithm = matching_algorithm or "array" in snapshot
+            elif algorithm == "dynamic_programming":
+                matching_algorithm = matching_algorithm or any(
+                    key in snapshot for key in ("dp", "dp_table", "table")
+                )
+            elif algorithm in {"dijkstra", "bellman_ford"}:
+                matching_algorithm = matching_algorithm or any(
+                    key in snapshot for key in ("dist", "distances", "distance")
+                )
+            if not matching_algorithm and algorithm not in frame_text:
                 continue
-            visited = snapshot.get("visited")
-            if not isinstance(visited, list) or not visited:
+
+            state_keys = {
+                "bfs": ("visited", "queue", "current"),
+                "dfs": ("visited", "queue", "stack", "current"),
+                "dijkstra": ("dist", "distances", "visited", "queue", "predecessor", "current", "events"),
+                "bellman_ford": ("dist", "distances", "predecessor", "round", "edge_scan", "events"),
+                "sorting": ("array", "i", "j", "phase", "events"),
+                "dynamic_programming": ("dp", "dp_table", "table", "current", "row", "column"),
+            }[algorithm]
+            semantic_state = {
+                key: snapshot[key]
+                for key in state_keys
+                if key in snapshot
+            }
+            if not semantic_state:
                 continue
             execution_frames += 1
-            distinct_states.add(tuple(str(vertex) for vertex in visited))
-            has_primary_graph = any(
-                isinstance(visual, dict)
-                and visual.get("type") == "graph"
-                and visual.get("graph_role", visual.get("role", "primary")) == "primary"
-                for visual in frame.get("visual_objects", [])
+            distinct_states.add(
+                json.dumps(semantic_state, ensure_ascii=False, sort_keys=True, default=str)
             )
-            if not has_primary_graph:
-                missing_graph_frames.append(str(frame.get("frame_id", "?")))
+            if algorithm in {"bfs", "dfs", "dijkstra", "bellman_ford"}:
+                has_primary_graph = any(
+                    isinstance(visual, dict)
+                    and visual.get("type") == "graph"
+                    and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+                    for visual in frame.get("visual_objects", [])
+                )
+                if not has_primary_graph:
+                    missing_graph_frames.append(str(frame.get("frame_id", "?")))
 
         if len(distinct_states) < 3:
             issues.append({
                 "algorithm": algorithm,
                 "description": (
-                    f"{algorithm.upper()} 只有 {len(distinct_states)} 个不同 visited 状态；"
-                    "至少需要 3 个逐步增长的执行分镜，不能直接展示最终序列"
+                    f"{algorithm.upper()} 只有 {len(distinct_states)} 个不同执行状态；"
+                    "至少需要 3 个逐步变化的执行分镜，不能直接展示终态或重复静态画面"
                 ),
             })
         if execution_frames and len(missing_graph_frames) == execution_frames:
@@ -1208,10 +1249,37 @@ def check_storyboard_dynamics(
                 ),
             })
 
+    code_frames = sum(
+        any(
+            isinstance(visual, dict) and visual.get("type") == "code_block"
+            for visual in frame.get("visual_objects", [])
+        )
+        for frame in frames
+        if isinstance(frame, dict)
+    )
+    code_requested = any(
+        marker in topic_text
+        for marker in ("代码", "伪代码", "实现", "编程", "code", "implementation", "python", "java", "c++")
+    )
+    max_code_frames = max(1, math.ceil(len(frames) * 0.2)) if frames else 0
+    if not code_requested and code_frames > max_code_frames:
+        issues.append({
+            "algorithm": "storyboard",
+            "description": (
+                f"代码镜头有 {code_frames} 帧，超过非代码教学允许的 {max_code_frames} 帧；"
+                "应优先展示数据结构和状态变化"
+            ),
+        })
+
     return {
         "checked": True,
         "dynamic": not issues,
         "issues": issues,
+        "metrics": {
+            "scene_count": len(frames),
+            "code_scene_count": code_frames,
+            "max_code_scene_count": max_code_frames,
+        },
     }
 
 
