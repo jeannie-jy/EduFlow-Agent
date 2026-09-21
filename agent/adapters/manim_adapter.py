@@ -229,11 +229,49 @@ def _resolve_frame_centers(frame: dict[str, Any]) -> list[tuple[float, float]]:
     """Resolve explicit DSL positions or deterministic fallback grid positions."""
     objects = frame.get("visual_objects", [])
     if _frame_uses_auto_layout(frame):
-        return _auto_layout_centers(len(objects))
+        return [slot[0] for slot in _resolve_frame_slots(frame)]
     return [
         _map_dsl_position(visual_object.get("position") or {})
         for visual_object in objects
     ]
+
+
+def _resolve_frame_slots(
+    frame: dict[str, Any],
+) -> list[tuple[tuple[float, float], float, float]]:
+    """Give graph algorithms a dominant stage with stacked support panels."""
+    objects = frame.get("visual_objects", [])
+    count = len(objects)
+    if count <= 0:
+        return []
+
+    graph_index = next(
+        (index for index, item in enumerate(objects) if item.get("type") == "graph"),
+        None,
+    )
+    if graph_index is not None and count > 1:
+        support_count = count - 1
+        support_height = 4.55 / support_count - 0.2
+        support_centers = [
+            (3.15, 2.275 - support_height / 2 - index * (support_height + 0.2))
+            for index in range(support_count)
+        ]
+        slots: list[tuple[tuple[float, float], float, float]] = []
+        support_index = 0
+        for index in range(count):
+            if index == graph_index:
+                slots.append(((-3.15, 0.15), 5.75, 4.55))
+            else:
+                slots.append((support_centers[support_index], 5.65, support_height))
+                support_index += 1
+        return slots
+
+    centers = _auto_layout_centers(count)
+    columns = 1 if count == 1 else (2 if count <= 4 else 3)
+    rows = max(1, math.ceil(count / columns))
+    slot_width = 12.0 / columns - 0.45
+    slot_height = 4.65 / rows - 0.25
+    return [(center, slot_width, slot_height) for center in centers]
 
 
 def _estimated_object_bounds(
@@ -317,8 +355,8 @@ def validate_render_layout(dsl: dict[str, Any]) -> list[dict[str, Any]]:
             ))
 
         visual_objects = frame.get("visual_objects", [])
-        auto_centers = (
-            _auto_layout_centers(len(visual_objects))
+        auto_slots = (
+            _resolve_frame_slots(frame)
             if _frame_uses_auto_layout(frame)
             else None
         )
@@ -327,8 +365,8 @@ def validate_render_layout(dsl: dict[str, Any]) -> list[dict[str, Any]]:
             position = visual_object.get("position") or {}
             try:
                 center = (
-                    auto_centers[object_index]
-                    if auto_centers is not None
+                    auto_slots[object_index][0]
+                    if auto_slots is not None
                     else _map_dsl_position(position)
                 )
             except ValueError as exc:
@@ -530,20 +568,24 @@ class ManimScriptGenerator:
             title = " ".join(str(frame.get("title") or "").split())
             if title:
                 lines.append(
-                    f"        frame_title = Text({title[:80]!r}, font=EDUFLOW_CJK_FONT, "
-                    "font_size=30, weight=BOLD, color=WHITE)"
+                    f"        frame_title = Text({title[:32]!r}, font=EDUFLOW_CJK_FONT, "
+                    "font_size=22, weight=SEMIBOLD, color=WHITE)"
                 )
-                lines.append("        frame_title.scale_to_fit_width(12.0)")
+                lines.append("        frame_title.scale_to_fit_width(11.2)")
+                lines.append("        frame_title.scale_to_fit_height(0.55)")
                 lines.append("        frame_title.to_edge(UP, buff=0.25)")
                 lines.append("        self.play(FadeIn(frame_title), run_time=0.25)")
 
             # 生成 visual objects 创建代码
-            obj_vars, obj_code = self._generate_objects_for_frame(frame, prev_objects, i)
+            obj_vars, obj_code, object_followups = self._generate_objects_for_frame(
+                frame, prev_objects, i
+            )
             for code_line in obj_code:
                 lines.append(code_line)
 
             # 生成 animations
             self._generate_animations_for_frame(frame, obj_vars, prev_objects, lines)
+            lines.extend(object_followups)
 
             # 生成 narration（作为字幕）
             narration = frame.get("narration", "")
@@ -584,14 +626,15 @@ class ManimScriptGenerator:
 
     def _generate_objects_for_frame(
         self, frame: dict, prev_objects: dict, frame_idx: int
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], list[str], list[str]]:
         """为帧生成 Mobject 定义 + 创建代码，返回 {vo_id: variable_name} 映射。"""
         obj_vars: dict[str, str] = {}
         code_lines: list[str] = []
+        followup_lines: list[str] = []
 
         visual_objects = frame.get("visual_objects", [])
-        auto_centers = (
-            _auto_layout_centers(len(visual_objects))
+        auto_slots = (
+            _resolve_frame_slots(frame)
             if _frame_uses_auto_layout(frame)
             else None
         )
@@ -607,8 +650,8 @@ class ManimScriptGenerator:
 
             position = vo.get("position", {})
             raw_x, raw_y = (
-                auto_centers[object_index]
-                if auto_centers is not None
+                auto_slots[object_index][0]
+                if auto_slots is not None
                 else _map_dsl_position(position)
             )
             x = max(MANIM_X_LIMITS[0], min(MANIM_X_LIMITS[1], raw_x))
@@ -668,6 +711,7 @@ class ManimScriptGenerator:
                     graph_edges = []
                 snapshot = _graph_state_snapshot(frame)
                 event_edges = _graph_event_edges(snapshot)
+                animate_progress = _should_animate_graph_progress(frame, snapshot)
                 node_centers = _graph_node_centers(nodes, (x, y))
                 node_vars: dict[str, str] = {}
                 code_lines.append(f"        {var_name} = VGroup()")
@@ -685,7 +729,12 @@ class ManimScriptGenerator:
                     node_var = f"{var_name}_{safe_node_id}"
                     node_vars[node_id] = node_var
                     node_x, node_y = node_centers.get(node_id, (x, y))
-                    node_color = _graph_node_color(snapshot, node_id)
+                    source_id = str(snapshot.get("source") or snapshot.get("start") or "")
+                    node_color = (
+                        "#4A90D9"
+                        if animate_progress and node_id == source_id
+                        else ("#64748B" if animate_progress else _graph_node_color(snapshot, node_id))
+                    )
                     node_label = str(node.get("label") or node_id)[:MAX_GENERATED_LABEL_CHARS]
                     distances = snapshot.get("dist") or snapshot.get("distances") or {}
                     distance_suffix = ""
@@ -741,6 +790,22 @@ class ManimScriptGenerator:
                         f".next_to({var_name}, UP, buff=0.15)"
                     )
                     code_lines.append(f"        {var_name}.add({var_name}_title)")
+
+                if animate_progress:
+                    for visited_id in _graph_state_ids_in_order(snapshot, "visited"):
+                        visited_var = node_vars.get(visited_id)
+                        if visited_var:
+                            followup_lines.append(
+                                f"        self.play({visited_var}.animate.set_fill('#2ECC71', opacity=0.9)"
+                                ".set_stroke('#2ECC71', width=3), run_time=0.28)"
+                            )
+                    current_id = str(snapshot.get("current") or snapshot.get("selected") or "")
+                    current_var = node_vars.get(current_id)
+                    if current_var:
+                        followup_lines.append(
+                            f"        self.play({current_var}.animate.set_fill('#F59E0B', opacity=0.95)"
+                            ".set_stroke('#F59E0B', width=3), run_time=0.25)"
+                        )
 
             elif obj_type == "array":
                 cells = vo.get("cells") or []
@@ -859,17 +924,20 @@ class ManimScriptGenerator:
                     code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
                     display_var = f"{var_name}_group"
 
-            columns = 1 if len(visual_objects) == 1 else (2 if len(visual_objects) <= 4 else 3)
-            rows = max(1, math.ceil(len(visual_objects) / columns))
-            slot_width = 12.0 / columns - 0.45
-            slot_height = 4.65 / rows - 0.25
+            if auto_slots is not None:
+                _, slot_width, slot_height = auto_slots[object_index]
+            else:
+                columns = 1 if len(visual_objects) == 1 else (2 if len(visual_objects) <= 4 else 3)
+                rows = max(1, math.ceil(len(visual_objects) / columns))
+                slot_width = 12.0 / columns - 0.45
+                slot_height = 4.65 / rows - 0.25
             code_lines.append(
                 f"        eduflow_fit_to_safe_area({display_var}, "
                 f"np.array([{x:.2f}, {y:.2f}, 0]), {slot_width:.2f}, {slot_height:.2f})"
             )
             obj_vars[vo_id] = display_var
 
-        return obj_vars, code_lines
+        return obj_vars, code_lines, followup_lines
 
     def _generate_animations_for_frame(
         self,
@@ -1157,6 +1225,37 @@ def _graph_state_ids(snapshot: dict[str, Any], key: str) -> set[str]:
         if value is not None:
             ids.add(str(value))
     return ids
+
+
+def _graph_state_ids_in_order(snapshot: dict[str, Any], key: str) -> list[str]:
+    values = snapshot.get(key) or []
+    if not isinstance(values, (list, tuple)):
+        values = [values]
+    result: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("vertex", value.get("id", value.get("target")))
+        if value is not None and str(value) not in result:
+            result.append(str(value))
+    return result
+
+
+def _should_animate_graph_progress(
+    frame: dict[str, Any], snapshot: dict[str, Any]
+) -> bool:
+    """Animate traversal history only on execution-oriented storyboard frames."""
+    if len(_graph_state_ids_in_order(snapshot, "visited")) < 2:
+        return False
+    if snapshot.get("events"):
+        return True
+    phase = str(snapshot.get("phase") or "").casefold()
+    if phase in {"init", "select", "visit", "traverse", "execute", "enqueue", "dequeue"}:
+        return True
+    visible_text = f"{frame.get('title', '')} {frame.get('narration', '')}".casefold()
+    return any(
+        token in visible_text
+        for token in ("演示", "过程", "逐层", "深入", "访问序列", "travers")
+    )
 
 
 def _graph_node_color(snapshot: dict[str, Any], node_id: str) -> str:

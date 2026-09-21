@@ -1095,6 +1095,72 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def check_storyboard_dynamics(
+    frames: list[dict[str, Any]], *, topic: str = ""
+) -> dict[str, Any]:
+    """Require graph-traversal lessons to show state progression, not only terminal slides."""
+    topic_text = str(topic).casefold()
+    requested: list[str] = []
+    if "bfs" in topic_text or "广度" in topic_text:
+        requested.append("bfs")
+    if "dfs" in topic_text or "深度" in topic_text:
+        requested.append("dfs")
+    if not requested:
+        return {"checked": False, "dynamic": True, "issues": []}
+
+    issues: list[dict[str, Any]] = []
+    for algorithm in requested:
+        distinct_states: set[tuple[str, ...]] = set()
+        execution_frames = 0
+        missing_graph_frames: list[str] = []
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+            snapshot = frame.get("state_snapshot")
+            if not isinstance(snapshot, dict):
+                continue
+            frame_text = f"{frame.get('title', '')} {frame.get('narration', '')}".casefold()
+            frame_algorithm = str(snapshot.get("algorithm") or "").casefold()
+            if frame_algorithm != algorithm and algorithm not in frame_text:
+                continue
+            visited = snapshot.get("visited")
+            if not isinstance(visited, list) or not visited:
+                continue
+            execution_frames += 1
+            distinct_states.add(tuple(str(vertex) for vertex in visited))
+            has_primary_graph = any(
+                isinstance(visual, dict)
+                and visual.get("type") == "graph"
+                and visual.get("graph_role", visual.get("role", "primary")) == "primary"
+                for visual in frame.get("visual_objects", [])
+            )
+            if not has_primary_graph:
+                missing_graph_frames.append(str(frame.get("frame_id", "?")))
+
+        if len(distinct_states) < 3:
+            issues.append({
+                "algorithm": algorithm,
+                "description": (
+                    f"{algorithm.upper()} 只有 {len(distinct_states)} 个不同 visited 状态；"
+                    "至少需要 3 个逐步增长的执行分镜，不能直接展示最终序列"
+                ),
+            })
+        if execution_frames and len(missing_graph_frames) == execution_frames:
+            issues.append({
+                "algorithm": algorithm,
+                "description": (
+                    f"{algorithm.upper()} 的执行分镜没有携带 primary_graph，"
+                    "视频无法在同一张图上表现节点访问变化"
+                ),
+            })
+
+    return {
+        "checked": True,
+        "dynamic": not issues,
+        "issues": issues,
+    }
+
+
 async def check_algorithm_invariants(
     frames: list[dict[str, Any]],
     *,

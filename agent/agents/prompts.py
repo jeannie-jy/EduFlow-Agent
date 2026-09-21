@@ -205,6 +205,19 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
 Bellman-Ford 不使用优先队列；若展示每轮扫描的边，使用
 `edge_scan:[{"source":"u","target":"v","weight":-1}]`，`queue` 保持为空数组。
 
+### BFS / DFS 分镜硬约束
+
+- 如果主题同时包含 BFS 与 DFS，必须在同一张 `primary_graph` 上分别安排至少 3 个执行帧；
+  不能用一个“最终访问序列”帧代替算法过程
+- BFS 的执行帧每帧只推进一次出队/访问，`visited` 必须表现为逐步增长的前缀，
+  `queue` 展示该步结束后的 FIFO 队列
+- DFS 的执行帧每帧只推进一次入栈/弹栈/访问，`visited` 必须逐步增长，
+  `queue` 按栈顶优先顺序记录当前栈；narration 明确当前深入或回溯动作
+- 每个 BFS/DFS 执行帧都必须包含完整且结构不变的 `primary_graph`，并用
+  `current` 指向本帧正在访问的节点；不得只展示静态终态全绿图
+- 概念、应用和总结帧合计不得超过总帧数的 40%；至少一半帧必须产生可见状态变化
+- 非执行型总结帧不要重复摆放终态主图，改用精简表格或公式，避免视觉重复
+
 ## 动画类型
 
 appear, disappear, highlight, update_value, compare, swap, move, relax_edge
@@ -279,6 +292,9 @@ dist[u] + edge_weight，路径树边必须存在于图中。主图必须保持 `
 等别名；不要同时输出同一状态的多个字段别名。
 如果帧包含算法操作，附带 state_snapshot.events；不要伪造不存在的边或权重。
 Bellman-Ford 的边扫描使用 `edge_scan`，不要把 `u→v(w)` 字符串放入 queue。
+如果主题包含 BFS/DFS：每种算法至少生成 3 个状态递进执行帧；每帧保留完整
+primary_graph，visited 必须逐步增长并设置 current，不能直接跳到完整访问序列。
+同一帧只推进一个出队/入栈/访问动作；概念、应用和总结帧不得挤占主要分镜。
 上下文中的 `required_concepts` 必须逐项原样写入 narration、visual label 或 code_block。
 """
 

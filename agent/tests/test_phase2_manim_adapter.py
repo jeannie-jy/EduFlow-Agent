@@ -207,6 +207,60 @@ class TestManimScriptGenerator:
         assert "fill_color='#2ECC71'" in script
         compile(script, "<generated-manim>", "exec")
 
+    def test_graph_traversal_frame_animates_visited_nodes_in_order(self):
+        dsl = {
+            "project_id": "graph-motion",
+            "topic": "BFS",
+            "frames": [{
+                "frame_id": "f_001",
+                "title": "BFS逐层演示",
+                "visual_objects": [{
+                    "id": "primary_graph",
+                    "type": "graph",
+                    "nodes": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+                    "edges": [
+                        {"source": "A", "target": "B"},
+                        {"source": "A", "target": "C"},
+                    ],
+                }],
+                "state_snapshot": {
+                    "algorithm": "bfs",
+                    "phase": "visit",
+                    "source": "A",
+                    "visited": ["A", "B", "C"],
+                    "queue": [],
+                },
+                "animations": [{"type": "appear", "target": "primary_graph"}],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        a = script.index("primary_graph_0_A.animate.set_fill('#2ECC71'")
+        b = script.index("primary_graph_0_B.animate.set_fill('#2ECC71'")
+        c = script.index("primary_graph_0_C.animate.set_fill('#2ECC71'")
+        assert a < b < c
+
+    def test_graph_keeps_full_height_when_support_panels_are_stacked(self):
+        dsl = {
+            "project_id": "graph-layout",
+            "topic": "BFS and DFS",
+            "frames": [{
+                "frame_id": "f_001",
+                "visual_objects": [
+                    {"id": "primary_graph", "type": "graph", "nodes": [{"id": "A"}]},
+                    {"id": "state", "type": "table", "rows": [["A"]]},
+                    {"id": "code", "type": "code_block", "code": "visit(A)"},
+                ],
+                "animations": [],
+            }],
+        }
+
+        script = ManimScriptGenerator(dsl).generate()
+
+        assert "np.array([-3.15, 0.15, 0]), 5.75, 4.55" in script
+        assert "np.array([3.15, 1.24, 0]), 5.65, 2.07" in script
+
     def test_array_renders_readable_cells_and_semantic_highlights(self):
         dsl = {
             "project_id": "array",
@@ -381,6 +435,8 @@ class TestManimScriptGenerator:
         assert "eduflow_fit_to_safe_area(graph_0" in script
         assert "eduflow_fit_to_safe_area(table_0" in script
         assert "frame_title.to_edge(UP, buff=0.25)" in script
+        assert "font_size=22, weight=SEMIBOLD" in script
+        assert "frame_title.scale_to_fit_height(0.55)" in script
 
     def test_special_characters_in_topic(self):
         """话题包含特殊字符应被安全处理。"""

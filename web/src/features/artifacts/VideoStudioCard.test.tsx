@@ -155,6 +155,19 @@ describe("VideoStudioCard", () => {
     await waitFor(() => expect(exportMocks.getExportStatus).toHaveBeenCalledWith("job-new"));
   });
 
+  it("migrates legacy 480p settings to the 720p production floor", () => {
+    render(
+      <VideoStudioCard
+        projectId="project-quality-floor"
+        videoValue={{ status: "ready", config: { quality: "l" } }}
+        framesValue={{ frames: [] }}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /480p/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /720p/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("does not start automatically and resumes the same job after remount", async () => {
     exportMocks.getExportStatus.mockResolvedValue({
       job_id: "job-new",

@@ -24,13 +24,18 @@ import { normalizeFramesArtifact, normalizeVideoArtifact } from "./artifact-mode
 import { loadVideoJobSession, saveVideoJobSession } from "./video-job-session";
 
 const qualityOptions = [
-  { value: "l", label: "480p", note: "快速" },
   { value: "m", label: "720p", note: "标准" },
   { value: "h", label: "1080p", note: "高清" },
   { value: "k", label: "4K", note: "超清" },
 ] as const;
 
 const fpsOptions = [24, 30, 60] as const;
+
+function productionQuality(value: unknown): ExportManimRequest["quality"] {
+  // 480p is useful for internal previews but too soft for dense graph labels.
+  // Migrate legacy project/session settings to the 720p production floor.
+  return value === "k" || value === "h" || value === "m" ? value : "m";
+}
 
 function formatFileSize(value: number) {
   if (!value) return "";
@@ -71,7 +76,7 @@ export function VideoStudioCard({
   const frames = useMemo(() => normalizeFramesArtifact(framesValue), [framesValue]);
   const storedSession = useMemo(() => loadVideoJobSession(projectId), [projectId]);
   const defaultConfig: ExportManimRequest = {
-    quality: (video.config?.quality as ExportManimRequest["quality"]) ?? "h",
+    quality: productionQuality(video.config?.quality ?? "h"),
     format: String(video.config?.format ?? "mp4"),
     fps: Number(video.config?.fps ?? 30),
     include_subtitles: video.config?.include_subtitles !== false,
@@ -87,7 +92,10 @@ export function VideoStudioCard({
     storedSession?.status === "completed" ? null : storedSession?.error ?? null,
   );
   const [jobId, setJobId] = useState(storedSession?.jobId ?? video.job_id);
-  const [config, setConfig] = useState<ExportManimRequest>(storedSession?.config ?? defaultConfig);
+  const [config, setConfig] = useState<ExportManimRequest>(() => {
+    const initial = storedSession?.config ?? defaultConfig;
+    return { ...initial, quality: productionQuality(initial.quality) };
+  });
   const [creatingJob, setCreatingJob] = useState(false);
   const [cancellingJob, setCancellingJob] = useState(false);
   const [sourceFramesVersion, setSourceFramesVersion] = useState(storedSession?.sourceFramesVersion ?? video.source_frames_version);
