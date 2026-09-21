@@ -209,6 +209,9 @@ async def _append(
             payload = {"message": "Malformed server event"}
         if not isinstance(payload, dict):
             payload = {"value": payload}
+        from services.json_safety import normalize_json_value
+
+        payload = normalize_json_value(payload)
         event_name = str(event.get("event") or "progress")[:50]
         session.add(SSEEvent(
             id=uuid.uuid4(), stream_id=stream_id, event_id=event_id,

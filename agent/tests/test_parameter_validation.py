@@ -143,6 +143,28 @@ def test_successful_module_regeneration_clears_its_stale_marker():
     assert merged["module_outputs"]["video"]["status"] == "completed"
 
 
+def test_snapshot_merge_normalizes_non_finite_numbers_for_jsonb():
+    from services.project_persistence import merge_dsl_snapshot
+
+    merged = merge_dsl_snapshot(
+        {"state": {"distance": float("inf")}},
+        module_outputs={
+            "sandbox": {
+                "expected_output": {
+                    "negative": float("-inf"),
+                    "unknown": float("nan"),
+                }
+            }
+        },
+    )
+
+    assert merged["state"]["distance"] == "∞"
+    assert merged["module_outputs"]["sandbox"]["expected_output"] == {
+        "negative": "-∞",
+        "unknown": "NaN",
+    }
+
+
 def _session_with_project(parameters):
     project = SimpleNamespace(
         owner_id=None,

@@ -314,8 +314,14 @@ async def dispatch_modules(
 
 async def _run_module(mod_id: str, gen, *, semaphore: asyncio.Semaphore, **kwargs):
     try:
+        from services.json_safety import normalize_json_value
+
         async with semaphore:
             output = await gen.generate(**kwargs)
+        # LLM JSON parsers commonly accept non-standard NaN/Infinity tokens.
+        # Normalize before validation, persistence, and SSE fan-out so one
+        # artifact cannot terminate the complete module batch in PostgreSQL.
+        output = normalize_json_value(output)
         issues = gen.validate(output)
         blocking = [issue for issue in issues if issue.get("severity") == "high"]
         if blocking:
@@ -337,7 +343,17 @@ def _sse(event: str, data: dict[str, Any]) -> dict[str, str]:
     # unexpected value from aborting the entire scheduler (and therefore
     # suppressing the terminal event) just because it is not natively JSON
     # serializable.
-    return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
+    from services.json_safety import normalize_json_value
+
+    return {
+        "event": event,
+        "data": json.dumps(
+            normalize_json_value(data),
+            ensure_ascii=False,
+            default=str,
+            allow_nan=False,
+        ),
+    }
 
 
 async def persist_module_checkpoint(
