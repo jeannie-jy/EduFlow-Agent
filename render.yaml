@@ -4,7 +4,7 @@
 
 services:
   - type: web
-    name: eduflow-app
+    name: eduflow-limited
     runtime: docker
     plan: free
     region: singapore
