@@ -12,7 +12,6 @@ services:
     dockerfilePath: ./ops/render/Dockerfile
     healthCheckPath: /api/health
     autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 30
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -89,4 +88,3 @@ databases:
     databaseName: eduflow
     user: eduflow
     ipAllowList: []
-
