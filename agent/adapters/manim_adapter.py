@@ -910,19 +910,40 @@ class ManimScriptGenerator:
                     code_lines.append(f"        {var_name} = VGroup({var_name}, {var_name}_label)")
 
             else:
-                # 通用回退：Circle
+                # 未专门实现的组件也必须保持可读。过去统一回退为 Circle，
+                # 会把 tree/timeline/mindmap 等完整数据伪装成“几个没画完的点”。
+                # 这里用带类型和内容摘要的语义面板降级，绝不静默丢数据。
+                fallback_title = str(
+                    label or vo.get("title") or obj_type.replace("_", " ")
+                )[:MAX_GENERATED_LABEL_CHARS]
+                payload = {
+                    key: value
+                    for key, value in vo.items()
+                    if key not in {"id", "type", "label", "title", "position", "style"}
+                }
+                fallback_body = str(
+                    vo.get("content")
+                    or vo.get("text")
+                    or json.dumps(payload, ensure_ascii=False, separators=(", ", ": "))
+                )[:180]
                 code_lines.append(
-                    f"        {var_name} = Circle(radius={size:.2f}, color='{color}')"
+                    f"        {var_name}_box = RoundedRectangle(width=4.8, height=2.1, "
+                    f"corner_radius=0.16, color='{color}', fill_color='#111827', fill_opacity=0.9)"
                     f".move_to(np.array([{x:.1f}, {y:.1f}, 0]))"
                 )
-                if label:
-                    code_lines.append(
-                        f"        {var_name}_label = Text({label[:MAX_GENERATED_LABEL_CHARS]!r}, "
-                        "font=EDUFLOW_CJK_FONT, font_size=16)"
-                        f".next_to({var_name}, DOWN)"
-                    )
-                    code_lines.append(f"        {var_name}_group = VGroup({var_name}, {var_name}_label)")
-                    display_var = f"{var_name}_group"
+                code_lines.append(
+                    f"        {var_name}_title = Text({fallback_title!r}, "
+                    "font=EDUFLOW_CJK_FONT, font_size=20, color=WHITE)"
+                    f".next_to({var_name}_box.get_top(), DOWN, buff=0.25)"
+                )
+                code_lines.append(
+                    f"        {var_name}_body = Text({fallback_body!r}, "
+                    "font=EDUFLOW_CJK_FONT, font_size=14, color='#CBD5E1')"
+                    f".scale_to_fit_width(4.2).next_to({var_name}_title, DOWN, buff=0.25)"
+                )
+                code_lines.append(
+                    f"        {var_name} = VGroup({var_name}_box, {var_name}_title, {var_name}_body)"
+                )
 
             if auto_slots is not None:
                 _, slot_width, slot_height = auto_slots[object_index]

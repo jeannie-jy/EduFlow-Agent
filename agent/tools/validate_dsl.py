@@ -509,11 +509,66 @@ def _stabilize_primary_graph_topology(
     *,
     topic_text: str,
 ) -> int:
-    """Keep a Dijkstra primary graph immutable across execution frames."""
+    """Keep the best complete primary graph immutable across all graph lessons."""
     if _topic_requests_negative_counterexample(topic_text):
         return 0
-    baseline: dict[str, Any] | None = None
-    baseline_signature: frozenset[tuple[str, str, str]] | None = None
+    candidates: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        candidates.extend(
+            visual
+            for visual in _graph_visuals(frame)
+            if _graph_role(visual) == "primary" and not _graph_has_negative_edge(visual)
+        )
+    if not candidates:
+        return 0
+
+    def topology_score(visual: dict[str, Any]) -> tuple[int, int, int]:
+        nodes = visual.get("nodes", [])
+        edges = visual.get("edges", visual.get("graph_edges", []))
+        node_count = len(nodes) if isinstance(nodes, list) else 0
+        valid_edges = [
+            edge
+            for edge in (edges if isinstance(edges, list) else [])
+            if isinstance(edge, dict)
+            and _edge_endpoints(edge)[0] is not None
+            and _edge_endpoints(edge)[1] is not None
+        ]
+        return (1 if valid_edges else 0, len(valid_edges), node_count)
+
+    baseline = deepcopy(max(candidates, key=topology_score))
+    baseline_nodes = baseline.get("nodes", [])
+    baseline_edges = baseline.get("edges", baseline.get("graph_edges", []))
+    node_map: dict[str, dict[str, Any]] = {}
+    for node in baseline_nodes if isinstance(baseline_nodes, list) else []:
+        if isinstance(node, dict):
+            node_id = node.get("id", node.get("label"))
+            if node_id is None:
+                continue
+            normalized = deepcopy(node)
+            normalized["id"] = str(node_id)
+            normalized.setdefault("label", str(node_id))
+            node_map[str(node_id)] = normalized
+        elif node is not None:
+            node_map[str(node)] = {"id": str(node), "label": str(node)}
+    clean_edges: list[dict[str, Any]] = []
+    for edge in baseline_edges if isinstance(baseline_edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        source, target = _edge_endpoints(edge)
+        if source is None or target is None:
+            continue
+        source_id, target_id = str(source), str(target)
+        node_map.setdefault(source_id, {"id": source_id, "label": source_id})
+        node_map.setdefault(target_id, {"id": target_id, "label": target_id})
+        normalized = deepcopy(edge)
+        normalized["source"] = source_id
+        normalized["target"] = target_id
+        clean_edges.append(normalized)
+    baseline["nodes"] = list(node_map.values())
+    baseline["edges"] = clean_edges
+
     repairs = 0
     for frame in frames:
         if not isinstance(frame, dict):
@@ -521,20 +576,13 @@ def _stabilize_primary_graph_topology(
         for visual in _graph_visuals(frame):
             if _graph_role(visual) != "primary" or _graph_has_negative_edge(visual):
                 continue
-            signature = _frame_graph_signature(
-                {"visual_objects": [visual]},
-                primary_graph_id=None,
-            )
-            if baseline is None:
-                baseline = deepcopy(visual)
-                baseline_signature = signature
+            if (
+                visual.get("nodes") == baseline["nodes"]
+                and visual.get("edges", visual.get("graph_edges", [])) == baseline["edges"]
+            ):
                 continue
-            if signature == baseline_signature:
-                continue
-            # Preserve frame-local styling/labels but restore the executable
-            # topology (nodes and edges) to the first valid primary graph.
-            visual["nodes"] = deepcopy(baseline.get("nodes", []))
-            visual["edges"] = deepcopy(baseline.get("edges", []))
+            visual["nodes"] = deepcopy(baseline["nodes"])
+            visual["edges"] = deepcopy(baseline["edges"])
             repairs += 1
     return repairs
 
@@ -988,6 +1036,12 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
         bellman_repairs = _stabilize_bellman_ford_trace(frames)
         if bellman_repairs:
             logger.info("Algorithm guardrail stabilized Bellman-Ford trace | repairs=%d", bellman_repairs)
+    repairs = _stabilize_primary_graph_topology(frames, topic_text=topic_text)
+    if repairs:
+        logger.info(
+            "Algorithm guardrail stabilized primary graph topology | repairs=%d",
+            repairs,
+        )
     if not any(marker in topic_text for marker in _SHORTEST_PATH_MARKERS):
         result["frames"] = frames
         return result
@@ -996,7 +1050,6 @@ def stabilize_algorithm_trace(dsl: dict[str, Any]) -> dict[str, Any]:
     tree_repairs = _repair_shortest_path_trees(frames)
     if tree_repairs:
         logger.info("Algorithm guardrail stabilized shortest-path tree | repairs=%d", tree_repairs)
-    repairs = _stabilize_primary_graph_topology(frames, topic_text=topic_text)
     primary_graph_id = _primary_graph_id(frames)
     previous_visited: list[Any] = []
     previous_dist: dict[str, float] = {}
@@ -1159,6 +1212,112 @@ def check_storyboard_dynamics(
         "dynamic": not issues,
         "issues": issues,
     }
+
+
+def check_visual_completeness(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reject visual shells that a renderer can only draw as broken shapes.
+
+    Schema validation proves field *types*, not that a component contains the
+    data needed to communicate its meaning.  This render-aware contract is
+    intentionally deterministic so incomplete model output cannot slip into
+    an MP4 merely because ``nodes=[]`` or ``code=''`` is schema-valid.
+    """
+    issues: list[dict[str, str]] = []
+
+    def report(frame_id: str, visual_id: str, description: str) -> None:
+        issues.append({
+            "frame_id": frame_id,
+            "visual_id": visual_id,
+            "description": description,
+        })
+
+    for frame_index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        frame_id = str(frame.get("frame_id") or f"frames.{frame_index}")
+        visuals = frame.get("visual_objects", [])
+        if not isinstance(visuals, list):
+            continue
+        for visual_index, visual in enumerate(visuals):
+            if not isinstance(visual, dict):
+                continue
+            visual_id = str(visual.get("id") or f"visual_objects.{visual_index}")
+            object_type = str(visual.get("type") or "")
+
+            if object_type == "graph":
+                nodes = visual.get("nodes", [])
+                edges = visual.get("edges", visual.get("graph_edges", []))
+                node_ids: set[str] = set()
+                missing_node_ids = 0
+                for node in nodes if isinstance(nodes, list) else []:
+                    node_id = (
+                        node.get("id", node.get("label"))
+                        if isinstance(node, dict)
+                        else node
+                    )
+                    if node_id is None or not str(node_id).strip():
+                        missing_node_ids += 1
+                    else:
+                        node_ids.add(str(node_id))
+                if not node_ids:
+                    report(frame_id, visual_id, "graph 缺少可渲染节点")
+                    continue
+                if missing_node_ids:
+                    report(frame_id, visual_id, f"graph 有 {missing_node_ids} 个节点缺少 id")
+                valid_edges = []
+                invalid_endpoints: set[str] = set()
+                for edge in edges if isinstance(edges, list) else []:
+                    if not isinstance(edge, dict):
+                        continue
+                    source, target = _edge_endpoints(edge)
+                    if source is None or target is None:
+                        continue
+                    valid_edges.append(edge)
+                    invalid_endpoints.update(
+                        endpoint
+                        for endpoint in (str(source), str(target))
+                        if endpoint not in node_ids
+                    )
+                if len(node_ids) > 1 and not valid_edges:
+                    report(frame_id, visual_id, "多节点 graph 缺少边，无法表达图结构")
+                if invalid_endpoints:
+                    report(
+                        frame_id,
+                        visual_id,
+                        "graph 边引用未定义节点: " + ", ".join(sorted(invalid_endpoints)),
+                    )
+            elif object_type == "array" and not visual.get("cells"):
+                snapshot = frame.get("state_snapshot")
+                snapshot_array = snapshot.get("array") if isinstance(snapshot, dict) else None
+                if not isinstance(snapshot_array, list) or not snapshot_array:
+                    report(frame_id, visual_id, "array 缺少 cells")
+            elif object_type == "table":
+                if not visual.get("headers") and not visual.get("rows"):
+                    report(frame_id, visual_id, "table 缺少 headers 和 rows")
+            elif object_type == "code_block":
+                if not str(visual.get("code") or "").strip():
+                    report(frame_id, visual_id, "code_block 缺少 code")
+            elif object_type == "formula":
+                if not str(visual.get("latex") or "").strip():
+                    report(frame_id, visual_id, "formula 缺少 latex")
+            elif object_type == "timeline" and not visual.get("events"):
+                report(frame_id, visual_id, "timeline 缺少 events")
+            elif object_type == "memory_block" and not visual.get("blocks"):
+                report(frame_id, visual_id, "memory_block 缺少 blocks")
+            elif object_type == "edge":
+                if visual.get("source") is None or visual.get("target") is None:
+                    report(frame_id, visual_id, "edge 缺少 source 或 target")
+            elif object_type == "mindmap":
+                root = visual.get("root")
+                root_label = (
+                    root.get("name", root.get("label"))
+                    if isinstance(root, dict)
+                    else root
+                )
+                if not str(root_label or "").strip():
+                    report(frame_id, visual_id, "mindmap 缺少 root")
+
+    return {"complete": not issues, "issues": issues}
 
 
 async def check_algorithm_invariants(

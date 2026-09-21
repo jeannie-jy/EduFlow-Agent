@@ -188,6 +188,16 @@ depends_on_parameters 双向一致，运行时会据此计算最早受影响帧�
 
 **其他**: memory_block, process, timeline 按场景选用
 
+### 组件完整性硬约束
+
+- 不得输出只有 `id/type` 的视觉空壳：array 必须有非空 cells，table 必须有
+  headers 或 rows，code_block 必须有非空 code，formula 必须有非空 latex，
+  timeline 必须有 events，memory_block 必须有 blocks，mindmap 必须有 root
+- graph 的每个节点必须有唯一 id；超过一个节点时必须有 edges，且每条边的
+  source/target 都必须引用已声明节点。每个执行帧携带完整 nodes+edges，不能只返回高亮节点
+- 若当前知识无法满足组件必需字段，改用已能完整表达信息的 table/array/formula；
+  禁止用无标签圆点、空框或占位数据冒充尚未生成的图形
+
 ## state_snapshot 规范
 
 必须包含当前步骤的完整变量状态，且与 visual_objects 中展示的数据一致：
@@ -280,6 +290,8 @@ CODER_BATCH_SYSTEM_PROMPT = """你是 RenderScript 逐帧续写器。只输出�
 每帧必须有 `frame_id`、`title`、`narration`、`visual_objects`、`state_snapshot`；
 visual_objects 只能使用 RenderScript 合法类型，动画 target 必须引用当前帧对象。
 array 的 `cells` 必须是对象数组（如 `[{"index":0,"value":3}]`），不能直接写数字数组。
+所有组件必须数据闭合：graph 必须携带完整 nodes+edges 且边端点已声明；table 不得同时
+缺少 headers/rows；code_block/formula/timeline/memory_block/mindmap 不得缺少各自内容字段。
 测验题使用 `interaction_hooks`/`checks`，不要把 `quiz` 当作 visual_object 类型。
 保持前一帧的图结构、变量命名和状态演进；不要重复 parameters/assets，不要输出 markdown。
 如果主题是 Dijkstra/最短路径：dist 只能下降，visited 只能追加，松弛必须满足

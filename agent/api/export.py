@@ -488,6 +488,16 @@ async def _do_export_async(
         # default; the optional LLM director can never be a single point of
         # failure because it falls back before rendering.
         from adapters.manim_validator import has_errors, validate_script
+        from tools.validate_dsl import check_visual_completeness
+
+        visual_result = check_visual_completeness(dsl.get("frames", []))
+        if not visual_result["complete"]:
+            details = "; ".join(
+                f"{issue.get('frame_id', '?')}/{issue.get('visual_id', '?')}: "
+                f"{issue.get('description', '视觉组件不完整')}"
+                for issue in visual_result["issues"][:8]
+            )
+            raise ValueError(f"视频分镜包含不完整视觉组件，已阻止导出: {details}")
 
         settings = get_settings()
         script_mode = getattr(settings, "manim_script_mode", "deterministic")
