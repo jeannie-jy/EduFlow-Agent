@@ -13,12 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.provider_credentials import (
-    CredentialContext,
-    CredentialUnavailableError,
-    credential_scope,
-)
-
 from agents.llm_client import (
     EmbeddingDimensionError,
     _get_embedding_client,
@@ -29,6 +23,11 @@ from agents.llm_client import (
     create_embedding_client,
     create_llm_client,
     generate_embedding,
+)
+from services.provider_credentials import (
+    CredentialContext,
+    CredentialUnavailableError,
+    credential_scope,
 )
 
 # ============================================================================

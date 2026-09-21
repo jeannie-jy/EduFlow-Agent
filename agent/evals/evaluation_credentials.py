@@ -28,9 +28,14 @@ from services.provider_credentials import (
 def _provider_for_endpoint(endpoint: str) -> ProviderName:
     """Return metadata for a benchmark endpoint without applying app allowlists."""
     host = (urlsplit(endpoint).hostname or "").casefold()
-    if host.endswith("deepseek.com"):
+    if host == "deepseek.com" or host.endswith(".deepseek.com"):
         return "deepseek"
-    if host.endswith("aliyuncs.com"):
+    if (
+        host == "dashscope.aliyuncs.com"
+        or host.endswith(".dashscope.aliyuncs.com")
+        or host == "maas.aliyuncs.com"
+        or host.endswith(".maas.aliyuncs.com")
+    ):
         return "dashscope"
     if host in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}:
         return "ollama"

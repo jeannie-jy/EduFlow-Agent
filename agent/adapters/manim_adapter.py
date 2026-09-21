@@ -1237,10 +1237,7 @@ def _stringify_table_row(row: Any) -> list[str]:
     no attribute 'find'``.  Normalising at generation time keeps the
     generated script self-contained and preserves readable infinity cells.
     """
-    if isinstance(row, (list, tuple)):
-        values = row
-    else:
-        values = [row]
+    values = row if isinstance(row, (list, tuple)) else [row]
     return ["—" if value is None else str(value) for value in values]
 
 

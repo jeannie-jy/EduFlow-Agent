@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from adapters.manim_validator import has_errors, validate_script
 from adapters.manim_adapter import convert_dsl_to_manim
+from adapters.manim_validator import has_errors, validate_script
 
 GOLDEN_DIR = Path(__file__).parent / "fixtures" / "manim_golden"
 

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from evals.evaluation_credentials import online_eval_credential_scope
+from evals.evaluation_credentials import _provider_for_endpoint, online_eval_credential_scope
 from services.provider_credentials import (
     CredentialUnavailableError,
     current_embedding_credential,
@@ -20,6 +20,20 @@ def _settings() -> SimpleNamespace:
         embedding_endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1",
         embedding_model="text-embedding-v4",
     )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "provider"),
+    [
+        ("https://api.deepseek.com/v1", "deepseek"),
+        ("https://deepseek.com.evil.example/v1", "openai"),
+        ("https://dashscope.aliyuncs.com/compatible-mode/v1", "dashscope"),
+        ("https://aliyuncs.com.evil.example/v1", "openai"),
+        ("https://llm.example.maas.aliyuncs.com/v1", "dashscope"),
+    ],
+)
+def test_provider_detection_requires_a_domain_boundary(endpoint, provider):
+    assert _provider_for_endpoint(endpoint) == provider
 
 
 def test_online_eval_scope_is_noop_without_explicit_opt_in(monkeypatch):

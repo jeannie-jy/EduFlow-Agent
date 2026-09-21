@@ -16,6 +16,7 @@ import logging
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 from openai import AsyncOpenAI
 
@@ -58,6 +59,24 @@ def _backup_available(settings) -> bool:
     return False
 
 
+def _endpoint_host(endpoint: str) -> str:
+    """Extract a normalized host before applying provider-specific behavior."""
+    try:
+        return (urlsplit(endpoint).hostname or "").casefold()
+    except ValueError:
+        return ""
+
+
+def _is_deepseek_endpoint(endpoint: str) -> bool:
+    host = _endpoint_host(endpoint)
+    return host == "deepseek.com" or host.endswith(".deepseek.com")
+
+
+def _is_maas_endpoint(endpoint: str) -> bool:
+    host = _endpoint_host(endpoint)
+    return host == "maas.aliyuncs.com" or host.endswith(".maas.aliyuncs.com")
+
+
 def _structured_response_format(
     settings: Any,
     endpoint: str,
@@ -69,8 +88,8 @@ def _structured_response_format(
         return {"type": "json_object"}
     if mode == "json_schema" or (
         mode == "auto"
-        and "deepseek.com" not in endpoint.casefold()
-        and "maas.aliyuncs.com" not in endpoint.casefold()
+        and not _is_deepseek_endpoint(endpoint)
+        and not _is_maas_endpoint(endpoint)
     ):
         return {
             "type": "json_schema",
@@ -346,7 +365,7 @@ async def call_llm_structured(
             primary_kwargs["response_format"] = _structured_response_format(
                 settings, _primary_endpoint(settings), output_schema
             )
-        if disable_thinking and "deepseek.com" in _primary_endpoint(settings).lower():
+        if disable_thinking and _is_deepseek_endpoint(_primary_endpoint(settings)):
             primary_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
         backup_kwargs = {
@@ -356,7 +375,7 @@ async def call_llm_structured(
         if (
             disable_thinking
             and backup_client
-            and "deepseek.com" in settings.llm_backup_endpoint.lower()
+            and _is_deepseek_endpoint(settings.llm_backup_endpoint)
         ):
             backup_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 

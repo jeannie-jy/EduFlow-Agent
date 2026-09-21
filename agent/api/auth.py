@@ -110,7 +110,16 @@ def _validate_registration_challenge(challenge: str | None, solution: str | None
 
 def _normalize_email(email: str) -> str:
     normalized = email.strip().lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+    if normalized.count("@") != 1 or any(char.isspace() for char in normalized):
+        raise HTTPException(status_code=422, detail="Invalid email address")
+    local, domain = normalized.split("@")
+    if (
+        not local
+        or not domain
+        or "." not in domain
+        or domain.startswith(".")
+        or domain.endswith(".")
+    ):
         raise HTTPException(status_code=422, detail="Invalid email address")
     return normalized
 

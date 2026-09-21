@@ -6,8 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from scripts.migrate_legacy_data import legacy_material_source
-from scripts.migrate_legacy_data import migrate_legacy_data
+from scripts.migrate_legacy_data import legacy_material_source, migrate_legacy_data
 from services.artifact_store import StoredArtifact
 
 

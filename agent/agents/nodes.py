@@ -1707,8 +1707,8 @@ async def quality_node(state: AgentState) -> dict[str, Any]:
     from tools.validate_dsl import (
         check_algorithm_invariants,
         check_sorting_invariants,
-        check_storyboard_dynamics,
         check_state_consistency,
+        check_storyboard_dynamics,
         check_visual_completeness,
         validate_dsl_schema,
     )

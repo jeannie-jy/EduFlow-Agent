@@ -4,13 +4,15 @@
 - Mock LLM 客户端（可控返回）
 - Mock Embedding 客户端
 - 测试数据工厂（DSL、AgentState）
-- SQLite 内存数据库
+- SQLite 临时数据库
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -316,9 +318,10 @@ def async_return(value: Any) -> AsyncMock:
 
 @pytest_asyncio.fixture
 async def test_db():
-    """创建 SQLite 内存数据库用于集成测试。
+    """创建 SQLite 临时数据库用于集成测试。
 
-    使用 aiosqlite 避免 PostgreSQL 依赖，CI 友好。
+    使用文件数据库让 aiosqlite 的并发会话各自拥有独立连接，避免
+    后台任务与测试读会话共享 StaticPool 内存连接时互相回滚事务。
     """
     from sqlalchemy.ext.asyncio import (
         AsyncSession,
@@ -328,21 +331,24 @@ async def test_db():
 
     from db.models import Base
 
-    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+    with tempfile.TemporaryDirectory(prefix="eduflow-test-db-") as temp_dir:
+        database_path = Path(temp_dir) / "test.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}", echo=False)
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-    async_session = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
+        async_session = async_sessionmaker(
+            engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
 
-    async with async_session() as session:
-        yield session
-
-    await engine.dispose()
+        try:
+            async with async_session() as session:
+                yield session
+        finally:
+            await engine.dispose()
 
 
 # ============================================================================
