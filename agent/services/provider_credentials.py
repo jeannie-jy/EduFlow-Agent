@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
-import hmac
+import hashlib
 import os
 import uuid
 from collections.abc import Iterator
@@ -207,9 +207,17 @@ async def encrypt_api_key(
     payload_nonce = os.urandom(12)
     ciphertext = AESGCM(data_key).encrypt(payload_nonce, secret.encode(), aad)
     wrapped_key, key_version = await _wrap_data_key(data_key, aad)
-    # This is a keyed lookup fingerprint, not password hashing. HMAC-SHA256
-    # keeps duplicate-key detection deterministic without exposing the key.
-    fingerprint = hmac.digest(_fingerprint_key(), secret.encode(), "sha256").hex()
+    # Provider keys are high-entropy secrets, but static analysis conservatively
+    # treats them as password-like input. A deployment-specific scrypt salt keeps
+    # the fingerprint deterministic while making offline guessing expensive.
+    fingerprint = hashlib.scrypt(
+        secret.encode(),
+        salt=_fingerprint_key(),
+        n=2**14,
+        r=8,
+        p=1,
+        dklen=32,
+    ).hex()
     return {
         "ciphertext": base64.b64encode(ciphertext).decode(),
         "encrypted_data_key": wrapped_key,

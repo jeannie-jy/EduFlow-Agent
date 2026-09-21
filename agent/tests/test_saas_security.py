@@ -302,12 +302,25 @@ async def test_envelope_encryption_round_trip_never_persists_plaintext():
         envelope = await encrypt_api_key(
             secret, user_id=user_id, provider="deepseek", purpose="generation", version=1
         )
+        same_secret = await encrypt_api_key(
+            secret, user_id=user_id, provider="deepseek", purpose="generation", version=2
+        )
+        different_secret = await encrypt_api_key(
+            "sk-different-provider-key",
+            user_id=user_id,
+            provider="deepseek",
+            purpose="generation",
+            version=3,
+        )
         row = ProviderCredential(
             id=uuid.uuid4(), user_id=user_id, provider="deepseek", purpose="generation",
             version=1, status="valid", **envelope,
         )
         serialized = repr(envelope)
         assert secret not in serialized
+        assert len(envelope["key_fingerprint"]) == 64
+        assert envelope["key_fingerprint"] == same_secret["key_fingerprint"]
+        assert envelope["key_fingerprint"] != different_secret["key_fingerprint"]
         assert await decrypt_api_key(row) == secret
 
 

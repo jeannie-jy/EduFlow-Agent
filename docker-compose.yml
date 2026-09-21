@@ -9,7 +9,7 @@ services:
       context: ./web
       args:
         VITE_API_BASE_URL: /api
-    ports: ["${WEB_BIND_ADDRESS:-0.0.0.0}:5173:80"]
+    ports: ["${WEB_BIND_ADDRESS:-0.0.0.0}:5173:8080"]
     depends_on:
       agent-api:
         condition: service_healthy
