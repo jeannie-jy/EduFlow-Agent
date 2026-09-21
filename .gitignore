@@ -308,6 +308,8 @@ vllm_cache/
 
 # Docker Compose overrides (sensitive)
 docker-compose.override.yml
+/ops/production/*.env
+/ops/production/release-history/
 
 # ── Observability ──────────────────────────────────────────
 

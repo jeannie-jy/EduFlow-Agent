@@ -3,6 +3,42 @@
 This directory defines the checks a managed-cloud deployment must satisfy. It
 does not pretend to provision vendor resources without a selected cloud account.
 
+## Stage-one single-node deployment
+
+The repository includes a production overlay for one Linux application node
+connected to managed PostgreSQL, Redis, and S3-compatible object storage:
+
+- `compose.production.yaml` replaces local builds with immutable release images,
+  removes runtime dependencies on local stateful containers, constrains resources,
+  rotates container logs, and keeps the Web listener on loopback by default.
+- `stage1.env.example` is the operator-facing environment template. Store the
+  populated file outside the repository with mode `600`.
+- `scripts/preflight.sh` rejects placeholders, unsafe protocols, old Compose
+  versions, insecure file permissions, and invalid merged Compose configuration.
+- `scripts/deploy.sh` validates, pulls, migrates, starts, and waits for readiness.
+- `scripts/rollback.sh` restores the previous immutable application images but
+  deliberately does not reverse database migrations.
+- `nginx/eduflow.conf.example` terminates host TLS, routes `/api` directly to
+  the loopback-only API listener, strips client forwarding headers, and preserves
+  resumable SSE behavior. Other requests go to the loopback-only Web listener.
+
+On the Linux host:
+
+```bash
+sudo install -d -m 700 /etc/eduflow
+sudo install -m 600 ops/production/stage1.env.example /etc/eduflow/production.env
+sudo editor /etc/eduflow/production.env
+
+chmod +x ops/production/scripts/*.sh
+ops/production/scripts/preflight.sh /etc/eduflow/production.env
+ops/production/scripts/deploy.sh /etc/eduflow/production.env
+```
+
+The host reverse proxy or managed load balancer should forward HTTPS traffic to
+`127.0.0.1:5173`, while `/api` must route to `127.0.0.1:8000` as shown in the
+included Nginx example. Before changing image digests, copy the current file to
+`/etc/eduflow/production.previous.env`; that file is the rollback input.
+
 ## Release topology
 
 - Public traffic terminates at a managed CDN/WAF/load balancer on HTTPS 443.

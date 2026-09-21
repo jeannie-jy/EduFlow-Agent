@@ -1,0 +1,47 @@
+name: Production deployment configuration
+
+on:
+  pull_request:
+    paths:
+      - docker-compose.yml
+      - ops/production/**
+      - .github/workflows/production-deployment-ci.yml
+  push:
+    branches: [main, dev-v1.0]
+    paths:
+      - docker-compose.yml
+      - ops/production/**
+      - .github/workflows/production-deployment-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: bash -n ops/production/scripts/*.sh
+
+      - name: Validate merged production Compose model
+        run: |
+          docker compose \
+            --env-file ops/production/stage1.env.example \
+            -f docker-compose.yml \
+            -f ops/production/compose.production.yaml \
+            config --quiet
+
+      - name: Assert local stateful services are profile gated
+        run: |
+          services="$(docker compose \
+            --env-file ops/production/stage1.env.example \
+            -f docker-compose.yml \
+            -f ops/production/compose.production.yaml \
+            config --services | sort)"
+          printf '%s\n' "$services"
+          if grep -Eq '^(postgres|redis|minio)$' <<<"$services"; then
+            echo "Local stateful service leaked into the production service set" >&2
+            exit 1
+          fi
