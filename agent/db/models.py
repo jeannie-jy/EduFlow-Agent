@@ -23,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text as sa_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -281,10 +282,81 @@ class Material(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="uploaded", nullable=False)
     parsed_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_library: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class KnowledgeSource(Base):
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        CheckConstraint("scope IN ('builtin', 'teacher', 'external')", name="ck_knowledge_scope"),
+        CheckConstraint("status IN ('draft', 'published', 'retired')", name="ck_knowledge_status"),
+        CheckConstraint("scope <> 'teacher' OR owner_id IS NOT NULL", name="ck_teacher_knowledge_owner"),
+        Index("ix_knowledge_sources_owner_scope", "owner_id", "scope"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(240), unique=True, nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    material_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("materials.id", ondelete="CASCADE"), unique=True)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    subject: Mapped[str | None] = mapped_column(String(100))
+    difficulty: Mapped[int | None] = mapped_column(Integer)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    source_type: Mapped[str | None] = mapped_column(String(50))
+    author: Mapped[str | None] = mapped_column(String(300))
+    license: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class KnowledgeVersion(Base):
+    __tablename__ = "knowledge_versions"
+    __table_args__ = (
+        UniqueConstraint("source_id", "version", name="uq_knowledge_source_version"),
+        Index("uq_knowledge_current_version", "source_id", unique=True, postgresql_where=sa_text("is_current")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[str] = mapped_column(String(100), nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding_model: Mapped[str | None] = mapped_column(String(200))
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint("version_id", "ordinal", name="uq_knowledge_chunk_ordinal"),
+        Index("ix_knowledge_chunks_version", "version_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("knowledge_versions.id", ondelete="CASCADE"), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    section: Mapped[str | None] = mapped_column(String(500))
+    locator: Mapped[str | None] = mapped_column(String(100))
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # The pgvector column is managed by Alembic and raw SQL. ORM callers need
+    # metadata and text only; mapping a generic type here would cast it badly.
+
+
+class ProjectKnowledgeSource(Base):
+    __tablename__ = "project_knowledge_sources"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AuditEvent(Base):

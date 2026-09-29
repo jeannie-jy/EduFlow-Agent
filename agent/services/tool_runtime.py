@@ -130,8 +130,24 @@ async def _knowledge_search(
 ) -> dict[str, Any]:
     assert isinstance(args, KnowledgeSearchArgs)
     from services.retrieval import retrieve_knowledge_context
+    from db.database import async_session_factory
+    from db.models import Project
 
-    result = await retrieve_knowledge_context(args.query, queries=[args.query])
+    async with async_session_factory() as session:
+        project = await session.get(Project, context.project_id)
+        if project is None:
+            raise LookupError("project_not_found")
+        if (
+            context.actor_id is not None
+            and context.actor_role != "admin"
+            and str(project.owner_id) != str(context.actor_id)
+        ):
+            raise PermissionError("project_owner_mismatch")
+
+    result = await retrieve_knowledge_context(
+        args.query, queries=[args.query], project_id=context.project_id,
+        owner_id=project.owner_id,
+    )
     result["sources"] = result.get("sources", [])[: args.top_k]
     result["selected_count"] = len(result["sources"])
     return result

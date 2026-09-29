@@ -9,11 +9,15 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import uuid
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_readonly_session
+from db.models import Project, User
+from config import get_settings
+from .auth import get_current_user, is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +39,41 @@ except Exception:
 async def search_knowledge(
     body: dict,
     session: AsyncSession = Depends(get_readonly_session),
+    current_user: User | None = Depends(get_current_user),
 ) -> dict:
     """语义检索知识库。
 
     优先使用 pgvector 向量检索，不可用时降级为关键词匹配。
     """
-    query = body.get("query", "")
-    top_k = min(body.get("top_k", 5), 50)
+    query = str(body.get("query") or "").strip()
+    if not query:
+        return {"results": []}
+    try:
+        top_k = min(max(int(body.get("top_k", 5)), 1), 50)
+    except (TypeError, ValueError):
+        top_k = 5
     subject = body.get("subject")
     difficulty = body.get("difficulty")
+
+    if get_settings().knowledge_v2_enabled:
+        from fastapi import HTTPException
+        from services.knowledge_library import search_library
+
+        project_id = None
+        owner_id = current_user.id if current_user else None
+        if body.get("project_id"):
+            try:
+                project_id = uuid.UUID(str(body["project_id"]))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Invalid project ID") from exc
+            project = await session.get(Project, project_id)
+            if project is None or (not is_admin(current_user) and str(project.owner_id) != str(owner_id)):
+                raise HTTPException(status_code=404, detail="Project not found")
+            owner_id = uuid.UUID(project.owner_id) if project.owner_id else None
+        return {"results": await search_library(
+            session, query, top_k=top_k, project_id=project_id, owner_id=owner_id,
+            subject=subject, difficulty=difficulty,
+        )}
 
     # 尝试 pgvector 检索
     try:
@@ -65,7 +95,12 @@ async def search_knowledge(
     if not _seed_data:
         return {"results": []}
 
+    from services.knowledge_service import _lexical_search_terms
+
     query_lower = query.lower()
+    terms = _lexical_search_terms(query)
+    if not terms:
+        return {"results": []}
     scored = []
     for item in _seed_data:
         concept = item.get("concept", "")
@@ -78,14 +113,14 @@ async def search_knowledge(
             continue
 
         score = 0.0
-        if query_lower in concept.lower():
+        if len(query_lower) >= 2 and query_lower in concept.lower():
             score = 0.95
-        elif any(word in content.lower() for word in query_lower.split()):
+        elif any(term in concept.lower() for term in terms):
+            score = 0.8
+        elif any(term in content.lower() for term in terms):
             score = 0.7
-        elif query_lower in item_subject.lower():
-            score = 0.5
         else:
-            score = 0.1
+            continue
 
         scored.append({
             "id": concept,

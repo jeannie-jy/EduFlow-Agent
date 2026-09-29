@@ -50,7 +50,9 @@ def build_retrieval_queries(topic: str, teaching_plan: dict[str, Any]) -> list[s
 
 
 async def retrieve_knowledge_context(
-    query: str, *, queries: list[str] | None = None
+    query: str, *, queries: list[str] | None = None,
+    project_id: str | None = None, owner_id: str | None = None,
+    subject: str | None = None, difficulty: int | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     search_queries = queries or [query]
@@ -68,18 +70,33 @@ async def retrieve_knowledge_context(
     try:
         from db.database import async_session_factory
         from services.knowledge_service import search_knowledge_pgvector
+        from services.knowledge_library import search_library
+        import uuid
 
         fused: dict[str, dict[str, Any]] = {}
         async with async_session_factory() as session:
             for search_query in search_queries:
-                rows = await search_knowledge_pgvector(
-                    search_query,
-                    top_k=settings.knowledge_search_top_k,
-                    session=session,
-                )
+                if getattr(settings, "knowledge_v2_enabled", False):
+                    rows = await search_library(
+                        session, search_query, top_k=settings.knowledge_search_top_k,
+                        project_id=uuid.UUID(project_id) if project_id else None,
+                        owner_id=uuid.UUID(owner_id) if owner_id else None,
+                        subject=subject, difficulty=difficulty,
+                    )
+                else:
+                    legacy_filters = {}
+                    if subject is not None:
+                        legacy_filters["subject"] = subject
+                    if difficulty is not None:
+                        legacy_filters["difficulty"] = difficulty
+                    rows = await search_knowledge_pgvector(
+                        search_query, top_k=settings.knowledge_search_top_k,
+                        session=session, **legacy_filters,
+                    )
                 for rank, row in enumerate(rows, 1):
                     source_id = str(
                         row.get("source_key")
+                        or row.get("chunk_id")
                         or row.get("id")
                         or row.get("concept")
                         or f"knowledge-{rank}"
@@ -139,6 +156,9 @@ async def retrieve_knowledge_context(
             "matched_queries": row.get("matched_queries", []),
             "trust": "retrieved_untrusted",
         }
+        for key in ("source_key", "chunk_id", "scope", "version", "section", "locator", "source_url", "author", "license", "subject", "difficulty"):
+            if row.get(key) is not None:
+                source[key] = row[key]
         sources.append(source)
         used_chars += len(content)
     return {

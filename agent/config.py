@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     # 1024-dimensional vectors. Keep this explicit: pgvector dimensions must
     # match the provider response exactly.
     embedding_dimension: int = Field(default=1024, ge=1, le=8192)
+    # Every persisted vector in the shared knowledge index uses this model.
+    knowledge_embedding_model: str = "text-embedding-v4"
+    knowledge_v2_enabled: bool = False
 
     # ── 知识库 ────────────────────────────────────────────
     knowledge_search_top_k: int = 5

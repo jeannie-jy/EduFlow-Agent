@@ -674,6 +674,8 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
         retrieval = await retrieve_knowledge_context(
             user_input,
             queries=build_retrieval_queries(user_input, teaching_plan),
+            project_id=state.get("project_id"),
+            owner_id=state.get("actor_id"),
         )
 
     logger.info("Knowledge: 开始构建知识图谱 | topic=%s", user_input[:80])
