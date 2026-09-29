@@ -7,7 +7,7 @@
 - `0028_knowledge_library` 建立来源、不可变版本、片段、项目授权表及 PostgreSQL 向量/三元组索引；旧 `knowledge_base` 不删除。
 - 向量固定为 `text-embedding-v4` 的 1024 维；模型或维度不符时不写入向量。无凭证时降级为关键词检索。
 - 旧 22 条可由 `python -m scripts.seed_knowledge_v2` 迁移，稳定 `source_key` 不变，标注为 `legacy` 而非人工审核通过。
-- `python -m scripts.import_curated_knowledge --input reviewed.json --dry-run` 验证七领域编辑记录。实际导入须由编辑确认 `reviewed_by`、权威来源、许可、先修关系、章节、难度和可视化元数据；`--embed` 才允许外部 Embedding 请求及费用。
+- `python -m scripts.import_curated_knowledge --input reviewed.json --dry-run` 验证七领域编辑记录。实际导入还必须提供 `--authorization approval.json`：独立审批文件需绑定导入 JSON 原始字节的 `catalog_sha256`，并将 `editorial_review`、`source_license_review`、`staging_import` 均设为 `approved`；`--embed` 另需 `embedding_consent: true`。导入条目必须有具体 `source_locator`，用于引用定位。该门禁防止误操作，并非数字签名或法律许可证明；没有真实审核证据不能自行填写批准值。
 - 检索支持数据库层作用域过滤、关键词与向量 RRF、本地确定性排序及具体 `version`/`section`/`locator`。API、工具和直接检索共用同一 v2 搜索函数；空查询和无命中返回空列表。
 
 ## 第一阶段：未满足的发布门槛

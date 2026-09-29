@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from scripts.check_knowledge_batch_readiness import check_batch
-from scripts.import_curated_knowledge import validate_catalog
+from scripts.import_curated_knowledge import main as import_main
+from scripts.import_curated_knowledge import validate_catalog, validate_import_authorization
 from scripts.validate_knowledge_draft import validate_approval, validate_batch
 
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
@@ -41,6 +42,36 @@ def test_first_batch_has_no_editorial_approval_fields():
 def test_draft_cannot_be_imported_as_reviewed_catalog():
     with pytest.raises(ValueError, match="JSON array"):
         validate_catalog(BATCH)
+
+
+def test_curated_import_requires_hash_bound_release_evidence(tmp_path, monkeypatch):
+    draft = validate_batch(SECOND_BATCH).entries[0]
+    source = validate_batch(SECOND_BATCH).sources[draft.source_ref]
+    row = draft.model_dump(exclude={"source_ref", "review_flags"})
+    row.update(
+        source_url=str(source.url), author=source.author, license="original_summary_link_only",
+        source_version=source.version, reviewed_by="test_editor", reviewed_at="2026-09-29",
+    )
+    catalog = tmp_path / "reviewed.json"
+    catalog.write_text(json.dumps([row], ensure_ascii=False), encoding="utf-8")
+    assert validate_catalog(catalog)[0].chunk()["locator"] == draft.source_locator
+    monkeypatch.setattr("sys.argv", ["import_curated_knowledge", "--input", str(catalog)])
+    with pytest.raises(SystemExit, match="2"):
+        import_main()
+
+    authorization = tmp_path / "authorization.json"
+    evidence = {
+        "catalog_sha256": hashlib.sha256(catalog.read_bytes()).hexdigest(),
+        "editorial_review": "approved", "source_license_review": "approved",
+        "staging_import": "approved", "embedding_consent": False,
+    }
+    authorization.write_text(json.dumps(evidence), encoding="utf-8")
+    assert validate_import_authorization(catalog, authorization, embed=False) == evidence
+    with pytest.raises(ValueError, match="embedding consent"):
+        validate_import_authorization(catalog, authorization, embed=True)
+    catalog.write_bytes(catalog.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="catalog_sha256"):
+        validate_import_authorization(catalog, authorization, embed=False)
 
 
 def test_chat_approval_is_bound_to_exact_draft_bytes(tmp_path):
