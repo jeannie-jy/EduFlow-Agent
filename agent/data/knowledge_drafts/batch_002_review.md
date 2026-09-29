@@ -2,13 +2,13 @@
 
 正文及字段见 [batch_002.json](batch_002.json)。本批均为原创中文摘要；用户已在聊天中确认本批 50 条**内容审核通过**，证据及草稿 SHA-256 记录在 `batch_002.approval.json`。原草稿保留 `draft_pending_human_review` 状态作为不可变审阅快照；来源许可已做**初步核查**，见 `batch_002.source_audit.json`（25 个来源元数据，24 个实际引用）和 `batch_002.nist_entry_audit.json`（11 个 NIST 词条）。两份记录均明确 `publication_clearance: false`，不能据此导入、生成 Embedding 或发布。第 1 批的审批记录不适用于本批。
 
-内容审核已由用户整体确认。以下清单继续用于来源定位、事实和许可复核；勾选不等于来源许可批准。对滚动版本文档需要锁定具体审核版本；NIST DADS 的 `algo_lcs` 词条明确标有 CRC Press 版权，`algo_a_star` 没有对应词条，`ds_circular_buffer` 只有相关但非同一概念的词条，须替换或补充来源。`man_pipe`、`man_open` 的 6.19 源文件 SPDX 已核实；`coverage_py` 网页文档具体再利用条款仍未独立确定。`kernel_sched` 来源元数据未被使用。RFC 仅链接原文并保留原创摘要；cp-algorithms 是社区参考，四条相关知识点需独立事实复核。原审批记录的来源许可状态仍是 `pending`。
+内容审核已由用户整体确认。以下清单继续用于来源定位、事实和许可复核；勾选不等于来源许可批准。对滚动版本文档需要锁定具体审核版本；NIST DADS 的 `algo_lcs` 词条明确标有 CRC Press 版权，`algo_a_star` 没有对应词条，`ds_circular_buffer` 只有相关但非同一概念的词条，须替换或补充来源。`man_pipe`、`man_open` 的 6.19 源文件 SPDX 已核实；`coverage_py` 的两个被引文档源文件已核对具体版本及 Apache-2.0 文件声明，但不延伸到第三方素材。`kernel_sched` 来源元数据未被使用。RFC 仅链接原文并保留原创摘要；cp-algorithms 是社区参考，四条相关知识点需独立事实复核。原审批记录的来源许可状态仍是 `pending`。
 
 上述三个错误或不精确来源已有独立的候选修订 `batch_002.source_revision_001.json`，绑定获批草稿哈希，仅变更引用元数据，不改 50 条知识点正文。候选分别是 UC Berkeley CS188 A* 小节、MIT OCW 6.006 LCS 讲义、Linux 6.2 环形缓冲区文档。MIT OCW 材料为 CC BY-NC-SA 4.0；本项目只保留原创摘要和链接，不复制、翻译、入向量库或展示讲义。伯克利页面未取得再分发许可，亦仅链接。修订不是导入清单，不能据此发布。
 
 用户随后在聊天中确认三处候选引用**编辑复核通过**；独立记录 `batch_002.source_revision_001.approval.json` 绑定修订文件的 SHA-256。该批准不扩展到整批来源许可，也不授权数据库导入或 Embedding。另有 `batch_002.version_pin_001.json` 记录 26 组来源或补充来源的版本、URL 与章节候选；多处已固定 Git 提交和文件对象，另有网页来源尚缺内容快照及校验值。
 
-逐文件许可追查结果：man-pages 6.19 官方标签中的 `fork.2`、`pipe.2`、`open.2` 均标注 `Linux-man-pages-copyleft`，证据见 `batch_002.man_pages_license_evidence.json`。Coverage.py 7.16.1 发行元数据标注 Apache-2.0，但引用网页文档的具体再利用条款尚未独立确定。当前均只使用原创摘要和链接，不复制来源文字。
+逐文件许可追查结果：man-pages 6.19 官方标签中的 `fork.2`、`pipe.2`、`open.2` 均标注 `Linux-man-pages-copyleft`，证据见 `batch_002.man_pages_license_evidence.json`。Coverage.py 7.16.1 标签的 `doc/index.rst` 与 `doc/branch.rst` 均有 Apache-2.0 标记，提交、文件对象与 NOTICE 见 `batch_002.coverage_doc_license_evidence.json`。这不是渲染网页所有素材的统一授权，当前仍仅使用原创摘要和链接，不复制来源文字。
 
 NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂度说明不足，已通过 `batch_002.source_supplement_001.json` 记录 Princeton Algorithms 4e 的补充论据，限于链接及原创摘要。独立预检 `python -m scripts.check_knowledge_batch_readiness --batch 2` 当前会拒绝测试库导入和向量索引：整批来源许可仍待签核、来源审核仍属初步、版本固定仍是候选，且没有 Embedding 同意。实际 PostgreSQL/pgvector 临时库的迁移、幂等、回滚和词法检索验证见 `../../evals/reports/rag_v2_stage1_tempdb_2026-09-29.md`。
 

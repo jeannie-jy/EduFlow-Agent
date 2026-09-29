@@ -158,6 +158,42 @@ def check_batch(directory: Path, number: int) -> dict:
                 )
                 if not valid_pro_git_evidence:
                     blockers.append("pro_git_version_evidence_mismatch")
+        if "coverage_py" in batch.sources:
+            coverage_evidence_path = directory / f"{stem}.coverage_doc_license_evidence.json"
+            if not coverage_evidence_path.exists():
+                blockers.append("coverage_doc_license_evidence_missing")
+            else:
+                coverage_evidence = _read_json(coverage_evidence_path)
+                coverage_files = coverage_evidence.get("files", {})
+                coverage_commit = coverage_evidence.get("commit_sha1", "")
+                valid_coverage_evidence = (
+                    audit.get("coverage_doc_evidence_sha256")
+                    == hashlib.sha256(coverage_evidence_path.read_bytes()).hexdigest()
+                    and coverage_evidence.get("batch_id") == batch.batch_id
+                    and coverage_evidence.get("base_draft_sha256") == digest
+                    and coverage_evidence.get("tag") == "7.16.1"
+                    and len(str(coverage_commit)) == 40
+                    and set(coverage_files) == {
+                        "doc/index.rst", "doc/branch.rst", "NOTICE.txt", "LICENSE.txt"
+                    }
+                    and all(
+                        row.get("source_url")
+                        == f"https://github.com/coveragepy/coveragepy/blob/"
+                        f"{coverage_commit}/{path}"
+                        and len(str(row.get("git_blob_sha1", ""))) == 40
+                        and len(str(row.get("response_sha256", ""))) == 64
+                        for path, row in coverage_files.items()
+                    )
+                    and all(
+                        coverage_files[path].get("license_notice")
+                        == "Apache-2.0 notice in first source line"
+                        for path in ("doc/index.rst", "doc/branch.rst")
+                    )
+                    and audit.get("sources", {}).get("coverage_py", {}).get("evidence_url")
+                    == coverage_files["doc/branch.rst"]["source_url"]
+                )
+                if not valid_coverage_evidence:
+                    blockers.append("coverage_doc_license_evidence_mismatch")
         if audit.get("status") != "approved" or audit.get("publication_clearance") is not True:
             blockers.append("source_audit_preliminary")
 

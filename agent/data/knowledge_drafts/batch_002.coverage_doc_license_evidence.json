@@ -1,0 +1,41 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "verified_at_utc": "2026-09-29",
+  "status": "versioned_document_source_license_identified_not_publication_clearance",
+  "publication_clearance": false,
+  "repository": "https://github.com/coveragepy/coveragepy",
+  "tag": "7.16.1",
+  "tag_sha1": "dd1b6560e59896d76c75c267ff697327b2f86b8c",
+  "commit_sha1": "ccbb99245dcb4e51a35087285499cdb22b164ccc",
+  "scope": "The two cited documentation pages are built from versioned source files. Exact files carry an Apache-2.0 notice; project NOTICE says the software is Apache-2.0 except where noted otherwise. This is evidence for these files, not a blanket claim for screenshots, third-party examples or unrelated pages. Only links and independent summaries are currently used.",
+  "files": {
+    "doc/index.rst": {
+      "source_url": "https://github.com/coveragepy/coveragepy/blob/ccbb99245dcb4e51a35087285499cdb22b164ccc/doc/index.rst",
+      "published_url": "https://coverage.readthedocs.io/en/7.16.1/",
+      "git_blob_sha1": "d6e14a93718e859639d65125b83b4509274c5bf5",
+      "response_sha256": "5a46bb39d0fc1e3ed42d4f1ae642d31dc4926b22d8b6fa2da6fa069bc75cd07e",
+      "license_notice": "Apache-2.0 notice in first source line"
+    },
+    "doc/branch.rst": {
+      "source_url": "https://github.com/coveragepy/coveragepy/blob/ccbb99245dcb4e51a35087285499cdb22b164ccc/doc/branch.rst",
+      "published_url": "https://coverage.readthedocs.io/en/7.16.1/branch.html",
+      "git_blob_sha1": "d4c72dc4ea8ce7942f1bf97b5087d71515d5d42d",
+      "response_sha256": "7c0db83adc5806aa476999a99574bf6a35a8f9cd9a1f72602c01a2a81ed8cdfb",
+      "license_notice": "Apache-2.0 notice in first source line"
+    },
+    "NOTICE.txt": {
+      "source_url": "https://github.com/coveragepy/coveragepy/blob/ccbb99245dcb4e51a35087285499cdb22b164ccc/NOTICE.txt",
+      "git_blob_sha1": "f19efa448473795b6cfb7f13e94fc4337ed2e8ca",
+      "response_sha256": "80e177ab397d5f332954693a52abc1b34b06c5792dd57297608b6d68a2f6af11",
+      "license_notice": "Apache-2.0 except where noted otherwise"
+    },
+    "LICENSE.txt": {
+      "source_url": "https://github.com/coveragepy/coveragepy/blob/ccbb99245dcb4e51a35087285499cdb22b164ccc/LICENSE.txt",
+      "git_blob_sha1": "f433b1a53f5b830a205fd2df78e2b34974656c7b",
+      "response_sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "license_notice": "Apache License Version 2.0"
+    }
+  },
+  "unresolved": "No source prose or examples have been copied. Any later reuse must preserve applicable Apache license and notice terms and exclude separately licensed material. The batch still requires independent editorial, license and import approval."
+}

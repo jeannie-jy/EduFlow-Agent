@@ -30,6 +30,7 @@ SECOND_MAN_EVIDENCE = BATCH.with_name("batch_002.man_pages_license_evidence.json
 SECOND_CP_EVIDENCE = BATCH.with_name("batch_002.cp_algorithms_version_evidence.json")
 SECOND_OWASP_EVIDENCE = BATCH.with_name("batch_002.owasp_version_evidence.json")
 SECOND_PRO_GIT_EVIDENCE = BATCH.with_name("batch_002.pro_git_version_evidence.json")
+SECOND_COVERAGE_EVIDENCE = BATCH.with_name("batch_002.coverage_doc_license_evidence.json")
 SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
@@ -166,6 +167,9 @@ def test_second_batch_source_audit_covers_metadata_without_publication_clearance
     assert audit["cp_algorithms_evidence_sha256"] == hashlib.sha256(SECOND_CP_EVIDENCE.read_bytes()).hexdigest()
     assert audit["owasp_evidence_sha256"] == hashlib.sha256(SECOND_OWASP_EVIDENCE.read_bytes()).hexdigest()
     assert audit["pro_git_evidence_sha256"] == hashlib.sha256(SECOND_PRO_GIT_EVIDENCE.read_bytes()).hexdigest()
+    assert audit["coverage_doc_evidence_sha256"] == hashlib.sha256(
+        SECOND_COVERAGE_EVIDENCE.read_bytes()
+    ).hexdigest()
 
 
 def test_second_batch_man_pages_license_evidence_is_pinned_to_three_source_blobs():
@@ -243,6 +247,29 @@ def test_pro_git_evidence_tampering_blocks_readiness(tmp_path):
     evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
     report = check_batch(tmp_path, 2)
     assert "pro_git_version_evidence_mismatch" in report["blockers"]
+
+
+def test_coverage_document_license_evidence_pins_cited_source_files():
+    evidence = json.loads(SECOND_COVERAGE_EVIDENCE.read_text(encoding="utf-8"))
+    assert evidence["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert evidence["tag"] == "7.16.1"
+    assert set(evidence["files"]) == {
+        "doc/index.rst", "doc/branch.rst", "NOTICE.txt", "LICENSE.txt"
+    }
+    assert all(
+        row["license_notice"] == "Apache-2.0 notice in first source line"
+        for path, row in evidence["files"].items() if path.startswith("doc/")
+    )
+    assert evidence["publication_clearance"] is False
+
+
+def test_coverage_document_license_evidence_tampering_blocks_readiness(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    evidence_path = tmp_path / SECOND_COVERAGE_EVIDENCE.name
+    evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert "coverage_doc_license_evidence_mismatch" in report["blockers"]
 
 
 def test_second_batch_nist_audit_flags_third_party_and_wrong_locators():
