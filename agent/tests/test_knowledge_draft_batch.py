@@ -22,6 +22,7 @@ SECOND_SOURCE_AUDIT = BATCH.with_name("batch_002.source_audit.json")
 SECOND_MAN_EVIDENCE = BATCH.with_name("batch_002.man_pages_license_evidence.json")
 SECOND_CP_EVIDENCE = BATCH.with_name("batch_002.cp_algorithms_version_evidence.json")
 SECOND_OWASP_EVIDENCE = BATCH.with_name("batch_002.owasp_version_evidence.json")
+SECOND_PRO_GIT_EVIDENCE = BATCH.with_name("batch_002.pro_git_version_evidence.json")
 SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
@@ -156,6 +157,7 @@ def test_second_batch_source_audit_covers_metadata_without_publication_clearance
     assert audit["man_pages_evidence_sha256"] == hashlib.sha256(SECOND_MAN_EVIDENCE.read_bytes()).hexdigest()
     assert audit["cp_algorithms_evidence_sha256"] == hashlib.sha256(SECOND_CP_EVIDENCE.read_bytes()).hexdigest()
     assert audit["owasp_evidence_sha256"] == hashlib.sha256(SECOND_OWASP_EVIDENCE.read_bytes()).hexdigest()
+    assert audit["pro_git_evidence_sha256"] == hashlib.sha256(SECOND_PRO_GIT_EVIDENCE.read_bytes()).hexdigest()
 
 
 def test_second_batch_man_pages_license_evidence_is_pinned_to_three_source_blobs():
@@ -215,6 +217,24 @@ def test_owasp_evidence_tampering_blocks_readiness(tmp_path):
     evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
     report = check_batch(tmp_path, 2)
     assert "owasp_version_evidence_mismatch" in report["blockers"]
+
+
+def test_pro_git_evidence_pins_two_sections_and_noncommercial_license():
+    evidence = json.loads(SECOND_PRO_GIT_EVIDENCE.read_text(encoding="utf-8"))
+    assert evidence["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert len(evidence["commit_sha1"]) == 40
+    assert set(evidence["sections"]) == {"se_branching", "se_merge_conflict"}
+    assert evidence["license_file"]["license_label"] == "CC BY-NC-SA 3.0 Unported"
+    assert evidence["publication_clearance"] is False
+
+
+def test_pro_git_evidence_tampering_blocks_readiness(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    evidence_path = tmp_path / SECOND_PRO_GIT_EVIDENCE.name
+    evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert "pro_git_version_evidence_mismatch" in report["blockers"]
 
 
 def test_second_batch_nist_audit_flags_third_party_and_wrong_locators():

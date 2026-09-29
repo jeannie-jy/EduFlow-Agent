@@ -1,0 +1,32 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "verified_at_utc": "2026-09-29",
+  "status": "agent_verified_repository_revision",
+  "publication_clearance": false,
+  "repository_url": "https://github.com/progit/progit2",
+  "branch_at_verification": "main",
+  "commit_sha1": "a013e3230a1207cfa5ae94d28ba7d2021063c337",
+  "license_file": {
+    "path": "LICENSE.asc",
+    "git_blob_sha1": "5aceb9e9b0ac28485ba538650b48ab2d23526ab0",
+    "license_label": "CC BY-NC-SA 3.0 Unported"
+  },
+  "sections": {
+    "se_branching": {
+      "path": "book/03-git-branching/sections/nutshell.asc",
+      "git_blob_sha1": "2bffd5ddbc891fb122d052ec5884069309430845",
+      "title": "Branches in a Nutshell",
+      "source_url": "https://github.com/progit/progit2/blob/a013e3230a1207cfa5ae94d28ba7d2021063c337/book/03-git-branching/sections/nutshell.asc",
+      "published_url": "https://git-scm.com/book/en/v2/Git-Branching-Branches-in-a-Nutshell"
+    },
+    "se_merge_conflict": {
+      "path": "book/03-git-branching/sections/basic-branching-and-merging.asc",
+      "git_blob_sha1": "a894b670259e312116f7d8cc8f712e61378a09b5",
+      "title": "Basic Branching and Merging",
+      "source_url": "https://github.com/progit/progit2/blob/a013e3230a1207cfa5ae94d28ba7d2021063c337/book/03-git-branching/sections/basic-branching-and-merging.asc",
+      "published_url": "https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging"
+    }
+  },
+  "reuse_scope": "User-confirmed noncommercial use; direct source links and independently written Chinese summaries only. No book text, translation, code or images copied."
+}

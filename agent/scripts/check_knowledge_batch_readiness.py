@@ -122,6 +122,42 @@ def check_batch(directory: Path, number: int) -> dict:
                 )
                 if not valid_owasp_evidence:
                     blockers.append("owasp_version_evidence_mismatch")
+        if "git_book" in batch.sources:
+            pro_git_evidence_path = directory / f"{stem}.pro_git_version_evidence.json"
+            if not pro_git_evidence_path.exists():
+                blockers.append("pro_git_version_evidence_missing")
+            else:
+                pro_git_evidence = _read_json(pro_git_evidence_path)
+                pro_git_sections = pro_git_evidence.get("sections", {})
+                pro_git_commit = pro_git_evidence.get("commit_sha1", "")
+                pro_git_keys = {
+                    entry.source_key for entry in batch.entries if entry.source_ref == "git_book"
+                }
+                valid_pro_git_evidence = (
+                    audit.get("pro_git_evidence_sha256")
+                    == hashlib.sha256(pro_git_evidence_path.read_bytes()).hexdigest()
+                    and pro_git_evidence.get("batch_id") == batch.batch_id
+                    and pro_git_evidence.get("base_draft_sha256") == digest
+                    and len(str(pro_git_commit)) == 40
+                    and set(pro_git_sections) == pro_git_keys
+                    and pro_git_evidence.get("license_file", {}).get("license_label")
+                    == "CC BY-NC-SA 3.0 Unported"
+                    and len(str(pro_git_evidence.get("license_file", {}).get("git_blob_sha1", ""))) == 40
+                    and all(
+                        row.get("source_url")
+                        == f"https://github.com/progit/progit2/blob/{pro_git_commit}/"
+                        f"{row.get('path')}"
+                        and len(str(row.get("git_blob_sha1", ""))) == 40
+                        and str(row.get("published_url", "")).startswith(
+                            "https://git-scm.com/book/en/v2/"
+                        )
+                        for row in pro_git_sections.values()
+                    )
+                    and audit.get("sources", {}).get("git_book", {}).get("evidence_url")
+                    == f"https://github.com/progit/progit2/blob/{pro_git_commit}/LICENSE.asc"
+                )
+                if not valid_pro_git_evidence:
+                    blockers.append("pro_git_version_evidence_mismatch")
         if audit.get("status") != "approved" or audit.get("publication_clearance") is not True:
             blockers.append("source_audit_preliminary")
 
