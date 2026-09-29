@@ -1,0 +1,23 @@
+{
+  "batch_id": "core-cs-002",
+  "draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "audit_date_utc": "2026-09-29",
+  "scope": "NIST DADS term pages for links plus independently written Chinese summaries only; excludes page prose, quotes, figures, linked code and third-party works",
+  "status": "preliminary_entry_review",
+  "publication_clearance": false,
+  "entries": {
+    "algo_counting_sort": {"entry_url":"https://xlinux.nist.gov/dads/HTML/countingsort.html","finding":"supports_core_concept","note":"Term page covers counting-sort mechanism; fact-check stability and complexity details separately."},
+    "algo_radix_sort": {"entry_url":"https://xlinux.nist.gov/dads/HTML/radixsort.html","finding":"needs_additional_source","note":"Term page describes LSD variant; draft also describes MSD processing. Add a source for that variant."},
+    "algo_bucket_sort": {"entry_url":"https://xlinux.nist.gov/dads/HTML/bucketsort.html","finding":"supports_core_concept","note":"Term page covers bucket allocation, per-bucket sorting and concatenation."},
+    "algo_a_star": {"entry_url":null,"finding":"wrong_source","note":"No matching A* term found in the NIST DADS index; replace with a precise, suitable source before release."},
+    "algo_kruskal": {"entry_url":"https://xlinux.nist.gov/dads/HTML/kruskalsalgo.html","finding":"needs_additional_source","note":"Term page supports minimum-spanning-tree selection, but draft's disjoint-set implementation and complexity need supporting source."},
+    "algo_lcs": {"entry_url":"https://xlinux.nist.gov/dads/HTML/longestCommonSubsequence.html","finding":"third_party_copyright_and_incomplete_source","note":"Entry expressly credits the Algorithms and Theory of Computation Handbook, copyright 1999 CRC Press LLC. Not NIST public-domain text. The page defines LCS but does not support draft's DP recurrence; replace or supplement with an independently usable exact source. No text was imported."},
+    "ds_deque": {"entry_url":"https://xlinux.nist.gov/dads/HTML/deque.html","finding":"supports_core_concept","note":"Term page covers operations at both ends."},
+    "ds_circular_buffer": {"entry_url":"https://xlinux.nist.gov/dads/HTML/circularQueue.html","finding":"related_but_not_exact","note":"The indexed NIST entry is circular queue, not circular buffer; it defines a bounded array-backed queue but not the draft's wraparound, read/write positions or streaming use. Replace or supplement source."},
+    "ds_skip_list": {"entry_url":"https://xlinux.nist.gov/dads/HTML/skiplist.html","finding":"supports_core_concept","note":"Term page covers randomized layered ordered lists and search; linked third-party diagrams/code excluded."},
+    "ds_bloom_filter": {"entry_url":"https://xlinux.nist.gov/dads/HTML/bloomFilter.html","finding":"supports_core_concept","note":"Term page covers bit array, multiple hashes and membership test; linked implementations/figures excluded."},
+    "ds_adjacency_matrix": {"entry_url":"https://xlinux.nist.gov/dads/HTML/adjacencyMatrixRep.html","finding":"supports_core_concept","note":"Term page covers graph matrix representation and weighted/undirected cases; linked code excluded."}
+  },
+  "source_policy_url": "https://xlinux.nist.gov/dads/Other/creditNotice.html",
+  "policy_note": "NIST credits notice distinguishes public-domain definitions from CRC Press copyrighted exceptions. A term page must be examined individually; this review does not grant publication clearance."
+}

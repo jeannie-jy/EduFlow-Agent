@@ -1,8 +1,8 @@
 # 核心 CS 知识草稿：第 2 批（50 条）
 
-正文及字段见 [batch_002.json](batch_002.json)。本批均为原创中文摘要；用户已在聊天中确认本批 50 条**内容审核通过**，证据及草稿 SHA-256 记录在 `batch_002.approval.json`。原草稿保留 `draft_pending_human_review` 状态作为不可变审阅快照；来源许可仍待核，不能导入、生成 Embedding 或发布。第 1 批的审批记录不适用于本批。
+正文及字段见 [batch_002.json](batch_002.json)。本批均为原创中文摘要；用户已在聊天中确认本批 50 条**内容审核通过**，证据及草稿 SHA-256 记录在 `batch_002.approval.json`。原草稿保留 `draft_pending_human_review` 状态作为不可变审阅快照；来源许可已做**初步核查**，见 `batch_002.source_audit.json`（25 个来源元数据，24 个实际引用）和 `batch_002.nist_entry_audit.json`（11 个 NIST 词条）。两份记录均明确 `publication_clearance: false`，不能据此导入、生成 Embedding 或发布。第 1 批的审批记录不适用于本批。
 
-内容审核已由用户整体确认。以下清单继续用于来源定位、事实和许可复核；勾选不等于来源许可批准。对滚动版本文档需要锁定具体审核版本；NIST DADS 中个别词条可能有第三方版权；RFC 仅链接原文并保留原创摘要；cp-algorithms 是社区参考，四条相关知识点需独立事实复核。所有来源的许可状态仍是 `pending`。
+内容审核已由用户整体确认。以下清单继续用于来源定位、事实和许可复核；勾选不等于来源许可批准。对滚动版本文档需要锁定具体审核版本；NIST DADS 的 `algo_lcs` 词条明确标有 CRC Press 版权，`algo_a_star` 没有对应词条，`ds_circular_buffer` 只有相关但非同一概念的词条，须替换或补充来源。`man_pipe`、`man_open` 的具体源文件许可与 `coverage_py` 文档许可尚未核实；`kernel_sched` 来源元数据未被使用。RFC 仅链接原文并保留原创摘要；cp-algorithms 是社区参考，四条相关知识点需独立事实复核。原审批记录的来源许可状态仍是 `pending`。
 
 ## 算法（8）
 

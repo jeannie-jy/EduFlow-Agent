@@ -15,6 +15,8 @@ SOURCE_AUDIT = BATCH.with_name("batch_001.source_audit.json")
 NIST_AUDIT = BATCH.with_name("batch_001.nist_entry_audit.json")
 SECOND_BATCH = BATCH.with_name("batch_002.json")
 SECOND_APPROVAL = BATCH.with_name("batch_002.approval.json")
+SECOND_SOURCE_AUDIT = BATCH.with_name("batch_002.source_audit.json")
+SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 
 
 def test_first_batch_has_50_unpublished_entries_across_seven_subjects():
@@ -95,6 +97,36 @@ def test_second_batch_content_approval_is_bound_to_exact_draft_bytes(tmp_path):
     changed.write_bytes(SECOND_BATCH.read_bytes() + b" ")
     with pytest.raises(ValueError, match="does not match"):
         validate_approval(changed, SECOND_APPROVAL)
+
+
+def test_second_batch_source_audit_covers_metadata_without_publication_clearance():
+    batch = validate_batch(SECOND_BATCH)
+    approval = validate_approval(SECOND_BATCH, SECOND_APPROVAL)
+    audit = json.loads(SECOND_SOURCE_AUDIT.read_text(encoding="utf-8"))
+    assert audit["batch_id"] == batch.batch_id
+    assert audit["draft_sha256"] == approval["draft_sha256"]
+    assert audit["status"] == "preliminary_only"
+    assert audit["publication_clearance"] is False
+    assert len(audit["sources"]) == 25
+    assert set(audit["sources"]) == set(batch.sources)
+    assert {entry.source_ref for entry in batch.entries} == set(batch.sources) - {"kernel_sched"}
+    assert all(row["evidence_url"].startswith("https://") for row in audit["sources"].values())
+    assert audit["sources"]["git_book"]["disposition"] == "conditional_noncommercial_link_summary"
+    assert audit["sources"]["man_pipe"]["disposition"] == "hold_exact_license"
+
+
+def test_second_batch_nist_audit_flags_third_party_and_wrong_locators():
+    batch = validate_batch(SECOND_BATCH)
+    audit = json.loads(SECOND_NIST_AUDIT.read_text(encoding="utf-8"))
+    assert audit["draft_sha256"] == validate_approval(SECOND_BATCH, SECOND_APPROVAL)["draft_sha256"]
+    nist_keys = {entry.source_key for entry in batch.entries if entry.source_ref == "nist_dads"}
+    assert len(nist_keys) == 11
+    assert set(audit["entries"]) == nist_keys
+    assert audit["publication_clearance"] is False
+    assert audit["entries"]["algo_lcs"]["finding"] == "third_party_copyright_and_incomplete_source"
+    assert audit["entries"]["algo_a_star"]["finding"] == "wrong_source"
+    assert audit["entries"]["algo_a_star"]["entry_url"] is None
+    assert audit["entries"]["ds_circular_buffer"]["finding"] == "related_but_not_exact"
 
 
 def test_first_batch_rejects_missing_source(tmp_path):
