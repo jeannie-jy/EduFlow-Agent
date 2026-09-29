@@ -11,6 +11,7 @@ from scripts.import_curated_knowledge import validate_catalog
 
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
 APPROVAL = BATCH.with_name("batch_001.approval.json")
+SOURCE_AUDIT = BATCH.with_name("batch_001.source_audit.json")
 SECOND_BATCH = BATCH.with_name("batch_002.json")
 
 
@@ -41,6 +42,20 @@ def test_chat_approval_is_bound_to_exact_draft_bytes(tmp_path):
     changed.write_bytes(BATCH.read_bytes() + b" ")
     with pytest.raises(ValueError, match="does not match"):
         validate_approval(changed, APPROVAL)
+
+
+def test_first_batch_preliminary_source_audit_covers_every_source_without_clearance():
+    batch = validate_batch(BATCH)
+    audit = json.loads(SOURCE_AUDIT.read_text(encoding="utf-8"))
+    approval = validate_approval(BATCH, APPROVAL)
+    assert audit["batch_id"] == batch.batch_id
+    assert audit["draft_sha256"] == approval["draft_sha256"]
+    assert audit["status"] == "preliminary_only"
+    assert audit["publication_clearance"] is False
+    assert set(audit["sources"]) == set(batch.sources)
+    assert {entry.source_ref for entry in batch.entries} == set(batch.sources)
+    assert all(row["evidence_url"].startswith("https://") for row in audit["sources"].values())
+    assert all(row["disposition"] != "approved_for_source_text_import" for row in audit["sources"].values())
 
 
 def test_second_batch_has_50_distinct_unreviewed_entries_across_seven_subjects():

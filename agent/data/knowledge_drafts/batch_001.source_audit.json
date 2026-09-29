@@ -1,0 +1,138 @@
+{
+  "batch_id": "core-cs-001",
+  "draft_sha256": "b3b24f41a8e369877fc2875313b39eaec9705dbbf43bb1ef9ce8c357597d0b98",
+  "audit_date_utc": "2026-09-29",
+  "auditor": "AI-assisted preliminary source-license review",
+  "use_case": "Store original Chinese concept summaries and source links; no source-text copying, screenshots, translated passages, or third-party text embedding",
+  "status": "preliminary_only",
+  "publication_clearance": false,
+  "notes": "A source-level policy check is not per-entry copyright clearance or legal advice. Content approval is separately recorded. Review source locators and exact source versions before editorial sign-off.",
+  "sources": {
+    "nist_dads": {
+      "license_label": "Public domain for NIST-authored definitions; CRC Press exceptions",
+      "evidence_url": "https://xlinux.nist.gov/dads/Other/creditNotice.html",
+      "disposition": "hold_per_entry",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "For each of 15 entries, resolve exact DADS term URL, author and credit notice; reject or replace CRC Press/other third-party definition; verify the term actually supports the concept. Do not copy definitions before that check."
+    },
+    "kernel_sched": {
+      "license_label": "Linux kernel GPL-2.0-only as a whole; individual documentation files require SPDX check",
+      "evidence_url": "https://docs.kernel.org/process/license-rules.html",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin kernel documentation version and exact .rst source file/SPDX; do not copy prose or diagrams under the generic site-wide label."
+    },
+    "kernel_mm": {
+      "license_label": "Linux kernel GPL-2.0-only as a whole; individual documentation files require SPDX check",
+      "evidence_url": "https://docs.kernel.org/process/license-rules.html",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin kernel documentation version and exact .rst source file/SPDX; do not copy prose or diagrams under the generic site-wide label."
+    },
+    "kernel_lock": {
+      "license_label": "Linux kernel GPL-2.0-only as a whole; individual documentation files require SPDX check",
+      "evidence_url": "https://docs.kernel.org/process/license-rules.html",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin kernel documentation version and exact .rst source file/SPDX; do not copy prose or diagrams under the generic site-wide label."
+    },
+    "rfc9293": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "rfc9110": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "rfc9111": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "rfc1034": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "rfc1035": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "rfc8200": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "rfc8446": {
+      "license_label": "IETF Trust Legal Provisions; RFC modification restricted",
+      "evidence_url": "https://www.rfc-editor.org/series/rfc-use/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link immutable RFC version and independently written summary only",
+      "required_action": "Keep RFC number and section; do not present a modified RFC passage as RFC text."
+    },
+    "postgres16": {
+      "license_label": "PostgreSQL License; copyright and license paragraphs must be retained in copies",
+      "evidence_url": "https://www.postgresql.org/about/licence/",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link PostgreSQL 16 manual and independently written summary only",
+      "required_action": "Resolve exact version-16 chapter URL. If source prose is copied later, retain mandated copyright and license text."
+    },
+    "git_book": {
+      "license_label": "CC BY-NC-SA 3.0 for Pro Git book content",
+      "evidence_url": "https://git-scm.com/book/en/v2",
+      "disposition": "hold_commercial_use",
+      "permitted_scope_assessed": "Reference link and independently written factual summary only; no book prose",
+      "required_action": "Do not copy, translate or adapt book text for commercial product without separate rights review/permission; consider Git official reference as replacement."
+    },
+    "python_unittest": {
+      "license_label": "PSF License Version 2 for documentation; code examples additionally 0BSD",
+      "evidence_url": "https://docs.python.org/3/license.html",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin Python minor documentation version; if documentation text is copied later, carry applicable license and attribution."
+    },
+    "github_actions": {
+      "license_label": "GitHub Docs content CC BY 4.0; code MIT in repository",
+      "evidence_url": "https://github.com/github/docs#license",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin exact documentation URL and revision; if copying/adapting licensed text later, provide attribution, license link and change notice."
+    },
+    "semver": {
+      "license_label": "CC BY 3.0 for Semantic Versioning specification",
+      "evidence_url": "https://semver.org/#license",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link specification 2.0.0 and independently written summary only",
+      "required_action": "If copying/adapting specification text later, give attribution and license notice."
+    },
+    "python_tutorial": {
+      "license_label": "PSF License Version 2 for documentation; code examples additionally 0BSD",
+      "evidence_url": "https://docs.python.org/3/license.html",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin Python minor documentation version; if documentation text is copied later, carry applicable license and attribution."
+    },
+    "python_reference": {
+      "license_label": "PSF License Version 2 for documentation; code examples additionally 0BSD",
+      "evidence_url": "https://docs.python.org/3/license.html",
+      "disposition": "conditional_link_summary",
+      "permitted_scope_assessed": "Link and independently written summary only",
+      "required_action": "Pin Python minor documentation version; if documentation text is copied later, carry applicable license and attribution."
+    }
+  }
+}
