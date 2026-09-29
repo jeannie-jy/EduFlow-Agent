@@ -11,6 +11,7 @@ from scripts.import_curated_knowledge import validate_catalog
 
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
 APPROVAL = BATCH.with_name("batch_001.approval.json")
+SECOND_BATCH = BATCH.with_name("batch_002.json")
 
 
 def test_first_batch_has_50_unpublished_entries_across_seven_subjects():
@@ -40,6 +41,18 @@ def test_chat_approval_is_bound_to_exact_draft_bytes(tmp_path):
     changed.write_bytes(BATCH.read_bytes() + b" ")
     with pytest.raises(ValueError, match="does not match"):
         validate_approval(changed, APPROVAL)
+
+
+def test_second_batch_has_50_distinct_unreviewed_entries_across_seven_subjects():
+    first = validate_batch(BATCH)
+    second = validate_batch(SECOND_BATCH)
+    assert second.batch_id == "core-cs-002"
+    assert second.status == "draft_pending_human_review"
+    assert len(second.entries) == 50
+    assert {entry.subject for entry in second.entries} == {entry.subject for entry in first.entries}
+    assert not ({entry.source_key for entry in first.entries} & {entry.source_key for entry in second.entries})
+    assert any("algo_counting_sort" in entry.prerequisites for entry in second.entries)
+    assert any("algo_insertion_sort" in entry.prerequisites for entry in second.entries)
 
 
 def test_first_batch_rejects_missing_source(tmp_path):

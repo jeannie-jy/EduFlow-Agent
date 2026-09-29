@@ -12,7 +12,7 @@
 
 ## 第一阶段：未满足的发布门槛
 
-1. **内容**：目前数据库仍只有原有 22 条 legacy 种子；`agent/data/knowledge_drafts/batch_001.json` 的 50 条草稿已获用户聊天确认的内容审核，证据绑定在 `batch_001.approval.json`。但来源许可仍待核，未导入或发布；其余约 208 条目标知识点尚待编写及审核。内容审核不等于来源许可与数据库验收。
+1. **内容**：目前数据库仍只有原有 22 条 legacy 种子；`agent/data/knowledge_drafts/batch_001.json` 的 50 条草稿已获用户聊天确认的内容审核，证据绑定在 `batch_001.approval.json`。第 2 批另有 50 条待审草稿（`batch_002.json`）；距约 280 条目标仍需再编写约 158 条。两个批次均未完成来源许可审核、导入或发布。内容审核不等于来源许可与数据库验收。
 2. **迁移**：已验证 Alembic 离线 SQL 能生成，但尚须在测试 PostgreSQL/pgvector 数据库实际升级、回填、回滚演练。使用 `python -m scripts.compare_knowledge_versions --dataset evals/datasets/retrieval_production_v1.jsonl --output <report.json>` 比对新旧排名及稳定 ID。
 3. **检索质量**：现有集仅 10 个生产检索用例，必须扩为七领域且含近义、易混与库外主题的人工标注集；在目标库实测 Recall@5 ≥ 90%、引用正确率 ≥ 95%，并核查无来源不附会引用。现有代码测试不能替代这些指标。
 4. **切换**：只有以上完成且旧项目引用仍可解析，才在测试环境开启 `KNOWLEDGE_V2_ENABLED=true`，通过端到端教学输出和回滚演练后逐步切生产。
