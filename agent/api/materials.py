@@ -492,7 +492,7 @@ async def queue_material_index(
     existing = await session.scalar(select(BackgroundJob).where(
         BackgroundJob.kind == "material_index",
         BackgroundJob.owner_id == owner_id,
-        BackgroundJob.payload["material_id"].astext == material_id,
+        BackgroundJob.payload["material_id"].as_string() == material_id,
     ).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()))
     if existing is None:
         existing = BackgroundJob(
@@ -528,7 +528,7 @@ async def get_material_index_status(
     job = await session.scalar(select(BackgroundJob).where(
         BackgroundJob.kind == "material_index",
         BackgroundJob.owner_id == owner_id,
-        BackgroundJob.payload["material_id"].astext == material_id,
+        BackgroundJob.payload["material_id"].as_string() == material_id,
     ).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()))
     source = await session.scalar(select(KnowledgeSource).where(
         KnowledgeSource.material_id == material.id,
@@ -563,7 +563,7 @@ async def retry_material_index(
     job = await session.scalar(select(BackgroundJob).where(
         BackgroundJob.kind == "material_index",
         BackgroundJob.owner_id == owner_id,
-        BackgroundJob.payload["material_id"].astext == material_id,
+        BackgroundJob.payload["material_id"].as_string() == material_id,
     ).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()).with_for_update())
     if job is None or job.status != "failed":
         raise HTTPException(status_code=409, detail="No failed index job to retry")

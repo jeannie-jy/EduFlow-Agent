@@ -62,7 +62,9 @@ async def test_teacher_scope_is_enforced_in_database_query():
     sql = str(statement)
     assert "s.owner_id = :owner_id" in sql
     assert "pks.project_id = :project_id" in sql
+    assert "p.owner_id = :owner_text" in sql
     assert params["owner_id"] == owner_id
+    assert params["owner_text"] == str(owner_id)
     assert params["project_id"] == project_id
 
 
@@ -70,6 +72,47 @@ async def test_teacher_scope_is_enforced_in_database_query():
 async def test_project_search_requires_owner():
     with pytest.raises(PermissionError):
         await search_library(AsyncMock(), "排序", project_id=uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_selected_materials_scope_rejects_unscoped_search_and_filters_sql():
+    with pytest.raises(PermissionError):
+        await search_library(AsyncMock(), "排序", scope_filter="teacher")
+    session = AsyncMock()
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    session.execute.return_value = result
+    with patch("services.knowledge_library._canonical_credential_available", return_value=False):
+        await search_library(
+            session, "排序", owner_id=uuid.uuid4(), project_id=uuid.uuid4(),
+            scope_filter="teacher",
+        )
+    assert "s.scope = 'teacher'" in str(session.execute.await_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_selected_materials_forces_v2_even_when_general_flag_is_off():
+    context = AsyncMock()
+    context.__aenter__.return_value = AsyncMock()
+    settings = type("Settings", (), {
+        "knowledge_v2_enabled": False, "knowledge_search_top_k": 5,
+        "retrieval_context_max_chars": 2000,
+    })()
+    search = AsyncMock(return_value=[])
+    with (
+        patch("db.database.async_session_factory", return_value=context),
+        patch("services.knowledge_library.search_library", search),
+        patch("services.knowledge_service.search_knowledge_pgvector", new_callable=AsyncMock) as legacy,
+        patch("services.retrieval.get_settings", return_value=settings),
+    ):
+        result = await retrieve_knowledge_context(
+            "排序", owner_id=str(uuid.uuid4()), project_id=str(uuid.uuid4()),
+            selected_materials_only=True,
+        )
+    assert result["status"] == "no_evidence"
+    assert result["evidence_policy"] == "selected_materials_only"
+    assert search.await_args.kwargs["scope_filter"] == "teacher"
+    legacy.assert_not_awaited()
 
 
 @pytest.mark.asyncio

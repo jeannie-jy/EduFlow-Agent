@@ -53,6 +53,7 @@ async def retrieve_knowledge_context(
     query: str, *, queries: list[str] | None = None,
     project_id: str | None = None, owner_id: str | None = None,
     subject: str | None = None, difficulty: int | None = None,
+    selected_materials_only: bool = False,
 ) -> dict[str, Any]:
     settings = get_settings()
     search_queries = queries or [query]
@@ -77,12 +78,13 @@ async def retrieve_knowledge_context(
         fused: dict[str, dict[str, Any]] = {}
         async with async_session_factory() as session:
             for search_query in search_queries:
-                if getattr(settings, "knowledge_v2_enabled", False):
+                if selected_materials_only or getattr(settings, "knowledge_v2_enabled", False):
                     rows = await search_library(
                         session, search_query, top_k=settings.knowledge_search_top_k,
                         project_id=uuid.UUID(project_id) if project_id else None,
                         owner_id=uuid.UUID(owner_id) if owner_id else None,
                         subject=subject, difficulty=difficulty,
+                        **({"scope_filter": "teacher"} if selected_materials_only else {}),
                     )
                 else:
                     legacy_filters = {}
@@ -171,6 +173,7 @@ async def retrieve_knowledge_context(
         "context_chars": used_chars,
         "truncated": len(sources) < len(rows),
         "sources": sources,
+        "evidence_policy": "selected_materials_only" if selected_materials_only else "open",
         "mode": "keyword" if embedding_degraded else "semantic",
         **(
             {"quality_notice": "Embedding 未配置，检索已降级为关键词匹配。"}

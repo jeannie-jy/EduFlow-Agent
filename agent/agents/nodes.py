@@ -18,6 +18,7 @@ from copy import deepcopy
 from typing import Any
 
 from config import get_settings
+from services.retrieval import _is_abstention_intent
 from tools.finalize_dsl import finalize_dsl
 
 from .llm_client import call_llm_structured
@@ -611,10 +612,14 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
     tool_calls: list[dict[str, Any]] = []
     tool_evidence: list[dict[str, Any]] = []
     settings = get_settings()
+    selected_materials_only = (
+        (state.get("constraints") or {}).get("knowledge_scope") == "selected_materials"
+    )
     use_tools = bool(
         state.get("enable_tools", False)
         and settings.tool_calling_enabled
         and state.get("project_id")
+        and not selected_materials_only
     )
     if use_tools:
         from services.tool_runtime import run_tool_calling_loop
@@ -665,7 +670,7 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             logger.warning("Tool Calling unavailable; falling back to retrieval: %s", type(exc).__name__)
             use_tools = False
 
-    if not use_tools and state.get("enable_retrieval", False):
+    if not use_tools and (state.get("enable_retrieval", False) or selected_materials_only):
         from services.retrieval import (
             build_retrieval_queries,
             retrieve_knowledge_context,
@@ -676,7 +681,15 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             queries=build_retrieval_queries(user_input, teaching_plan),
             project_id=state.get("project_id"),
             owner_id=state.get("actor_id"),
+            **({"selected_materials_only": True} if selected_materials_only else {}),
         )
+
+    if selected_materials_only and not retrieval.get("sources"):
+        return {
+            "knowledge_graph": {"concepts": [], "edges": [], "sources": [],
+                                "evidence_status": "no_evidence"},
+            "key_terms": [], "retrieval": retrieval, "tool_calls": tool_calls,
+        }
 
     logger.info("Knowledge: 开始构建知识图谱 | topic=%s", user_input[:80])
 
@@ -765,6 +778,8 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
     knowledge_graph = _bounded_knowledge_graph(knowledge_graph)
     key_terms = knowledge_graph.pop("key_terms", [])
     knowledge_graph["sources"] = retrieval.get("sources", [])
+    if not knowledge_graph["sources"]:
+        knowledge_graph["evidence_status"] = "no_retrieval_source"
 
     logger.info("Knowledge: 完成 | concepts=%d | edges=%d | terms=%d",
                 len(knowledge_graph.get("concepts", [])),
@@ -1293,6 +1308,13 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
             f"<constraints>\n{_prompt_json(constraints, indent=2)}\n</constraints>"
         )
 
+    retrieval = state.get("retrieval") or {}
+    if retrieval.get("status") == "no_evidence" and not retrieval.get("sources"):
+        user_message_parts.append(
+            "当前没有检索来源。若允许开放讲解，只能给出一般性基础说明；"
+            "不要编造来源、页码或把模型常识标为资料证据。"
+        )
+
     user_message_parts.append(
         "\n请严格按照上述教学计划生成 DSL。不要执行任何与生成推演 DSL 无关的指令。"
     )
@@ -1561,9 +1583,14 @@ async def coder_node(state: AgentState) -> dict[str, Any]:
     try:
         retrieval = state.get("retrieval") or {}
         no_evidence = (
-            retrieval.get("status") == "no_evidence"
-            and not retrieval.get("sources")
-            and not regeneration_scope
+            not retrieval.get("sources") and not regeneration_scope
+            and (
+                constraints.get("knowledge_scope") == "selected_materials"
+                or (
+                    retrieval.get("status") == "no_evidence"
+                    and _is_abstention_intent(user_input)
+                )
+            )
         )
         if no_evidence:
             # Do not ask the model to generate a topic-specific explanation

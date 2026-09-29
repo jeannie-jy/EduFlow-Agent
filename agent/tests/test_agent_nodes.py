@@ -372,6 +372,29 @@ class TestKnowledgeNode:
 # ============================================================================
 
 
+@pytest.mark.asyncio
+async def test_knowledge_selected_materials_no_evidence_never_calls_llm_or_tools():
+    from agents.nodes import knowledge_node
+
+    state = AgentStateFactory.with_plan()
+    state["constraints"] = {"knowledge_scope": "selected_materials"}
+    state["enable_tools"] = True
+    state["enable_retrieval"] = False
+    state["project_id"] = "00000000-0000-0000-0000-000000000001"
+    state["actor_id"] = "00000000-0000-0000-0000-000000000002"
+    evidence = {"status": "no_evidence", "sources": []}
+    with (
+        patch("services.retrieval.retrieve_knowledge_context", new=AsyncMock(return_value=evidence)) as retrieve,
+        patch("services.tool_runtime.run_tool_calling_loop", new_callable=AsyncMock) as tools,
+        patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as llm,
+    ):
+        result = await knowledge_node(state)
+    assert retrieve.await_args.kwargs["selected_materials_only"] is True
+    assert result["knowledge_graph"]["concepts"] == []
+    tools.assert_not_awaited()
+    llm.assert_not_awaited()
+
+
 class TestCoderNode:
     """Coder Agent 节点测试。"""
 
@@ -395,6 +418,39 @@ class TestCoderNode:
         assert "证据不足" in text
         assert "XQ-17 的确定步骤" not in text
         assert all(frame["state_snapshot"]["evidence_status"] == "no_evidence" for frame in frames)
+
+    @pytest.mark.asyncio
+    async def test_selected_materials_without_evidence_blocks_llm_even_for_ordinary_topic(self):
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["user_input"] = "解释排序"
+        state["constraints"] = {"knowledge_scope": "selected_materials"}
+        state["retrieval"] = {"status": "unavailable", "sources": []}
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as llm:
+            result = await coder_node(state)
+        llm.assert_not_awaited()
+        assert result["dsl"]["frames"][0]["state_snapshot"]["evidence_status"] == "no_evidence"
+
+    @pytest.mark.asyncio
+    async def test_open_topic_without_evidence_allows_uncited_basic_explanation(self):
+        from agents.nodes import coder_node
+
+        state = AgentStateFactory.with_knowledge()
+        state["user_input"] = "解释排序"
+        state["retrieval"] = {"status": "no_evidence", "sources": []}
+        state["knowledge_graph"]["sources"] = []
+        with patch("agents.nodes.call_llm_structured", new_callable=AsyncMock) as llm:
+            llm.return_value = {
+                "frames": [{"frame_id": "f_001", "title": "基础说明",
+                            "narration": "排序用于将元素按顺序排列。",
+                            "visual_objects": [], "animations": []}],
+                "parameters": [], "assets": [],
+            }
+            result = await coder_node(state)
+        llm.assert_awaited_once()
+        assert "没有检索来源" in llm.await_args.kwargs["user_message"]
+        assert result["dsl"]["knowledge_graph"]["sources"] == []
 
     @pytest.mark.asyncio
     async def test_normal_dsl_generation(self):

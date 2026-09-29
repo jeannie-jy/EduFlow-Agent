@@ -222,23 +222,32 @@ async def search_library(
     owner_id: uuid.UUID | None = None,
     subject: str | None = None,
     difficulty: int | None = None,
+    scope_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     """Fuse scoped vector and trigram candidates without post-filtering secrets."""
     if not query.strip():
         return []
     if project_id is not None and owner_id is None:
         raise PermissionError("project knowledge search requires an owner")
+    if scope_filter not in (None, "teacher"):
+        raise ValueError("unsupported knowledge scope filter")
+    if scope_filter == "teacher" and (project_id is None or owner_id is None):
+        raise PermissionError("teacher-only search requires an owned project")
     visible = """(
         s.scope IN ('builtin', 'external') OR
         (s.scope = 'teacher' AND s.owner_id = :owner_id AND EXISTS (
             SELECT 1 FROM project_knowledge_sources pks
+            JOIN projects p ON p.id = pks.project_id AND p.owner_id = :owner_text
             WHERE pks.project_id = :project_id AND pks.source_id = s.id
         ))
     )"""
     filters = ["s.status = 'published'", "v.is_current", visible]
+    if scope_filter == "teacher":
+        filters.append("s.scope = 'teacher'")
     params: dict[str, Any] = {
         "query": query.strip()[:500], "limit": min(max(top_k * 4, 5), 40),
         "owner_id": owner_id, "project_id": project_id,
+        "owner_text": str(owner_id) if owner_id else None,
     }
     if subject:
         filters.append("s.subject = :subject")
