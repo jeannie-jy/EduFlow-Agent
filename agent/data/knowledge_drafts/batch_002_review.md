@@ -12,6 +12,8 @@
 
 NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂度说明不足，已通过 `batch_002.source_supplement_001.json` 记录 Princeton Algorithms 4e 的补充论据，限于链接及原创摘要。独立预检 `python -m scripts.check_knowledge_batch_readiness --batch 2` 当前会拒绝测试库导入和向量索引：整批来源许可仍待签核、来源审核仍属初步、版本固定仍是候选，且没有 Embedding 同意。实际 PostgreSQL/pgvector 临时库的迁移、幂等、回滚和词法检索验证见 `../../evals/reports/rag_v2_stage1_tempdb_2026-09-29.md`。
 
+来源修订 002 的事实核查记录在 `batch_002.source_revision_002_factcheck.json`，绑定草稿与修订文件哈希。RFC 768 的 Introduction、Format、Fields、User Interface 足以定位 UDP 条目的通用主张；COW 的 `fork(2)` 只证明 Linux 使用 COW，Linux 6.19 文档说明缺页路径，作者公开提供的 *The Linux Programming Interface* 第 24 章第 521–522 页补足只读共享页、写入陷入与私有复制机制。教材章节有版权声明，未取得再分发许可，仍只保留链接、定位与原创概述。`恢复写入` 与网络重排表述还需编辑确认；这份机器事实核查不是用户或法律审批，修订 002 依旧待审核。
+
 ## 算法（8）
 
 - [ ] `algo_counting_sort` 计数排序

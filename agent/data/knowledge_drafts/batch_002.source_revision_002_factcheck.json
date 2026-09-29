@@ -1,0 +1,51 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "source_revision_id": "core-cs-002-source-002",
+  "source_revision_sha256": "a53d2fe6ba99fe0cba69959474a6e1ce92a788eeddd5c9b8fefff190c5e40818",
+  "checked_at_utc": "2026-09-29",
+  "status": "agent_factual_source_check_not_editorial_approval",
+  "publication_clearance": false,
+  "reuse_scope": "Links and independently written Chinese summaries only. No source text, diagrams, code or PDF pages are copied, translated, stored as corpus chunks or embedded.",
+  "checks": {
+    "os_copy_on_write": {
+      "result": "partially_supported_with_supplement",
+      "primary": {
+        "url": "https://man7.org/linux/man-pages/man2/fork.2.html#NOTES",
+        "version": "Linux man-pages 6.19, fork(2), 2026-06-05",
+        "supports": "Linux fork uses copy-on-write pages, and its initial cost is dominated by page-table and task-structure creation; this alone does not establish the detailed page-fault steps."
+      },
+      "supplements": [
+        {
+          "url": "https://docs.kernel.org/6.19/mm/page_tables.html",
+          "locator": "MMU, TLB, and Page Faults",
+          "supports": "A protection violation can raise a page fault, and this documentation names the COW handling path; it explicitly says detailed COW behavior is outside this page's scope."
+        },
+        {
+          "url": "https://docs.kernel.org/6.19/trace/rv/monitor_rtapp.html",
+          "locator": "Description / Page faults",
+          "supports": "A COW page may require copying after a fault. This page does not explain shared read-only mappings or private-page installation."
+        },
+        {
+          "url": "https://man7.org/tlpi/download/TLPI-24-Process_Creation.pdf",
+          "version": "The Linux Programming Interface, 2010, Michael Kerrisk",
+          "locator": "Chapter 24, section 24.2, printed pages 521-522, PDF pages 9-10, copy-on-write discussion and Figure 24-3",
+          "supports": "The author's publicly linked chapter describes initial read-only shared pages, a write-triggered trap, a private copied page and independent later writes. It is supporting evidence only, not the importable source text.",
+          "license_review": "The chapter displays a copyright notice. No redistribution, translation or embedding license was established. Retain only attribution, precise locator and direct link."
+        }
+      ],
+      "remaining_gap": "The educational summary's 'resume write' step is a high-level inference from successful fault handling, not a literal step asserted by the linked fork(2) or rtapp pages. An editor should confirm wording and scope before approval."
+    },
+    "net_udp_datagram": {
+      "result": "supported_for_current_general_claims",
+      "primary": {
+        "url": "https://www.rfc-editor.org/rfc/rfc768.html",
+        "version": "RFC 768, 28 August 1980, Jon Postel",
+        "locator": "Introduction (datagram service; no delivery or duplicate guarantee); Format and Fields (four 16-bit header fields, ports and length); User Interface (send and receive by ports)",
+        "supports": "The current record's datagram, low mechanism overhead, port, 8-byte header and lack-of-guaranteed-delivery statements. The RFC directs ordered reliable streams to TCP, consistent with not promising UDP ordering."
+      },
+      "ipv6_scope": "The approved draft does not state an IPv6-specific UDP checksum rule. RFC 8200 section 8.1 is therefore not required for this record and remains only a future-content candidate.",
+      "remaining_gap": "The pitfall about network reordering is a protocol-level inference, not a direct RFC 768 guarantee statement. Confirm that this wording is acceptable in editorial review."
+    }
+  }
+}

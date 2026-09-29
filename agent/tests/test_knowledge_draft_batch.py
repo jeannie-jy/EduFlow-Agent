@@ -28,6 +28,7 @@ SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
 SECOND_SOURCE_REVISION_002 = BATCH.with_name("batch_002.source_revision_002.json")
+SECOND_SOURCE_REVISION_002_FACTCHECK = BATCH.with_name("batch_002.source_revision_002_factcheck.json")
 SECOND_VERSION_PINS = BATCH.with_name("batch_002.version_pin_001.json")
 
 
@@ -304,6 +305,20 @@ def test_second_source_revision_is_reviewable_but_not_yet_approved():
         assert replacement["source"]["url"].startswith("https://")
         assert replacement["source_locator"]
     assert "IPv6" not in revision["replacements"]["net_udp_datagram"]["source_locator"]
+
+
+def test_second_source_revision_factcheck_is_hash_bound_and_not_an_approval():
+    factcheck = json.loads(SECOND_SOURCE_REVISION_002_FACTCHECK.read_text(encoding="utf-8"))
+    assert factcheck["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert factcheck["source_revision_sha256"] == hashlib.sha256(
+        SECOND_SOURCE_REVISION_002.read_bytes()
+    ).hexdigest()
+    assert factcheck["status"] == "agent_factual_source_check_not_editorial_approval"
+    assert factcheck["publication_clearance"] is False
+    assert set(factcheck["checks"]) == {"os_copy_on_write", "net_udp_datagram"}
+    assert "copyright notice" in factcheck["checks"]["os_copy_on_write"]["supplements"][2][
+        "license_review"
+    ]
 
 
 def test_second_source_revision_gate_requires_exact_approved_bytes(tmp_path):
