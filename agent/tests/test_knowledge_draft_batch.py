@@ -14,6 +14,7 @@ APPROVAL = BATCH.with_name("batch_001.approval.json")
 SOURCE_AUDIT = BATCH.with_name("batch_001.source_audit.json")
 NIST_AUDIT = BATCH.with_name("batch_001.nist_entry_audit.json")
 SECOND_BATCH = BATCH.with_name("batch_002.json")
+SECOND_APPROVAL = BATCH.with_name("batch_002.approval.json")
 
 
 def test_first_batch_has_50_unpublished_entries_across_seven_subjects():
@@ -83,6 +84,17 @@ def test_second_batch_has_50_distinct_unreviewed_entries_across_seven_subjects()
     assert not ({entry.source_key for entry in first.entries} & {entry.source_key for entry in second.entries})
     assert any("algo_counting_sort" in entry.prerequisites for entry in second.entries)
     assert any("algo_insertion_sort" in entry.prerequisites for entry in second.entries)
+
+
+def test_second_batch_content_approval_is_bound_to_exact_draft_bytes(tmp_path):
+    approval = validate_approval(SECOND_BATCH, SECOND_APPROVAL)
+    assert approval["content_review"]["status"] == "approved"
+    assert approval["source_license_review"] == "pending"
+    (tmp_path / "batch_001.json").write_bytes(BATCH.read_bytes())
+    changed = tmp_path / "batch_002.json"
+    changed.write_bytes(SECOND_BATCH.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="does not match"):
+        validate_approval(changed, SECOND_APPROVAL)
 
 
 def test_first_batch_rejects_missing_source(tmp_path):

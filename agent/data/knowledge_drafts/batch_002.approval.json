@@ -1,0 +1,14 @@
+{
+  "batch_id": "core-cs-002",
+  "draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "content_review": {
+    "status": "approved",
+    "scope": "all_50_entries",
+    "approved_by": "project_user_via_chat",
+    "approved_at_utc": "2026-09-29T05:27:47Z",
+    "evidence": "User message: 第二批人工审核通过"
+  },
+  "source_license_review": "pending",
+  "database_import": "not_started",
+  "embedding_consent": false
+}
