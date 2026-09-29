@@ -186,6 +186,7 @@ class Settings(BaseSettings):
         "text/x-csrc",
         "text/x-java-source",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ]
     artifact_store_backend: Literal["local", "minio"] = "local"
     artifact_store_dir: Path = Path("data/artifacts")

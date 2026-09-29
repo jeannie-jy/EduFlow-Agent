@@ -43,6 +43,7 @@ ALLOWED_EXTENSIONS = {
     ".java": "text/x-java-source",
     ".cpp": "text/x-c++src",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 MAX_PPTX_MEMBERS = 5_000
 MAX_PPTX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
@@ -89,7 +90,7 @@ async def upload_material(
 ) -> dict:
     """上传课件文件。
 
-    支持: PDF, PPTX, Markdown, TXT, Python/C/Java/C++ 代码。
+    支持: PDF, PPTX, DOCX, Markdown, TXT, Python/C/Java/C++ 代码。
     最大: 50 MB。
     """
     settings = get_settings()
@@ -208,6 +209,11 @@ def _parse_material_path(file_path: Path) -> dict:
         raw_text, topics = _parse_pdf(file_path)
     elif suffix == ".pptx":
         raw_text, topics = _parse_pptx(file_path)
+    elif suffix == ".docx":
+        from services.material_indexing import _docx_sections
+
+        raw_text = "\n".join(content for _, _, content in _docx_sections(file_path))
+        topics = _extract_topics_from_text(raw_text)
     elif suffix in (".txt", ".md", ".py", ".c", ".java", ".cpp"):
         raw_text = file_path.read_text(encoding="utf-8")
         topics = _extract_topics_from_text(raw_text)
@@ -439,13 +445,14 @@ def _matches_file_signature(suffix: str, contents: bytes) -> bool:
         return False
     if suffix == ".pdf":
         return contents.startswith(b"%PDF-")
-    if suffix == ".pptx":
+    if suffix in {".pptx", ".docx"}:
         try:
             with zipfile.ZipFile(io.BytesIO(contents)) as archive:
                 if not _pptx_archive_is_safe(archive):
                     return False
                 names = set(archive.namelist())
-            return "[Content_Types].xml" in names and "ppt/presentation.xml" in names
+            required_part = "ppt/presentation.xml" if suffix == ".pptx" else "word/document.xml"
+            return "[Content_Types].xml" in names and required_part in names
         except zipfile.BadZipFile:
             return False
     if b"\x00" in contents[:8192]:
