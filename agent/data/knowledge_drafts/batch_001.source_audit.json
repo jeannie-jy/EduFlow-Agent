@@ -3,7 +3,7 @@
   "draft_sha256": "b3b24f41a8e369877fc2875313b39eaec9705dbbf43bb1ef9ce8c357597d0b98",
   "audit_date_utc": "2026-09-29",
   "auditor": "AI-assisted preliminary source-license review",
-  "use_case": "Store original Chinese concept summaries and source links; no source-text copying, screenshots, translated passages, or third-party text embedding",
+  "use_case": "Noncommercial project per user chat on 2026-09-29; store original Chinese concept summaries and source links; no source-text copying, screenshots, translated passages, or third-party text embedding",
   "status": "preliminary_only",
   "publication_clearance": false,
   "notes": "A source-level policy check is not per-entry copyright clearance or legal advice. Content approval is separately recorded. Review source locators and exact source versions before editorial sign-off.",
@@ -13,7 +13,7 @@
       "evidence_url": "https://xlinux.nist.gov/dads/Other/creditNotice.html",
       "disposition": "hold_per_entry",
       "permitted_scope_assessed": "Link and independently written summary only",
-      "required_action": "For each of 15 entries, resolve exact DADS term URL, author and credit notice; reject or replace CRC Press/other third-party definition; verify the term actually supports the concept. Do not copy definitions before that check."
+      "required_action": "See batch_001.nist_entry_audit.json for 15 exact term URLs and five source-fit exceptions. Replace the wrong union-find citation and add evidence for four incomplete locators. Do not copy page text, third-party figures or quotes."
     },
     "kernel_sched": {
       "license_label": "Linux kernel GPL-2.0-only as a whole; individual documentation files require SPDX check",
@@ -95,9 +95,9 @@
     "git_book": {
       "license_label": "CC BY-NC-SA 3.0 for Pro Git book content",
       "evidence_url": "https://git-scm.com/book/en/v2",
-      "disposition": "hold_commercial_use",
+      "disposition": "conditional_noncommercial_link_summary",
       "permitted_scope_assessed": "Reference link and independently written factual summary only; no book prose",
-      "required_action": "Do not copy, translate or adapt book text for commercial product without separate rights review/permission; consider Git official reference as replacement."
+      "required_action": "Project owner stated noncommercial use. Keep original summaries distinct from book expression; if copying/adapting book prose, comply with attribution and share-alike terms; reopen review before any commercial use."
     },
     "python_unittest": {
       "license_label": "PSF License Version 2 for documentation; code examples additionally 0BSD",

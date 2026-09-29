@@ -12,6 +12,7 @@ from scripts.import_curated_knowledge import validate_catalog
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
 APPROVAL = BATCH.with_name("batch_001.approval.json")
 SOURCE_AUDIT = BATCH.with_name("batch_001.source_audit.json")
+NIST_AUDIT = BATCH.with_name("batch_001.nist_entry_audit.json")
 SECOND_BATCH = BATCH.with_name("batch_002.json")
 
 
@@ -56,6 +57,20 @@ def test_first_batch_preliminary_source_audit_covers_every_source_without_cleara
     assert {entry.source_ref for entry in batch.entries} == set(batch.sources)
     assert all(row["evidence_url"].startswith("https://") for row in audit["sources"].values())
     assert all(row["disposition"] != "approved_for_source_text_import" for row in audit["sources"].values())
+
+
+def test_nist_entry_audit_identifies_all_15_citations_and_unresolved_source_fit():
+    batch = validate_batch(BATCH)
+    audit = json.loads(NIST_AUDIT.read_text(encoding="utf-8"))
+    assert audit["draft_sha256"] == validate_approval(BATCH, APPROVAL)["draft_sha256"]
+    nist_keys = {entry.source_key for entry in batch.entries if entry.source_ref == "nist_dads"}
+    assert len(nist_keys) == 15
+    assert set(audit["entries"]) == nist_keys
+    assert audit["publication_clearance"] is False
+    assert all(row["entry_url"].startswith("https://xlinux.nist.gov/dads/HTML/") for row in audit["entries"].values())
+    findings = {key: row["finding"] for key, row in audit["entries"].items()}
+    assert findings["ds_disjoint_set"] == "wrong_source"
+    assert sum(value == "needs_additional_source" for value in findings.values()) == 4
 
 
 def test_second_batch_has_50_distinct_unreviewed_entries_across_seven_subjects():

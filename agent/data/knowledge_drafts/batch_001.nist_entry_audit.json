@@ -1,0 +1,27 @@
+{
+  "batch_id": "core-cs-001",
+  "draft_sha256": "b3b24f41a8e369877fc2875313b39eaec9705dbbf43bb1ef9ce8c357597d0b98",
+  "audit_date_utc": "2026-09-29",
+  "scope": "NIST DADS entry pages, for link plus original Chinese summary; external links, figures, quotes and implementation code excluded",
+  "status": "preliminary_entry_review",
+  "publication_clearance": false,
+  "entries": {
+    "algo_insertion_sort": {"entry_url":"https://xlinux.nist.gov/dads/HTML/insertionSort.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"The entry describes insertion sorting and O(n^2); draft's stability nuance needs independent fact check."},
+    "algo_heap_sort": {"entry_url":"https://xlinux.nist.gov/dads/HTML/heapSort.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"The entry describes heap construction and extraction; no third-party linked implementations are in scope."},
+    "algo_topological_sort": {"entry_url":"https://xlinux.nist.gov/dads/HTML/topologicalSort.html","entry_author":"Paul E. Black","finding":"needs_additional_source","note":"Entry defines topological sorting via partial order but does not detail the draft's indegree/Kahn procedure."},
+    "algo_bellman_ford": {"entry_url":"https://xlinux.nist.gov/dads/HTML/bellmanford.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"Entry gives V-1 passes, negative-cycle check and O(VE)."},
+    "algo_floyd_warshall": {"entry_url":"https://xlinux.nist.gov/dads/HTML/floydWarshall.html","entry_author":"Sandeep Kumar Shukla","finding":"needs_additional_source","note":"Entry gives all-pairs shortest path and cubic time but does not describe the draft's intermediate-vertex DP recurrence."},
+    "algo_kmp": {"entry_url":"https://xlinux.nist.gov/dads/HTML/knuthMorrisPratt.html","entry_author":"Sterling Bates","finding":"needs_additional_source","note":"Entry describes KMP as a finite-state-machine method, not the draft's prefix-function implementation."},
+    "algo_backtracking": {"entry_url":"https://xlinux.nist.gov/dads/HTML/backtrack.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"Entry supports choices, backtracking and recursive search-tree framing."},
+    "algo_amortized_analysis": {"entry_url":"https://xlinux.nist.gov/dads/HTML/amortizdcost.html","entry_author":"Chris L. Kuszmaul","finding":"needs_additional_source","note":"Entry supports amortized-cost definition but not the draft's dynamic-array example or three analysis methods."},
+    "ds_array": {"entry_url":"https://xlinux.nist.gov/dads/HTML/array.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"Entry supports indexed random access and linear insertion; no external tutorials are in scope."},
+    "ds_linked_list": {"entry_url":"https://xlinux.nist.gov/dads/HTML/linkedList.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"Entry describes a next-link list and notes singly linked list alias."},
+    "ds_binary_heap": {"entry_url":"https://xlinux.nist.gov/dads/HTML/binaryheap.html","entry_author":"Chris L. Kuszmaul","finding":"supports_core_concept","note":"Entry supports heap structure and O(log n) insertion. Page includes third-party xkcd image under separate CC BY-NC license; image is excluded."},
+    "ds_trie": {"entry_url":"https://xlinux.nist.gov/dads/HTML/trie.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"Entry supports prefix sharing. Its historical quote is third-party expression and excluded."},
+    "ds_disjoint_set": {"entry_url":"https://xlinux.nist.gov/dads/HTML/disjointset.html","entry_author":"Paul E. Black","finding":"wrong_source","note":"Entry defines a disjoint set, not the union-find data structure; replace citation with an independently licensed/linked source such as Princeton Algorithms 4e section 1.5: https://algs4.cs.princeton.edu/15uf/."},
+    "ds_adjacency_list": {"entry_url":"https://xlinux.nist.gov/dads/HTML/adjacencyListRep.html","entry_author":"Bob Bockholt and Paul E. Black","finding":"supports_core_concept","note":"Entry supports adjacency-list graph representation; third-party linked code excluded."},
+    "ds_b_tree": {"entry_url":"https://xlinux.nist.gov/dads/HTML/btree.html","entry_author":"Paul E. Black","finding":"supports_core_concept","note":"Entry supports balanced multiway search tree and disk-access motivation; external tutorials excluded."}
+  },
+  "source_policy_url": "https://xlinux.nist.gov/dads/Other/creditNotice.html",
+  "policy_note": "NIST notice states most definitions are public domain but some are CRC Press copyrighted. These entry pages show named authors and do not identify these 15 core definitions as CRC Press, but no source text is being copied and this is not a legal certification."
+}

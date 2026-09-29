@@ -4,7 +4,7 @@
 
 运行 `python -m scripts.validate_knowledge_draft --input data/knowledge_drafts/batch_001.json` 可检查数量、七领域覆盖、字段、来源引用、旧 ID 冲突和先修依赖环。它不证明事实正确或许可合规。现有 `import_curated_knowledge` 只接收带人工审核字段的独立 JSON 数组，不能直接接收本草稿对象。
 
-内容审核已由用户整体确认。18 个来源的许可说明与当前“链接＋原创摘要”用法的初审见 `batch_001.source_audit.json`；它绑定原草稿 SHA-256，但 `publication_clearance` 仍为 `false`。以下清单仍用于逐条来源/许可复核：打开来源 URL 定位到 `source_locator`，核对具体版本、作者、许可。对来源不充分的条目补充更精确的 URL 或更换来源，并记录修改。尤其注意 NIST DADS 部分词条有第三方版权，Pro Git 有非商业限制，RFC 原文修改权受限制，Linux/Python 等滚动文档应锁定审核时的版本。清单勾选本身不等于许可批准。
+内容审核已由用户整体确认。18 个来源的许可说明与当前“链接＋原创摘要”用法的初审见 `batch_001.source_audit.json`；用户随后确认项目不商用，该使用前提已记入台账。NIST 15 个词条的逐页核对见 `batch_001.nist_entry_audit.json`：10 条支持核心概念、4 条需要补充来源、1 条并查集引用错误。两份记录都绑定原草稿 SHA-256，但 `publication_clearance` 仍为 `false`。以下清单仍用于逐条来源/许可复核：打开来源 URL 定位到 `source_locator`，核对具体版本、作者、许可。对来源不充分的条目补充更精确的 URL 或更换来源，并记录修改。尤其注意 NIST DADS 部分词条有第三方版权，Pro Git 有非商业及署名/相同方式共享条件，RFC 原文修改权受限制，Linux/Python 等滚动文档应锁定审核时的版本。清单勾选本身不等于许可批准。
 
 ## 算法（8）
 
