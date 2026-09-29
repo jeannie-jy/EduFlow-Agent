@@ -79,6 +79,18 @@ def check_batch(directory: Path, number: int) -> dict:
                 and str(row.get("supplemental_url", "")).startswith("https://")
                 and str(row.get("finding", "")).startswith("supports_missing_")
             }
+    for source_fit_sidecar in sorted(directory.glob(f"{stem}.source_supplement_*.json")):
+        source_fit = _read_json(source_fit_sidecar)
+        sidecar_id = source_fit_sidecar.stem.removeprefix(f"{stem}.source_supplement_")
+        if (
+            source_fit.get("batch_id") != batch.batch_id
+            or source_fit.get("base_draft_sha256") != digest
+        ):
+            blockers.append(f"source_supplement_{sidecar_id}_hash_mismatch")
+        else:
+            for key, row in source_fit.get("entries", {}).items():
+                if row.get("editorial_action"):
+                    blockers.append(f"source_supplement_pending_editorial_review:{key}")
     if any(entry.source_ref == "nist_dads" for entry in batch.entries):
         if not nist_path.exists():
             blockers.append("nist_entry_audit_missing")

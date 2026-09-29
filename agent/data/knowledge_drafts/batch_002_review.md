@@ -85,6 +85,8 @@ NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂�
 
 ## 验证
 
+2026-09-29 的版本/章节复核检查了 PostgreSQL 16 七个条目的具体章节，Python 3.14.7 具体页面与 PSF 许可证，以及 Linux 6.19、man-pages 6.19、Coverage.py 7.16.1 等候选版本。RFC 已按编号和章节定位。滚动页面（如 cp-algorithms、OWASP）仍缺不可变版本快照与校验值。复核还发现 `os_copy_on_write` 当前引用的 Linux `Page Tables` 页面明确把 COW 细节列为范围外；`batch_002.source_supplement_002.json` 记录了 `fork(2)` 的替代候选。`batch_002.source_supplement_003.json` 为 UDP 的 IPv6 扩展增加 RFC 8200 §8.1 候选。两项补充都尚未进入经用户复核的来源修订，man-pages 6.19 的 `fork.2` 单文件许可证也仍待核验。
+
 从 `agent` 目录运行：
 
 ```bash

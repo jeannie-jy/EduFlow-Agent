@@ -208,13 +208,18 @@ def test_second_batch_version_pins_are_candidate_only_and_bound_to_draft():
     pins = json.loads(SECOND_VERSION_PINS.read_text(encoding="utf-8"))
     assert pins["batch_id"] == batch.batch_id
     assert pins["base_draft_sha256"] == approval["draft_sha256"]
-    assert pins["status"] == "candidate_version_pins"
+    assert pins["status"] == "verified_candidate_sections"
     assert pins["publication_clearance"] is False
-    assert set(pins["pins"]) <= set(batch.sources)
-    assert len(pins["pins"]) == 9
+    assert set(pins["pins"]) <= set(batch.sources) | {
+        "man_pages", "berkeley_cs188", "mit_ocw_6006", "rfc8200",
+    }
+    assert len(pins["pins"]) == 26
     assert all(row["url"].startswith("https://") for row in pins["pins"].values())
-    assert pins["pins"]["python_reference"]["version"] == "Python 3.14 documentation"
+    assert pins["pins"]["python_reference"]["version"] == "Python 3.14.7 documentation"
     assert pins["pins"]["coverage_py"]["version"] == "Coverage.py 7.16.1 documentation"
+    assert pins["pins"]["postgres16"]["locators"]["db_analyze_statistics"].endswith("planner-stats.html")
+    assert pins["pins"]["man_pages"]["locators"]["os_copy_on_write_candidate"].endswith("fork.2.html#NOTES")
+    assert pins["pins"]["rfc8200"]["version"] == "RFC 8200"
 
 
 def test_second_batch_readiness_gate_distinguishes_editorial_approval_from_release():
@@ -227,6 +232,8 @@ def test_second_batch_readiness_gate_distinguishes_editorial_approval_from_relea
     assert "source_audit_preliminary" in report["blockers"]
     assert "version_pins_candidate_only" in report["blockers"]
     assert "embedding_consent_missing" in report["blockers"]
+    assert "source_supplement_pending_editorial_review:os_copy_on_write" in report["blockers"]
+    assert "source_supplement_pending_editorial_review:net_udp_datagram" in report["blockers"]
     assert not any(code.startswith("source_fit_unresolved:") for code in report["blockers"])
 
 
