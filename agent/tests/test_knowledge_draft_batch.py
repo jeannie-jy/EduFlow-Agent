@@ -6,11 +6,17 @@ import shutil
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from scripts.audit_knowledge_source_resolution import audit_batch
+from scripts.build_knowledge_review_packet import build_packet
 from scripts.check_knowledge_batch_readiness import check_batch
+from scripts.import_curated_knowledge import (
+    ReviewedConcept,
+    validate_catalog,
+    validate_import_authorization,
+)
 from scripts.import_curated_knowledge import main as import_main
-from scripts.import_curated_knowledge import validate_catalog, validate_import_authorization
 from scripts.validate_knowledge_draft import validate_approval, validate_batch
 
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
@@ -424,6 +430,22 @@ def test_source_resolution_rejects_response_evidence_bound_to_another_draft(tmp_
     path.write_text(json.dumps(evidence), encoding="utf-8")
     with pytest.raises(ValueError, match="bound to another draft"):
         audit_batch(tmp_path, 2)
+
+
+def test_second_batch_review_packet_covers_50_without_becoming_importable():
+    packet = build_packet(SECOND_BATCH.parent, 2)
+    assert packet["count"] == 50
+    assert packet["publication_clearance"] is False
+    assert "source_license_pending" in packet["global_blockers"]
+    rows = {row["source_key"]: row for row in packet["entries"]}
+    assert len(rows) == 50
+    assert rows["algo_a_star"]["source"]["candidate_status"] == "approved_revision"
+    assert rows["os_copy_on_write"]["source"]["candidate_status"] == "proposed_revision"
+    assert rows["net_udp_datagram"]["source"]["url"].endswith("/rfc768.html")
+    assert rows["algo_counting_sort"]["preliminary_license"]["disposition"] == "hold_per_entry"
+    assert all("reviewed_by" not in row and "license" not in row for row in packet["entries"])
+    with pytest.raises(ValidationError):
+        ReviewedConcept.model_validate(rows["algo_a_star"])
 
 
 def test_readiness_gate_detects_tampered_source_revision(tmp_path):

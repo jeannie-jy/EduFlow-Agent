@@ -16,6 +16,8 @@ NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂�
 
 `batch_002.web_response_evidence_001.json` 记录了 Berkeley A* 和 Princeton 两个补充页在 2026-09-29 的响应 SHA-256、抓取时间与可用的 ETag/Last-Modified。原始 HTML 未归档，哈希只能帮助检测后续漂移，不能在网页变化后重现原文，也不构成版权许可。NIST 词条的自动抓取收到 HTTP 403，因此没有伪造其响应哈希。逐条审计仍将上述网页列为缺少可重现内容快照的 9 条记录。
 
+逐条编辑复核可运行 `python -m scripts.build_knowledge_review_packet --batch 2`：它只向标准输出生成 50 条候选目录，合并已批准草稿的正文、候选来源、初步许可标签、引用缺口和全局预检阻断项。该结构明确不包含 `ReviewedConcept` 所需的 `license`、`reviewed_by`、`reviewed_at`，不能直接传给导入器；也不写库或调用 Embedding。来源修订 002 在目录中标为 `proposed_revision`，不会因为生成目录而获得批准。
+
 ## 算法（8）
 
 - [ ] `algo_counting_sort` 计数排序
