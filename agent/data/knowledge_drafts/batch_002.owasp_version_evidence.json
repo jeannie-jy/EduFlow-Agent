@@ -1,0 +1,21 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "verified_at_utc": "2026-09-29",
+  "status": "agent_verified_repository_revision",
+  "publication_clearance": false,
+  "repository_url": "https://github.com/OWASP/www-community",
+  "branch_at_verification": "master",
+  "commit_sha1": "0d7bd9337bb51d9874909448683e2325ed36abf0",
+  "page": {
+    "path": "pages/Threat_Modeling.md",
+    "git_blob_sha1": "7bfed4d267863fa8e19280fd420cca4a12f90db8",
+    "source_url": "https://github.com/OWASP/www-community/blob/0d7bd9337bb51d9874909448683e2325ed36abf0/pages/Threat_Modeling.md",
+    "published_url": "https://community.owasp.org/Threat_Modeling",
+    "author_in_frontmatter": "Victoria Drake",
+    "locators": ["Overview", "Threat Modeling: Four Question Framework"]
+  },
+  "license_evidence_url": "https://community.owasp.org/Threat_Modeling",
+  "license_status": "The page footer states CC BY-SA 4.0 unless otherwise specified; trademarks and third-party material may have different rights. No page-specific exception was identified in the inspected frontmatter; link and independently written summary only.",
+  "site_sync_caveat": "The Git commit pins the source Markdown, not a cryptographic snapshot of the rendered website. The live page may change independently."
+}

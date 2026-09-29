@@ -1,0 +1,43 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "verified_at_utc": "2026-09-29",
+  "status": "agent_verified_single_file_spdx",
+  "publication_clearance": false,
+  "repository_url": "https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages.git",
+  "tag": "man-pages-6.19",
+  "tag_object_sha1": "5a7bf78fd314b8390f30bee87aa2e933b7a8f880",
+  "commit_sha1": "adb436b2e4471218021d86f188fb58dec3946eb8",
+  "tag_signature_verified": false,
+  "license_file": {
+    "path": "LICENSES/Linux-man-pages-copyleft.txt",
+    "git_blob_sha1": "764635ae5c8d100d6378f8d30b453d908197951f",
+    "summary": "Verbatim and modified copies have notice and license conditions; formatted copies without source must acknowledge copyright and authors. The project's current use is links and independent summaries only."
+  },
+  "files": {
+    "fork.2": {
+      "path": "man/man2/fork.2",
+      "git_blob_sha1": "fc78f786bd1f11d806cbce6591967742f3aba48d",
+      "spdx": "Linux-man-pages-copyleft",
+      "copyright_holders": ["Michael Kerrisk", "Linux man-pages project authors"],
+      "source_url": "https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages/+/adb436b2e4471218021d86f188fb58dec3946eb8/man/man2/fork.2",
+      "used_by": ["os_copy_on_write"]
+    },
+    "pipe.2": {
+      "path": "man/man2/pipe.2",
+      "git_blob_sha1": "8f88e40c3bf521567962975bd9433ac5a86db85c",
+      "spdx": "Linux-man-pages-copyleft",
+      "copyright_holders": ["Michael Kerrisk", "Linux man-pages project authors"],
+      "source_url": "https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages/+/adb436b2e4471218021d86f188fb58dec3946eb8/man/man2/pipe.2",
+      "used_by": ["os_pipe_ipc"]
+    },
+    "open.2": {
+      "path": "man/man2/open.2",
+      "git_blob_sha1": "c6def53142fc11ee278d18514375781af53cf9b0",
+      "spdx": "Linux-man-pages-copyleft",
+      "copyright_holders": ["Drew Eckhardt", "Michael Kerrisk", "Linux man-pages project authors"],
+      "source_url": "https://kernel.googlesource.com/pub/scm/docs/man-pages/man-pages/+/adb436b2e4471218021d86f188fb58dec3946eb8/man/man2/open.2",
+      "used_by": ["os_file_descriptor"]
+    }
+  }
+}

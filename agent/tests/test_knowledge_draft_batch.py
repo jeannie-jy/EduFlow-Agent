@@ -19,6 +19,9 @@ NIST_AUDIT = BATCH.with_name("batch_001.nist_entry_audit.json")
 SECOND_BATCH = BATCH.with_name("batch_002.json")
 SECOND_APPROVAL = BATCH.with_name("batch_002.approval.json")
 SECOND_SOURCE_AUDIT = BATCH.with_name("batch_002.source_audit.json")
+SECOND_MAN_EVIDENCE = BATCH.with_name("batch_002.man_pages_license_evidence.json")
+SECOND_CP_EVIDENCE = BATCH.with_name("batch_002.cp_algorithms_version_evidence.json")
+SECOND_OWASP_EVIDENCE = BATCH.with_name("batch_002.owasp_version_evidence.json")
 SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
@@ -149,7 +152,69 @@ def test_second_batch_source_audit_covers_metadata_without_publication_clearance
     assert {entry.source_ref for entry in batch.entries} == set(batch.sources) - {"kernel_sched"}
     assert all(row["evidence_url"].startswith("https://") for row in audit["sources"].values())
     assert audit["sources"]["git_book"]["disposition"] == "conditional_noncommercial_link_summary"
-    assert audit["sources"]["man_pipe"]["disposition"] == "hold_exact_license"
+    assert audit["sources"]["man_pipe"]["disposition"] == "conditional_link_summary"
+    assert audit["man_pages_evidence_sha256"] == hashlib.sha256(SECOND_MAN_EVIDENCE.read_bytes()).hexdigest()
+    assert audit["cp_algorithms_evidence_sha256"] == hashlib.sha256(SECOND_CP_EVIDENCE.read_bytes()).hexdigest()
+    assert audit["owasp_evidence_sha256"] == hashlib.sha256(SECOND_OWASP_EVIDENCE.read_bytes()).hexdigest()
+
+
+def test_second_batch_man_pages_license_evidence_is_pinned_to_three_source_blobs():
+    evidence = json.loads(SECOND_MAN_EVIDENCE.read_text(encoding="utf-8"))
+    assert evidence["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert evidence["tag"] == "man-pages-6.19"
+    assert evidence["publication_clearance"] is False
+    assert evidence["tag_signature_verified"] is False
+    assert set(evidence["files"]) == {"fork.2", "pipe.2", "open.2"}
+    assert {row["spdx"] for row in evidence["files"].values()} == {
+        "Linux-man-pages-copyleft"
+    }
+
+
+def test_man_pages_license_evidence_tampering_blocks_readiness(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    evidence_path = tmp_path / SECOND_MAN_EVIDENCE.name
+    evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert "man_pages_license_evidence_mismatch" in report["blockers"]
+
+
+def test_cp_algorithms_evidence_pins_all_four_cited_articles():
+    batch = validate_batch(SECOND_BATCH)
+    evidence = json.loads(SECOND_CP_EVIDENCE.read_text(encoding="utf-8"))
+    cp_keys = {entry.source_key for entry in batch.entries if entry.source_ref == "cp_algorithms"}
+    assert evidence["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert len(evidence["commit_sha1"]) == 40
+    assert set(evidence["articles"]) == cp_keys
+    assert all(len(row["git_blob_sha1"]) == 40 for row in evidence["articles"].values())
+    assert evidence["publication_clearance"] is False
+
+
+def test_cp_algorithms_evidence_tampering_blocks_readiness(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    evidence_path = tmp_path / SECOND_CP_EVIDENCE.name
+    evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert "cp_algorithms_version_evidence_mismatch" in report["blockers"]
+
+
+def test_owasp_evidence_pins_page_author_and_revision():
+    evidence = json.loads(SECOND_OWASP_EVIDENCE.read_text(encoding="utf-8"))
+    assert evidence["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert len(evidence["commit_sha1"]) == 40
+    assert len(evidence["page"]["git_blob_sha1"]) == 40
+    assert evidence["page"]["author_in_frontmatter"] == "Victoria Drake"
+    assert evidence["publication_clearance"] is False
+
+
+def test_owasp_evidence_tampering_blocks_readiness(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    evidence_path = tmp_path / SECOND_OWASP_EVIDENCE.name
+    evidence_path.write_bytes(evidence_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert "owasp_version_evidence_mismatch" in report["blockers"]
 
 
 def test_second_batch_nist_audit_flags_third_party_and_wrong_locators():

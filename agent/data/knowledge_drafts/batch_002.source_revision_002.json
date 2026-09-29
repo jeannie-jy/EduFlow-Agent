@@ -16,7 +16,7 @@
         "institution": "Linux man-pages project",
         "author": "The Linux man-pages project contributors",
         "version": "man-pages 6.19, fork(2), 2026-06-05",
-        "license_review": "Exact fork.2 source-file license not verified; direct link and independent summary only"
+        "license_review": "man-pages 6.19 fork.2 source header identifies Linux-man-pages-copyleft; exact tag/blob evidence in batch_002.man_pages_license_evidence.json; direct link and independent summary only"
       },
       "source_locator": "fork(2), NOTES, Linux copy-on-write implementation",
       "supplemental_evidence": [{
@@ -26,7 +26,7 @@
         "author": "Nam Cao"
       }],
       "reason": "The original Page Tables page explicitly puts COW details out of scope. fork(2) confirms Linux uses COW pages; the kernel rtapp page confirms COW can cause a page fault and copying. Neither page alone proves every implementation step in the teaching summary.",
-      "editorial_check": "Verify the draft's read-only mapping, private-page allocation and resume steps against a suitable implementation reference before approval; keep the single-file license unresolved for text reuse."
+      "editorial_check": "Verify the draft's read-only mapping, private-page allocation and resume steps against a suitable implementation reference before approval; comply with the identified file license if source text is ever reused."
     },
     "net_udp_datagram": {
       "old_source_ref": "rfc768",

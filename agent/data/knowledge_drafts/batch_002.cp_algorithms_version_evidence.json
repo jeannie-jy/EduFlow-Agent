@@ -1,0 +1,50 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "verified_at_utc": "2026-09-29",
+  "status": "agent_verified_repository_revision",
+  "publication_clearance": false,
+  "repository_url": "https://github.com/cp-algorithms/cp-algorithms",
+  "branch_at_verification": "main",
+  "commit_sha1": "f06f7d5e5630f0b811e37d9e657562ba38c41f6a",
+  "license_file": {
+    "path": "LICENSE",
+    "git_blob_sha1": "2e72ca1121b413a67745f02f679eb5caef6c7bef",
+    "license_label": "CC BY-SA 4.0"
+  },
+  "articles": {
+    "algo_edmonds_karp": {
+      "path": "src/graph/edmonds_karp.md",
+      "git_blob_sha1": "ec10e10083a7893ca0f96a545c0a2d152515bd37",
+      "title": "Maximum flow - Ford-Fulkerson and Edmonds-Karp",
+      "locator": "Edmonds-Karp algorithm",
+      "source_url": "https://github.com/cp-algorithms/cp-algorithms/blob/f06f7d5e5630f0b811e37d9e657562ba38c41f6a/src/graph/edmonds_karp.md",
+      "published_url": "https://cp-algorithms.com/graph/edmonds_karp.html"
+    },
+    "ds_segment_tree": {
+      "path": "src/data_structures/segment_tree.md",
+      "git_blob_sha1": "65cc432135d71f609154f16e8bf01752ac6e5e46",
+      "title": "Segment Tree",
+      "locator": "Simplest form of a Segment Tree / Range updates",
+      "source_url": "https://github.com/cp-algorithms/cp-algorithms/blob/f06f7d5e5630f0b811e37d9e657562ba38c41f6a/src/data_structures/segment_tree.md",
+      "published_url": "https://cp-algorithms.com/data_structures/segment_tree.html"
+    },
+    "ds_fenwick_tree": {
+      "path": "src/data_structures/fenwick.md",
+      "git_blob_sha1": "8e38831e61c704cc9a4f7e8bdd677cd21cff1aa9",
+      "title": "Fenwick Tree",
+      "locator": "Description / One-based indexing approach / Range operations",
+      "source_url": "https://github.com/cp-algorithms/cp-algorithms/blob/f06f7d5e5630f0b811e37d9e657562ba38c41f6a/src/data_structures/fenwick.md",
+      "published_url": "https://cp-algorithms.com/data_structures/fenwick.html"
+    },
+    "ds_sparse_table": {
+      "path": "src/data_structures/sparse-table.md",
+      "git_blob_sha1": "0a145284a6387b2b0bc4e979615224108fbb3057",
+      "title": "Sparse Table",
+      "locator": "Precomputation / Range Minimum Queries",
+      "source_url": "https://github.com/cp-algorithms/cp-algorithms/blob/f06f7d5e5630f0b811e37d9e657562ba38c41f6a/src/data_structures/sparse-table.md",
+      "published_url": "https://cp-algorithms.com/data_structures/sparse-table.html"
+    }
+  },
+  "reuse_scope": "Direct source links and independently written Chinese summaries only; no article text, code or diagrams copied or embedded."
+}

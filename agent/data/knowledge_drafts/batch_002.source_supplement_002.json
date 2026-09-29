@@ -17,7 +17,7 @@
       "candidate_version": "Linux man-pages 6.19, fork(2), 2026-06-05",
       "candidate_locator": "NOTES: Linux implements fork using copy-on-write pages",
       "evidence": "The Linux 6.19 Page Tables page names COW among expected page-fault causes but explicitly says its details are out of scope. The versioned fork(2) page directly confirms fork uses COW. That page supports the sharing/lazy-copy concept but does not describe every low-level write-fault step in the draft; preserve the carefully qualified explanation and independently verify implementation details before publication.",
-      "source_license": "Per-file license for fork.2 in man-pages 6.19 has not been verified. Link-only use and independently written summary; no copied source content.",
+      "source_license": "The man-pages 6.19 fork.2 header identifies Linux-man-pages-copyleft; exact tag and blob evidence is in batch_002.man_pages_license_evidence.json. Link-only use and independently written summary; no copied source content.",
       "editorial_action": "Review source revision 002: replace the weak page_tables locator with fork(2), retain Linux 6.19 rtapp as supporting evidence for the page fault, and verify the remaining implementation details. No release clearance is implied."
     }
   },

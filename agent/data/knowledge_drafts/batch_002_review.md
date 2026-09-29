@@ -85,7 +85,7 @@ NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂�
 
 ## 验证
 
-2026-09-29 的版本/章节复核检查了 PostgreSQL 16 七个条目的具体章节，Python 3.14.7 具体页面与 PSF 许可证，以及 Linux 6.19、man-pages 6.19、Coverage.py 7.16.1 等候选版本。RFC 已按编号和章节定位。滚动页面（如 cp-algorithms、OWASP）仍缺不可变版本快照与校验值。复核还发现 `os_copy_on_write` 当前引用的 Linux `Page Tables` 页面明确把 COW 细节列为范围外；`batch_002.source_revision_002.json` 提议以 `fork(2)` 为主引用，并以 Linux 6.19 `rtapp` 页面补充写时复制触发缺页的证据。UDP 草稿没有 IPv6 专有断言，RFC 768 的引言、报文格式和字段足以支撑现有条目；修订提议去除引用定位中的 IPv6 待核语句，RFC 8200 §8.1 留作未来扩展资料。此修订尚未经用户编辑复核，COW 的具体实现步骤与 man-pages 6.19 `fork.2` 单文件许可证也仍待核验。
+2026-09-29 的版本/章节复核检查了 PostgreSQL 16 七个条目的具体章节，Python 3.14.7 具体页面与 PSF 许可证，以及 Linux 6.19、man-pages 6.19、Coverage.py 7.16.1 等候选版本。RFC 已按编号和章节定位。cp-algorithms 四篇文章已锁定仓库提交与各自文件对象 ID，见 `batch_002.cp_algorithms_version_evidence.json`；OWASP 威胁建模页的源 Markdown 也已锁定提交与文件对象 ID，见 `batch_002.owasp_version_evidence.json`。渲染网页仍可能变化。复核还发现 `os_copy_on_write` 当前引用的 Linux `Page Tables` 页面明确把 COW 细节列为范围外；`batch_002.source_revision_002.json` 提议以 `fork(2)` 为主引用，并以 Linux 6.19 `rtapp` 页面补充写时复制触发缺页的证据。UDP 草稿没有 IPv6 专有断言，RFC 768 的引言、报文格式和字段足以支撑现有条目；修订提议去除引用定位中的 IPv6 待核语句，RFC 8200 §8.1 留作未来扩展资料。man-pages 6.19 官方标签中的 `fork.2`、`pipe.2`、`open.2` 源文件标头和对应许可证文本已核对，提交及文件对象 ID 见 `batch_002.man_pages_license_evidence.json`。修订 002 尚未经用户编辑复核，COW 的具体实现步骤仍待进一步佐证。
 
 从 `agent` 目录运行：
 

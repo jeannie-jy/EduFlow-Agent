@@ -35,6 +35,93 @@ def check_batch(directory: Path, number: int) -> dict:
             blockers.append("source_audit_hash_mismatch")
         if set(audit.get("sources", {})) != set(batch.sources):
             blockers.append("source_audit_incomplete")
+        if "man_pipe" in batch.sources and "man_open" in batch.sources:
+            man_evidence_path = directory / f"{stem}.man_pages_license_evidence.json"
+            if not man_evidence_path.exists():
+                blockers.append("man_pages_license_evidence_missing")
+            else:
+                man_evidence = _read_json(man_evidence_path)
+                man_files = man_evidence.get("files", {})
+                valid_man_evidence = (
+                    audit.get("man_pages_evidence_sha256")
+                    == hashlib.sha256(man_evidence_path.read_bytes()).hexdigest()
+                    and man_evidence.get("batch_id") == batch.batch_id
+                    and man_evidence.get("base_draft_sha256") == digest
+                    and man_evidence.get("tag") == "man-pages-6.19"
+                    and len(str(man_evidence.get("commit_sha1", ""))) == 40
+                    and set(man_files) == {"fork.2", "pipe.2", "open.2"}
+                    and all(
+                        row.get("spdx") == "Linux-man-pages-copyleft"
+                        and len(str(row.get("git_blob_sha1", ""))) == 40
+                        for row in man_files.values()
+                    )
+                    and all(
+                        audit.get("sources", {}).get(source_ref, {}).get("evidence_url")
+                        == man_files[filename]["source_url"]
+                        for source_ref, filename in {"man_pipe": "pipe.2", "man_open": "open.2"}.items()
+                    )
+                )
+                if not valid_man_evidence:
+                    blockers.append("man_pages_license_evidence_mismatch")
+        if "cp_algorithms" in batch.sources:
+            cp_evidence_path = directory / f"{stem}.cp_algorithms_version_evidence.json"
+            if not cp_evidence_path.exists():
+                blockers.append("cp_algorithms_version_evidence_missing")
+            else:
+                cp_evidence = _read_json(cp_evidence_path)
+                cp_articles = cp_evidence.get("articles", {})
+                cp_entries = {
+                    entry.source_key: entry for entry in batch.entries
+                    if entry.source_ref == "cp_algorithms"
+                }
+                cp_commit = cp_evidence.get("commit_sha1", "")
+                valid_cp_evidence = (
+                    audit.get("cp_algorithms_evidence_sha256")
+                    == hashlib.sha256(cp_evidence_path.read_bytes()).hexdigest()
+                    and cp_evidence.get("batch_id") == batch.batch_id
+                    and cp_evidence.get("base_draft_sha256") == digest
+                    and len(str(cp_commit)) == 40
+                    and set(cp_articles) == set(cp_entries)
+                    and len(str(cp_evidence.get("license_file", {}).get("git_blob_sha1", ""))) == 40
+                    and all(
+                        row.get("published_url") == entry.source_locator.split("#", 1)[0]
+                        and row.get("source_url")
+                        == f"https://github.com/cp-algorithms/cp-algorithms/blob/"
+                        f"{cp_commit}/{row.get('path')}"
+                        and len(str(row.get("git_blob_sha1", ""))) == 40
+                        for key, entry in cp_entries.items()
+                        for row in [cp_articles[key]]
+                    )
+                    and audit.get("sources", {}).get("cp_algorithms", {}).get("evidence_url")
+                    == f"https://github.com/cp-algorithms/cp-algorithms/blob/{cp_commit}/LICENSE"
+                )
+                if not valid_cp_evidence:
+                    blockers.append("cp_algorithms_version_evidence_mismatch")
+        if "owasp_threat" in batch.sources:
+            owasp_evidence_path = directory / f"{stem}.owasp_version_evidence.json"
+            if not owasp_evidence_path.exists():
+                blockers.append("owasp_version_evidence_missing")
+            else:
+                owasp_evidence = _read_json(owasp_evidence_path)
+                owasp_page = owasp_evidence.get("page", {})
+                owasp_commit = owasp_evidence.get("commit_sha1", "")
+                valid_owasp_evidence = (
+                    audit.get("owasp_evidence_sha256")
+                    == hashlib.sha256(owasp_evidence_path.read_bytes()).hexdigest()
+                    and owasp_evidence.get("batch_id") == batch.batch_id
+                    and owasp_evidence.get("base_draft_sha256") == digest
+                    and len(str(owasp_commit)) == 40
+                    and owasp_page.get("path") == "pages/Threat_Modeling.md"
+                    and len(str(owasp_page.get("git_blob_sha1", ""))) == 40
+                    and owasp_page.get("author_in_frontmatter") == "Victoria Drake"
+                    and owasp_page.get("published_url")
+                    == audit.get("sources", {}).get("owasp_threat", {}).get("evidence_url")
+                    and owasp_page.get("source_url")
+                    == f"https://github.com/OWASP/www-community/blob/"
+                    f"{owasp_commit}/pages/Threat_Modeling.md"
+                )
+                if not valid_owasp_evidence:
+                    blockers.append("owasp_version_evidence_mismatch")
         if audit.get("status") != "approved" or audit.get("publication_clearance") is not True:
             blockers.append("source_audit_preliminary")
 
