@@ -17,6 +17,7 @@ SECOND_BATCH = BATCH.with_name("batch_002.json")
 SECOND_APPROVAL = BATCH.with_name("batch_002.approval.json")
 SECOND_SOURCE_AUDIT = BATCH.with_name("batch_002.source_audit.json")
 SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
+SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 
 
 def test_first_batch_has_50_unpublished_entries_across_seven_subjects():
@@ -127,6 +128,28 @@ def test_second_batch_nist_audit_flags_third_party_and_wrong_locators():
     assert audit["entries"]["algo_a_star"]["finding"] == "wrong_source"
     assert audit["entries"]["algo_a_star"]["entry_url"] is None
     assert audit["entries"]["ds_circular_buffer"]["finding"] == "related_but_not_exact"
+
+
+def test_second_batch_source_revision_is_bound_to_approved_snapshot_and_not_publishable():
+    batch = validate_batch(SECOND_BATCH)
+    approval = validate_approval(SECOND_BATCH, SECOND_APPROVAL)
+    revision = json.loads(SECOND_SOURCE_REVISION.read_text(encoding="utf-8"))
+    assert revision["batch_id"] == batch.batch_id
+    assert revision["base_draft_sha256"] == approval["draft_sha256"]
+    assert revision["status"] == "pending_editorial_source_review"
+    assert revision["publication_clearance"] is False
+    entries = {entry.source_key: entry for entry in batch.entries}
+    assert set(revision["replacements"]) == {"algo_a_star", "algo_lcs", "ds_circular_buffer"}
+    for key, replacement in revision["replacements"].items():
+        assert replacement["old_source_ref"] == entries[key].source_ref
+        assert replacement["old_source_locator"] == entries[key].source_locator
+        assert replacement["source"]["url"].startswith("https://")
+        assert replacement["source_locator"]
+        assert set(replacement) <= {
+            "old_source_ref", "old_source_locator", "source", "source_locator",
+            "evidence_url", "license_evidence_url", "reason", "editorial_check",
+        }
+    assert approval["source_license_review"] == "pending"
 
 
 def test_first_batch_rejects_missing_source(tmp_path):

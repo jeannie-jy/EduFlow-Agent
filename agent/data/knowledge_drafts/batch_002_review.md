@@ -4,6 +4,10 @@
 
 内容审核已由用户整体确认。以下清单继续用于来源定位、事实和许可复核；勾选不等于来源许可批准。对滚动版本文档需要锁定具体审核版本；NIST DADS 的 `algo_lcs` 词条明确标有 CRC Press 版权，`algo_a_star` 没有对应词条，`ds_circular_buffer` 只有相关但非同一概念的词条，须替换或补充来源。`man_pipe`、`man_open` 的具体源文件许可与 `coverage_py` 文档许可尚未核实；`kernel_sched` 来源元数据未被使用。RFC 仅链接原文并保留原创摘要；cp-algorithms 是社区参考，四条相关知识点需独立事实复核。原审批记录的来源许可状态仍是 `pending`。
 
+上述三个错误或不精确来源已有独立的候选修订 `batch_002.source_revision_001.json`，绑定获批草稿哈希，仅变更引用元数据，不改 50 条知识点正文。候选分别是 UC Berkeley CS188 A* 小节、MIT OCW 6.006 LCS 讲义、Linux 6.2 环形缓冲区文档。MIT OCW 材料为 CC BY-NC-SA 4.0；本项目只保留原创摘要和链接，不复制、翻译、入向量库或展示讲义。伯克利页面未取得再分发许可，亦仅链接。候选修订仍待编辑复核，不是导入清单，不能据此发布。
+
+逐文件许可追查的阶段结果也在修订记录中：旧版 `pipe.2` 可见 `Linux-man-pages-copyleft` 标识，旧版 `open.2` 可见单独复制许可，但均不能直接推断草稿标称的 man-pages 6.19 版本；Coverage.py 仓库 NOTICE 声明 Apache-2.0（另有例外），尚未确定引用文档的具体许可。三者保持“仅原创摘要+链接、禁止复制原文”，待精确版本核对。
+
 ## 算法（8）
 
 - [ ] `algo_counting_sort` 计数排序

@@ -1,0 +1,72 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "revision_id": "core-cs-002-source-001",
+  "created_at_utc": "2026-09-29",
+  "status": "pending_editorial_source_review",
+  "publication_clearance": false,
+  "scope": "Source-only revision; the approved 50 Chinese concept records remain byte-for-byte unchanged. Apply only after editorial review; this file is not an import catalog.",
+  "reuse_scope": "Independent Chinese summaries and direct source links only; do not mirror, translate, embed, or display source prose, PDFs, images, code examples, or diagrams.",
+  "replacements": {
+    "algo_a_star": {
+      "old_source_ref": "nist_dads",
+      "old_source_locator": "A* search",
+      "source": {
+        "url": "https://inst.eecs.berkeley.edu/~cs188/textbook/search/informed.html",
+        "institution": "University of California, Berkeley, CS188",
+        "author": "CS188 course staff",
+        "version": "online course textbook, accessed 2026-09-29",
+        "license_review": "No reproduction license established; independently written summary and link only"
+      },
+      "source_locator": "Section 1.4.3 A* Search; Section 1.4.4 Admissibility",
+      "evidence_url": "https://inst.eecs.berkeley.edu/~cs188/textbook/search/informed.html",
+      "reason": "The NIST DADS index has no matching A* entry. CS188 explains priority by g+h, frontier queue, admissibility and graph-search qualification.",
+      "editorial_check": "Confirm draft's worst-case complexity and termination-condition wording against the exact course section."
+    },
+    "algo_lcs": {
+      "old_source_ref": "nist_dads",
+      "old_source_locator": "longest common subsequence",
+      "source": {
+        "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2008/resources/lec20/",
+        "institution": "MIT OpenCourseWare",
+        "author": "Erik Demaine, Ronald Rivest and Srini Devadas (course instructors)",
+        "version": "6.006 Spring 2008, Lecture 20",
+        "license_review": "MIT OCW CC BY-NC-SA 4.0; project use stated noncommercial; link plus independent summary only"
+      },
+      "source_locator": "Lecture 20 PDF, pages 3-5: LCS recurrence, bottom-up table and parent pointers",
+      "license_evidence_url": "https://ocw.mit.edu/pages/privacy-and-terms-of-use/",
+      "reason": "The NIST LCS term is CRC Press copyrighted and does not cover the draft's DP steps. MIT OCW's lecture is specifically about LCS and parent pointers.",
+      "editorial_check": "The lecture uses suffix states while the draft uses an equivalent prefix formulation; verify that equivalence in editorial review. Do not copy or embed the PDF. Reassess if use becomes commercial."
+    },
+    "ds_circular_buffer": {
+      "old_source_ref": "nist_dads",
+      "old_source_locator": "circular buffer / circular queue",
+      "source": {
+        "url": "https://docs.kernel.org/6.2/core-api/circular-buffers.html",
+        "institution": "Linux kernel documentation",
+        "author": "David Howells and Paul E. McKenney",
+        "version": "Linux 6.2 documentation",
+        "license_review": "Documentation source-file SPDX not yet established; link plus independent summary only"
+      },
+      "source_locator": "Circular Buffers / What is a circular buffer?",
+      "evidence_url": "https://docs.kernel.org/6.2/core-api/circular-buffers.html",
+      "reason": "The NIST index has circular queue, not the draft's circular-buffer concept. The kernel document directly explains fixed capacity, head/tail indices and wraparound.",
+      "editorial_check": "The draft's general modulo description is correct for arbitrary sizes, while this kernel implementation emphasizes power-of-two masking; do not conflate them."
+    }
+  },
+  "follow_up": {
+    "man_pipe": "A historical pipe.2 source file bears SPDX Linux-man-pages-copyleft, but the exact 6.19 file/license is not yet verified; do not copy its text.",
+    "man_open": "The project's older open.2 source contains a verbatim/modified-copy notice, but the exact 6.19 file/license is not yet verified; do not copy its text.",
+    "coverage_py": "The repository NOTICE identifies Apache-2.0 except where otherwise noted; a documentation-specific grant for the exact referenced version was not established. Link and independent summary only.",
+    "nist_remaining": "Additional evidence is still needed for radix-sort MSD and Kruskal's disjoint-set implementation/complexity; the first batch has its own unresolved source-fit findings.",
+    "version_pinning": "Python 3, kernel and other rolling documentation still require exact version/section checks before publication."
+  },
+  "evidence": {
+    "nist_credit_notice": "https://xlinux.nist.gov/dads/Other/creditNotice.html",
+    "nist_lcs_entry": "https://xlinux.nist.gov/dads/HTML/longestCommonSubsequence.html",
+    "man_pages_policy": "https://man7.org/linux/man-pages/man7/man-pages.7.html",
+    "man_pipe_historical_source": "https://sources.debian.org/src/manpages/6.03-2/man2/pipe.2",
+    "man_open_historical_source": "https://github.com/mkerrisk/man-pages/blob/master/man2/open.2",
+    "coverage_notice": "https://github.com/coveragepy/coveragepy/blob/main/NOTICE.txt"
+  }
+}
