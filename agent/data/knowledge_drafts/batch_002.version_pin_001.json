@@ -1,0 +1,28 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "created_at_utc": "2026-09-29",
+  "status": "candidate_version_pins",
+  "publication_clearance": false,
+  "scope": "Candidate stable-version URLs for rolling references; the approved draft and its source revision are unchanged. Minor-version documentation may still receive patch updates, so a publication snapshot needs retrieval timestamp and content checksum.",
+  "pins": {
+    "python_bisect": {"url":"https://docs.python.org/3.14/library/bisect.html","version":"Python 3.14 documentation","locator":"bisect_left(a, x)"},
+    "python_mock": {"url":"https://docs.python.org/3.14/library/unittest.mock.html","version":"Python 3.14 documentation","locator":"Overview; patch()"},
+    "python_reference": {"url":"https://docs.python.org/3.14/reference/","version":"Python 3.14 documentation","locator":"Data model; import system; compound statements"},
+    "python_asyncio": {"url":"https://docs.python.org/3.14/library/asyncio.html","version":"Python 3.14 documentation","locator":"Coroutines and Tasks"},
+    "python_dataclasses": {"url":"https://docs.python.org/3.14/library/dataclasses.html","version":"Python 3.14 documentation","locator":"Module contents; field defaults"},
+    "python_tutorial": {"url":"https://docs.python.org/3.14/tutorial/","version":"Python 3.14 documentation","locator":"More Control Flow Tools / Default Argument Values"},
+    "kernel_mm": {"url":"https://docs.kernel.org/6.19/mm/index.html","version":"Linux 6.19 documentation","locator":"Exact child sections for COW, TLB and LRU still need matching"},
+    "kernel_lock": {"url":"https://docs.kernel.org/6.19/locking/index.html","version":"Linux 6.19 documentation","locator":"Exact child sections for priority inversion and reader-writer locking still need matching"},
+    "coverage_py": {"url":"https://coverage.readthedocs.io/en/7.16.1/","version":"Coverage.py 7.16.1 documentation","locator":"Overview and branch coverage measurement"}
+  },
+  "unresolved": {
+    "cp_algorithms": "Four article URLs are known, but a commit/revision or content checksum has not been pinned.",
+    "owasp_threat": "Community page revision and author attribution need a snapshot.",
+    "nist_dads": "Entry-specific last-modified dates and remaining source-fit exceptions require editorial review.",
+    "man_pipe_and_open": "Rendered pages identify man-pages 6.19; exact 6.19 source-file license headers are not independently verified.",
+    "coverage_license": "Repository NOTICE states Apache-2.0 except as noted; documentation-specific rights remain unconfirmed, so no source prose reuse.",
+    "postgres16": "Version 16 is already pinned, but seven concepts need exact chapter URLs checked.",
+    "all_sources": "Before release, capture exact URL, retrieved_at and content checksum for every cited section."
+  }
+}

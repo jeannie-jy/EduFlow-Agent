@@ -1,6 +1,7 @@
 """Draft catalog is complete but cannot be mistaken for approved knowledge."""
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ SECOND_APPROVAL = BATCH.with_name("batch_002.approval.json")
 SECOND_SOURCE_AUDIT = BATCH.with_name("batch_002.source_audit.json")
 SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
+SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
+SECOND_VERSION_PINS = BATCH.with_name("batch_002.version_pin_001.json")
 
 
 def test_first_batch_has_50_unpublished_entries_across_seven_subjects():
@@ -150,6 +153,36 @@ def test_second_batch_source_revision_is_bound_to_approved_snapshot_and_not_publ
             "evidence_url", "license_evidence_url", "reason", "editorial_check",
         }
     assert approval["source_license_review"] == "pending"
+
+
+def test_second_batch_source_revision_approval_is_bound_to_exact_revision_bytes():
+    revision = json.loads(SECOND_SOURCE_REVISION.read_text(encoding="utf-8"))
+    approval = json.loads(SECOND_SOURCE_REVISION_APPROVAL.read_text(encoding="utf-8"))
+    assert approval["batch_id"] == revision["batch_id"]
+    assert approval["revision_id"] == revision["revision_id"]
+    assert approval["base_draft_sha256"] == revision["base_draft_sha256"]
+    assert approval["revision_sha256"] == hashlib.sha256(SECOND_SOURCE_REVISION.read_bytes()).hexdigest()
+    assert approval["editorial_review"]["status"] == "approved"
+    assert set(approval["editorial_review"]["scope"]) == set(revision["replacements"])
+    assert approval["source_license_review"] == "pending"
+    assert approval["publication_clearance"] is False
+    assert approval["database_import"] == "not_started"
+    assert approval["embedding_consent"] is False
+
+
+def test_second_batch_version_pins_are_candidate_only_and_bound_to_draft():
+    batch = validate_batch(SECOND_BATCH)
+    approval = validate_approval(SECOND_BATCH, SECOND_APPROVAL)
+    pins = json.loads(SECOND_VERSION_PINS.read_text(encoding="utf-8"))
+    assert pins["batch_id"] == batch.batch_id
+    assert pins["base_draft_sha256"] == approval["draft_sha256"]
+    assert pins["status"] == "candidate_version_pins"
+    assert pins["publication_clearance"] is False
+    assert set(pins["pins"]) <= set(batch.sources)
+    assert len(pins["pins"]) == 9
+    assert all(row["url"].startswith("https://") for row in pins["pins"].values())
+    assert pins["pins"]["python_reference"]["version"] == "Python 3.14 documentation"
+    assert pins["pins"]["coverage_py"]["version"] == "Coverage.py 7.16.1 documentation"
 
 
 def test_first_batch_rejects_missing_source(tmp_path):
