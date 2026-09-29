@@ -7,7 +7,9 @@ copyright, source version, or human review, and never writes to the database.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Literal
@@ -76,6 +78,17 @@ def validate_batch(path: Path, *, expected_count: int = 50) -> DraftBatch:
     if legacy_keys.intersection(keys):
         raise ValueError("draft IDs may not replace legacy stable references")
 
+    prior_keys: set[str] = set()
+    for other in path.parent.glob("batch_*.json"):
+        if other == path or not re.fullmatch(r"batch_\d+\.json", other.name):
+            continue
+        other_raw = json.loads(other.read_text(encoding="utf-8"))
+        other_keys = {row["source_key"] for row in other_raw.get("entries", [])}
+        if other_keys.intersection(keys):
+            raise ValueError(f"draft IDs overlap {other.name}")
+        if other.name < path.name:
+            prior_keys.update(other_keys)
+
     draft_keys = set(keys)
     for entry in batch.entries:
         if entry.source_ref not in batch.sources:
@@ -83,7 +96,7 @@ def validate_batch(path: Path, *, expected_count: int = 50) -> DraftBatch:
         if entry.source_key in entry.prerequisites:
             raise ValueError(f"self prerequisite: {entry.source_key}")
         for prerequisite in entry.prerequisites:
-            if prerequisite not in draft_keys and prerequisite not in legacy_keys:
+            if prerequisite not in draft_keys and prerequisite not in legacy_keys and prerequisite not in prior_keys:
                 raise ValueError(f"unknown prerequisite {prerequisite} in {entry.source_key}")
 
     graph = {entry.source_key: set(entry.prerequisites) & draft_keys for entry in batch.entries}
@@ -106,11 +119,31 @@ def validate_batch(path: Path, *, expected_count: int = 50) -> DraftBatch:
     return batch
 
 
+def validate_approval(batch_path: Path, approval_path: Path) -> dict:
+    """Bind a user's content approval to exact draft bytes, not later edits."""
+    batch = validate_batch(batch_path)
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(batch_path.read_bytes()).hexdigest()
+    if approval.get("batch_id") != batch.batch_id or approval.get("draft_sha256") != digest:
+        raise ValueError("approval does not match the current draft")
+    review = approval.get("content_review") or {}
+    if (
+        review.get("status") != "approved"
+        or review.get("scope") != "all_50_entries"
+        or not review.get("approved_by")
+        or not review.get("approved_at_utc")
+    ):
+        raise ValueError("content approval is incomplete")
+    return approval
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--approval", type=Path)
     args = parser.parse_args()
     batch = validate_batch(args.input)
+    approval = validate_approval(args.input, args.approval) if args.approval else None
     counts = Counter(entry.subject for entry in batch.entries)
     print(json.dumps({
         "batch_id": batch.batch_id,
@@ -118,6 +151,8 @@ def main() -> int:
         "draft_count": len(batch.entries),
         "source_count": len(batch.sources),
         "by_subject": dict(counts),
+        "content_review": (approval or {}).get("content_review", {}).get("status", "pending"),
+        "source_license_review": (approval or {}).get("source_license_review", "pending"),
         "ready_to_publish": False,
     }, ensure_ascii=False, indent=2))
     return 0

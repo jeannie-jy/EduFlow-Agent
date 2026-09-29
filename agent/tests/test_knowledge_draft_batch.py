@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.validate_knowledge_draft import validate_batch
+from scripts.validate_knowledge_draft import validate_approval, validate_batch
 from scripts.import_curated_knowledge import validate_catalog
 
 
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
+APPROVAL = BATCH.with_name("batch_001.approval.json")
 
 
 def test_first_batch_has_50_unpublished_entries_across_seven_subjects():
@@ -29,6 +30,16 @@ def test_first_batch_has_no_editorial_approval_fields():
 def test_draft_cannot_be_imported_as_reviewed_catalog():
     with pytest.raises(ValueError, match="JSON array"):
         validate_catalog(BATCH)
+
+
+def test_chat_approval_is_bound_to_exact_draft_bytes(tmp_path):
+    approval = validate_approval(BATCH, APPROVAL)
+    assert approval["content_review"]["status"] == "approved"
+    assert approval["source_license_review"] == "pending"
+    changed = tmp_path / "changed.json"
+    changed.write_bytes(BATCH.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="does not match"):
+        validate_approval(changed, APPROVAL)
 
 
 def test_first_batch_rejects_missing_source(tmp_path):
