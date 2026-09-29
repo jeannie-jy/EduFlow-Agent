@@ -2,6 +2,7 @@
   "batch_id": "core-cs-002",
   "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
   "related_revision_id": "core-cs-002-source-001",
+  "resolution_revision_id": "core-cs-002-source-002",
   "reviewed_at_utc": "2026-09-29",
   "status": "agent_fact_checked_source_fit",
   "publication_clearance": false,
@@ -17,11 +18,12 @@
       "candidate_locator": "NOTES: Linux implements fork using copy-on-write pages",
       "evidence": "The Linux 6.19 Page Tables page names COW among expected page-fault causes but explicitly says its details are out of scope. The versioned fork(2) page directly confirms fork uses COW. That page supports the sharing/lazy-copy concept but does not describe every low-level write-fault step in the draft; preserve the carefully qualified explanation and independently verify implementation details before publication.",
       "source_license": "Per-file license for fork.2 in man-pages 6.19 has not been verified. Link-only use and independently written summary; no copied source content.",
-      "editorial_action": "A source-only revision is needed to replace the weak page_tables locator with fork(2). User editorial review remains pending; no release clearance is implied."
+      "editorial_action": "Review source revision 002: replace the weak page_tables locator with fork(2), retain Linux 6.19 rtapp as supporting evidence for the page fault, and verify the remaining implementation details. No release clearance is implied."
     }
   },
   "evidence_urls": [
     "https://docs.kernel.org/6.19/mm/page_tables.html",
-    "https://man7.org/linux/man-pages/man2/fork.2.html"
+    "https://man7.org/linux/man-pages/man2/fork.2.html",
+    "https://docs.kernel.org/6.19/trace/rv/monitor_rtapp.html"
   ]
 }

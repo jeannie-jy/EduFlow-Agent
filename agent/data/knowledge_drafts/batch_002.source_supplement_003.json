@@ -1,6 +1,7 @@
 {
   "batch_id": "core-cs-002",
   "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "resolution_revision_id": "core-cs-002-source-002",
   "reviewed_at_utc": "2026-09-29",
   "status": "agent_fact_checked_source_fit",
   "publication_clearance": false,
@@ -10,13 +11,13 @@
       "current_source_ref": "rfc768",
       "current_source_url": "https://www.rfc-editor.org/rfc/rfc768.html",
       "current_locator": "Introduction and Format",
-      "finding": "RFC_768_is_udp_ipv4_specification_and_does_not_cover_ipv6_extension",
+      "finding": "RFC_768_does_not_cover_ipv6_extension_but_draft_has_no_ipv6_specific_claim",
       "candidate_source_url": "https://www.rfc-editor.org/rfc/rfc8200.html#section-8.1",
       "candidate_version": "RFC 8200, Section 8.1, July 2017",
       "candidate_locator": "Upper-Layer Checksums; UDP over IPv6 checksum requirements",
-      "evidence": "RFC 8200 Section 8.1 directly specifies upper-layer checksum handling for IPv6, which supplies the IPv6-specific addendum to the RFC 768 UDP datagram reference. It does not change the immutable concept record or independently prove unrelated UDP statements.",
+      "evidence": "RFC 768 Introduction, Format, Fields and User Interface directly support the approved record's general UDP claims. The record contains no IPv6-specific checksum claim. RFC 8200 Section 8.1 would only be needed if later teaching content adds that detail.",
       "license": "IETF Trust Legal Provisions; direct citation and original summary only. No RFC material reused.",
-      "editorial_action": "Consider adding RFC 8200 Section 8.1 in a new source-only revision. Editorial review remains pending."
+      "editorial_action": "Review source revision 002, which removes the unnecessary IPv6 caveat from the RFC 768 locator. Keep RFC 8200 Section 8.1 as a future optional source rather than a citation to this record. Editorial review remains pending."
     }
   },
   "evidence_urls": [

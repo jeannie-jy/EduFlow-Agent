@@ -22,6 +22,7 @@ SECOND_SOURCE_AUDIT = BATCH.with_name("batch_002.source_audit.json")
 SECOND_NIST_AUDIT = BATCH.with_name("batch_002.nist_entry_audit.json")
 SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
+SECOND_SOURCE_REVISION_002 = BATCH.with_name("batch_002.source_revision_002.json")
 SECOND_VERSION_PINS = BATCH.with_name("batch_002.version_pin_001.json")
 
 
@@ -202,6 +203,56 @@ def test_second_batch_source_revision_approval_is_bound_to_exact_revision_bytes(
     assert approval["embedding_consent"] is False
 
 
+def test_second_source_revision_is_reviewable_but_not_yet_approved():
+    batch = validate_batch(SECOND_BATCH)
+    revision = json.loads(SECOND_SOURCE_REVISION_002.read_text(encoding="utf-8"))
+    entries = {entry.source_key: entry for entry in batch.entries}
+    assert revision["batch_id"] == batch.batch_id
+    assert revision["base_draft_sha256"] == hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest()
+    assert revision["status"] == "pending_editorial_source_review"
+    assert revision["publication_clearance"] is False
+    assert set(revision["replacements"]) == {"os_copy_on_write", "net_udp_datagram"}
+    for key, replacement in revision["replacements"].items():
+        assert replacement["old_source_ref"] == entries[key].source_ref
+        assert replacement["old_source_locator"] == entries[key].source_locator
+        assert replacement["source"]["url"].startswith("https://")
+        assert replacement["source_locator"]
+    assert "IPv6" not in revision["replacements"]["net_udp_datagram"]["source_locator"]
+
+
+def test_second_source_revision_gate_requires_exact_approved_bytes(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    revision_path = tmp_path / SECOND_SOURCE_REVISION_002.name
+    revision = json.loads(revision_path.read_text(encoding="utf-8"))
+    approval = {
+        "batch_id": revision["batch_id"],
+        "base_draft_sha256": revision["base_draft_sha256"],
+        "revision_id": revision["revision_id"],
+        "revision_sha256": hashlib.sha256(revision_path.read_bytes()).hexdigest(),
+        "editorial_review": {
+            "status": "approved",
+            "scope": list(revision["replacements"]),
+            "approved_by": "synthetic_test_reviewer",
+            "approved_at_utc": "2026-09-29T00:00:00Z",
+            "evidence": "test fixture only",
+        },
+    }
+    (tmp_path / "batch_002.source_revision_002.approval.json").write_text(
+        json.dumps(approval), encoding="utf-8"
+    )
+    report = check_batch(tmp_path, 2)
+    assert report["source_revision_002_approved"] is True
+    assert not any("source_supplement_pending_editorial_review" in code for code in report["blockers"])
+    assert report["ready_for_staging_import"] is False
+
+    revision_path.write_bytes(revision_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert report["source_revision_002_approved"] is False
+    assert "source_revision_002_approval_mismatch" in report["blockers"]
+    assert "source_supplement_pending_editorial_review:os_copy_on_write" in report["blockers"]
+
+
 def test_second_batch_version_pins_are_candidate_only_and_bound_to_draft():
     batch = validate_batch(SECOND_BATCH)
     approval = validate_approval(SECOND_BATCH, SECOND_APPROVAL)
@@ -226,12 +277,14 @@ def test_second_batch_readiness_gate_distinguishes_editorial_approval_from_relea
     report = check_batch(SECOND_BATCH.parent, 2)
     assert report["content_approved"] is True
     assert report["source_revision_approved"] is True
+    assert report["source_revision_002_approved"] is False
     assert report["ready_for_staging_import"] is False
     assert report["ready_for_vector_index"] is False
     assert "source_license_pending" in report["blockers"]
     assert "source_audit_preliminary" in report["blockers"]
     assert "version_pins_candidate_only" in report["blockers"]
     assert "embedding_consent_missing" in report["blockers"]
+    assert "source_revision_002_approval_missing" in report["blockers"]
     assert "source_supplement_pending_editorial_review:os_copy_on_write" in report["blockers"]
     assert "source_supplement_pending_editorial_review:net_udp_datagram" in report["blockers"]
     assert not any(code.startswith("source_fit_unresolved:") for code in report["blockers"])

@@ -41,6 +41,7 @@ def check_batch(directory: Path, number: int) -> dict:
     revision_path = directory / f"{stem}.source_revision_001.json"
     revision_approved = False
     approved_replacements: set[str] = set()
+    approved_revision_entries: dict[str, set[str]] = {}
     if revision_path.exists():
         revision = _read_json(revision_path)
         revision_approval_path = directory / f"{stem}.source_revision_001.approval.json"
@@ -64,6 +65,47 @@ def check_batch(directory: Path, number: int) -> dict:
                 blockers.append("source_revision_approval_mismatch")
             else:
                 approved_replacements = set(revision["replacements"])
+                approved_revision_entries[revision["revision_id"]] = approved_replacements
+
+    revision_002_path = directory / f"{stem}.source_revision_002.json"
+    revision_002_approved = False
+    if revision_002_path.exists():
+        revision_002 = _read_json(revision_002_path)
+        entries_by_key = {entry.source_key: entry for entry in batch.entries}
+        revision_002_approval_path = directory / f"{stem}.source_revision_002.approval.json"
+        if not revision_002_approval_path.exists():
+            blockers.append("source_revision_002_approval_missing")
+        else:
+            revision_002_approval = _read_json(revision_002_approval_path)
+            revision_002_approved = (
+                revision_002.get("batch_id") == batch.batch_id
+                and revision_002.get("base_draft_sha256") == digest
+                and revision_002.get("revision_id") == f"{batch.batch_id}-source-002"
+                and bool(revision_002.get("replacements"))
+                and all(
+                    key in entries_by_key
+                    and replacement.get("old_source_ref") == entries_by_key[key].source_ref
+                    and replacement.get("old_source_locator") == entries_by_key[key].source_locator
+                    for key, replacement in revision_002["replacements"].items()
+                )
+                and revision_002_approval.get("batch_id") == batch.batch_id
+                and revision_002_approval.get("base_draft_sha256") == digest
+                and revision_002_approval.get("revision_id") == revision_002.get("revision_id")
+                and revision_002_approval.get("revision_sha256")
+                == hashlib.sha256(revision_002_path.read_bytes()).hexdigest()
+                and revision_002_approval.get("editorial_review", {}).get("status") == "approved"
+                and bool(revision_002_approval.get("editorial_review", {}).get("approved_by"))
+                and bool(revision_002_approval.get("editorial_review", {}).get("approved_at_utc"))
+                and bool(revision_002_approval.get("editorial_review", {}).get("evidence"))
+                and set(revision_002_approval.get("editorial_review", {}).get("scope", []))
+                == set(revision_002.get("replacements", {}))
+            )
+            if not revision_002_approved:
+                blockers.append("source_revision_002_approval_mismatch")
+            else:
+                approved_revision_entries[revision_002["revision_id"]] = set(
+                    revision_002["replacements"]
+                )
 
     nist_path = directory / f"{stem}.nist_entry_audit.json"
     supplement_path = directory / f"{stem}.source_supplement_001.json"
@@ -89,7 +131,10 @@ def check_batch(directory: Path, number: int) -> dict:
             blockers.append(f"source_supplement_{sidecar_id}_hash_mismatch")
         else:
             for key, row in source_fit.get("entries", {}).items():
-                if row.get("editorial_action"):
+                resolution_id = source_fit.get("resolution_revision_id")
+                if row.get("editorial_action") and key not in approved_revision_entries.get(
+                    resolution_id, set()
+                ):
                     blockers.append(f"source_supplement_pending_editorial_review:{key}")
     if any(entry.source_ref == "nist_dads" for entry in batch.entries):
         if not nist_path.exists():
@@ -129,6 +174,7 @@ def check_batch(directory: Path, number: int) -> dict:
         "draft_sha256": digest,
         "content_approved": True,
         "source_revision_approved": revision_approved,
+        "source_revision_002_approved": revision_002_approved,
         "ready_for_staging_import": not any(
             code != "embedding_consent_missing" for code in blockers
         ),

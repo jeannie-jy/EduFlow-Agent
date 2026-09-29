@@ -1,0 +1,54 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "revision_id": "core-cs-002-source-002",
+  "created_at_utc": "2026-09-29",
+  "status": "pending_editorial_source_review",
+  "publication_clearance": false,
+  "scope": "Source-only proposal. The approved 50 concept records remain byte-for-byte unchanged. Apply only after an exact-hash editorial approval and separate license/import checks.",
+  "reuse_scope": "Direct links and independently written Chinese summaries only; no original source text or examples are copied or embedded.",
+  "replacements": {
+    "os_copy_on_write": {
+      "old_source_ref": "kernel_mm",
+      "old_source_locator": "Page Tables / Copy on Write; exact kernel-version behavior needs review",
+      "source": {
+        "url": "https://man7.org/linux/man-pages/man2/fork.2.html",
+        "institution": "Linux man-pages project",
+        "author": "The Linux man-pages project contributors",
+        "version": "man-pages 6.19, fork(2), 2026-06-05",
+        "license_review": "Exact fork.2 source-file license not verified; direct link and independent summary only"
+      },
+      "source_locator": "fork(2), NOTES, Linux copy-on-write implementation",
+      "supplemental_evidence": [{
+        "url": "https://docs.kernel.org/6.19/trace/rv/monitor_rtapp.html",
+        "version": "Linux 6.19 documentation",
+        "locator": "Description / Page faults caused by copy-on-write",
+        "author": "Nam Cao"
+      }],
+      "reason": "The original Page Tables page explicitly puts COW details out of scope. fork(2) confirms Linux uses COW pages; the kernel rtapp page confirms COW can cause a page fault and copying. Neither page alone proves every implementation step in the teaching summary.",
+      "editorial_check": "Verify the draft's read-only mapping, private-page allocation and resume steps against a suitable implementation reference before approval; keep the single-file license unresolved for text reuse."
+    },
+    "net_udp_datagram": {
+      "old_source_ref": "rfc768",
+      "old_source_locator": "Introduction and Format; IPv6-specific UDP details require newer RFC review",
+      "source": {
+        "url": "https://www.rfc-editor.org/rfc/rfc768.html",
+        "institution": "RFC Editor / IETF",
+        "author": "Jon Postel",
+        "version": "RFC 768, August 1980",
+        "license_review": "IETF Trust Legal Provisions; direct citation and independent summary only"
+      },
+      "source_locator": "Introduction; Format; Fields; User Interface",
+      "reason": "The approved UDP record makes general datagram, port, length and delivery claims supported by RFC 768. It makes no IPv6-specific claim, so the old locator's open IPv6 note is unnecessary for this record. RFC 8200 Section 8.1 remains an optional source only if future content explains IPv6 checksum rules.",
+      "editorial_check": "Confirm the record contains no IPv6-specific rule and that the four named RFC 768 sections cover each stated claim."
+    }
+  },
+  "evidence_urls": [
+    "https://docs.kernel.org/6.19/mm/page_tables.html",
+    "https://man7.org/linux/man-pages/man2/fork.2.html",
+    "https://docs.kernel.org/6.19/trace/rv/monitor_rtapp.html",
+    "https://www.rfc-editor.org/rfc/rfc768.html",
+    "https://www.rfc-editor.org/rfc/rfc8200.html#section-8.1",
+    "https://www.rfc-editor.org/series/rfc-use/"
+  ]
+}
