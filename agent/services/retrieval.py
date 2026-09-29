@@ -68,10 +68,11 @@ async def retrieve_knowledge_context(
     if _is_abstention_intent(query):
         search_queries = [search_queries[0] if search_queries else query]
     try:
-        from db.database import async_session_factory
-        from services.knowledge_service import search_knowledge_pgvector
-        from services.knowledge_library import search_library
         import uuid
+
+        from db.database import async_session_factory
+        from services.knowledge_library import search_library
+        from services.knowledge_service import search_knowledge_pgvector
 
         fused: dict[str, dict[str, Any]] = {}
         async with async_session_factory() as session:
@@ -95,8 +96,8 @@ async def retrieve_knowledge_context(
                     )
                 for rank, row in enumerate(rows, 1):
                     source_id = str(
-                        row.get("source_key")
-                        or row.get("chunk_id")
+                        row.get("chunk_id")
+                        or row.get("source_key")
                         or row.get("id")
                         or row.get("concept")
                         or f"knowledge-{rank}"
@@ -149,7 +150,7 @@ async def retrieve_knowledge_context(
             "source_id": str(
                 row.get("source_key") or row.get("id") or f"knowledge-{index}"
             ),
-            "title": str(row.get("concept") or "untitled")[:200],
+            "title": str(row.get("title") or row.get("concept") or "untitled")[:200],
             "content": content,
             "similarity": float(row.get("similarity") or 0),
             "rrf_score": round(float(row.get("rrf_score") or 0), 6),

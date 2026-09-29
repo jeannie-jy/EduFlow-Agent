@@ -97,3 +97,36 @@ async def test_v2_retrieval_preserves_stable_source_and_precise_locator():
     assert source["chunk_id"] == "chunk-1"
     assert source["version"] == "2026.1"
     assert source["locator"] == "section:2"
+
+
+@pytest.mark.asyncio
+async def test_teacher_document_retains_multiple_page_citations():
+    context = AsyncMock()
+    context.__aenter__.return_value = AsyncMock()
+    search = AsyncMock(return_value=[
+        {
+            "chunk_id": "page-2", "source_key": "teacher-material",
+            "title": "lecture.pdf", "content": "binary search", "locator": "page:2",
+            "version": "sha256:abc", "scope": "teacher", "similarity": 0.8,
+        },
+        {
+            "chunk_id": "page-9", "source_key": "teacher-material",
+            "title": "lecture.pdf", "content": "binary tree", "locator": "page:9",
+            "version": "sha256:abc", "scope": "teacher", "similarity": 0.7,
+        },
+    ])
+    settings = type("Settings", (), {
+        "knowledge_v2_enabled": True, "knowledge_search_top_k": 5,
+        "retrieval_context_max_chars": 2000,
+    })()
+    with (
+        patch("db.database.async_session_factory", return_value=context),
+        patch("services.knowledge_library.search_library", search),
+        patch("services.retrieval.get_settings", return_value=settings),
+    ):
+        result = await retrieve_knowledge_context("binary")
+    assert [(item["title"], item["source_id"], item["locator"])
+            for item in result["sources"]] == [
+        ("lecture.pdf", "teacher-material", "page:2"),
+        ("lecture.pdf", "teacher-material", "page:9"),
+    ]
