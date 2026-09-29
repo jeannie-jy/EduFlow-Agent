@@ -15,6 +15,38 @@ from services.knowledge_library import split_text
 DOCX_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{DOCX_NS}}}"
 MAX_DOCX_XML_BYTES = 20 * 1024 * 1024
+MAX_INDEX_CHARS = 40_000_000
+MAX_INDEX_CHUNKS = 100_000
+
+
+def validate_index_result(value: object) -> dict:
+    """Validate untrusted sandbox output before privileged DB insertion."""
+    if not isinstance(value, dict):
+        raise ValueError("index result must be an object")
+    chunks = value.get("chunks")
+    warnings = value.get("warnings")
+    total_chars = value.get("total_chars")
+    if not isinstance(chunks, list) or len(chunks) > MAX_INDEX_CHUNKS:
+        raise ValueError("index chunk count exceeds the limit")
+    if not isinstance(total_chars, int) or not 0 <= total_chars <= MAX_INDEX_CHARS:
+        raise ValueError("index text length exceeds the limit")
+    if not isinstance(warnings, list) or len(warnings) > 10_000 or any(
+        not isinstance(item, str) or len(item) > 200 for item in warnings
+    ):
+        raise ValueError("index warnings exceed the schema boundary")
+    if any(
+        not isinstance(chunk, dict)
+        or not isinstance(chunk.get("section"), str)
+        or len(chunk["section"]) > 500
+        or not isinstance(chunk.get("locator"), str)
+        or len(chunk["locator"]) > 100
+        or not isinstance(chunk.get("content"), str)
+        or not chunk["content"].strip()
+        or len(chunk["content"]) > 1200
+        for chunk in chunks
+    ):
+        raise ValueError("index chunk exceeds the schema boundary")
+    return {"chunks": chunks, "warnings": warnings, "total_chars": total_chars}
 
 
 def _docx_sections(path: Path) -> list[tuple[str, str, str]]:
@@ -113,7 +145,11 @@ def extract_index_chunks(path: Path) -> dict:
     total_chars = 0
     for title, parent_locator, content in sections:
         total_chars += len(content)
+        if total_chars > MAX_INDEX_CHARS:
+            raise ValueError("material text exceeds the indexing limit")
         for part in split_text(content):
+            if len(chunks) >= MAX_INDEX_CHUNKS:
+                raise ValueError("material chunk count exceeds the indexing limit")
             chunks.append({
                 "section": title[:500],
                 "locator": f"{parent_locator};{part['locator']}",
@@ -121,4 +157,4 @@ def extract_index_chunks(path: Path) -> dict:
             })
     if not chunks:
         warnings.append("no_extractable_text:ocr_required" if suffix == ".pdf" else "no_extractable_text")
-    return {"chunks": chunks, "warnings": warnings, "total_chars": total_chars}
+    return validate_index_result({"chunks": chunks, "warnings": warnings, "total_chars": total_chars})

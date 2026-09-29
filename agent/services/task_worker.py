@@ -497,6 +497,136 @@ async def _parse_material_via_sandbox(material, job: dict[str, Any]) -> dict:
     raise TimeoutError("Material sandbox did not return a result before the deadline")
 
 
+async def _extract_index_via_sandbox(material, job: dict[str, Any]) -> dict:
+    """Receive a bounded, checksummed chunk spool from the credential-free sidecar."""
+    from api.materials import _copy_material_to
+    from services.material_indexing import validate_index_result
+
+    settings = get_settings()
+    root = settings.material_sandbox_dir.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    suffix = Path(material.stored_filename).suffix.lower()
+    attempt_id = uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(
+        prefix=f"{job['job_id']}-{job['attempt_no']}-", dir=root
+    ) as temp_dir:
+        job_dir = Path(temp_dir).resolve()
+        if not job_dir.is_relative_to(root):
+            raise PermanentTaskError("Material sandbox path escaped its root")
+        source_path = job_dir / f"source{suffix}"
+        await _copy_material_to(material, source_path)
+        source_sha256 = await asyncio.to_thread(
+            lambda: hashlib.sha256(source_path.read_bytes()).hexdigest()
+        )
+        request_tmp = job_dir / f".parse-request-{attempt_id}.tmp"
+        request_tmp.write_text(json.dumps({
+            "attempt_id": attempt_id, "operation": "index",
+            "source_name": source_path.name, "source_sha256": source_sha256,
+        }), encoding="utf-8")
+        request_tmp.replace(job_dir / "parse-request.json")
+        deadline = asyncio.get_running_loop().time() + settings.material_parse_timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            result_path = job_dir / "parse-result.json"
+            if result_path.exists():
+                if result_path.stat().st_size > settings.material_parse_result_max_bytes:
+                    raise PermanentTaskError("Material sandbox manifest is oversized")
+                try:
+                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    result = None
+                if isinstance(result, dict) and result.get("attempt_id") == attempt_id:
+                    if result.get("status") == "completed":
+                        spool = job_dir / "index-chunks.json"
+                        size = result.get("index_size_bytes")
+                        if (not isinstance(size, int) or size <= 0
+                                or size > settings.material_index_result_max_bytes
+                                or not spool.is_file() or spool.stat().st_size != size):
+                            raise PermanentTaskError("Material index spool has invalid size")
+                        encoded = await asyncio.to_thread(spool.read_bytes)
+                        if hashlib.sha256(encoded).hexdigest() != result.get("index_sha256"):
+                            raise PermanentTaskError("Material index spool integrity check failed")
+                        try:
+                            parsed = validate_index_result(json.loads(encoded))
+                        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                            raise PermanentTaskError("Material index spool has invalid schema") from exc
+                        if len(parsed["chunks"]) != result.get("index_chunk_count"):
+                            raise PermanentTaskError("Material index chunk count mismatch")
+                        return parsed
+                    if result.get("retryable") is False:
+                        raise PermanentTaskError(str(result.get("error_code") or "material_index_rejected"))
+                    raise RuntimeError("Material sandbox failed to index the input")
+            await asyncio.sleep(min(settings.task_worker_poll_seconds, 1.0))
+    raise TimeoutError("Material sandbox did not return an index before the deadline")
+
+
+async def _execute_material_index(job: dict[str, Any]) -> None:
+    """Index an opted-in teacher material, rechecking ownership before publishing."""
+    from api.materials import _copy_material_to
+    from db.database import async_session_factory
+    from db.models import BackgroundJob, BackgroundJobAttempt, Material
+    from services.knowledge_library import index_source
+    from services.material_indexing import extract_index_chunks
+    from services.teacher_library import teacher_source_key
+
+    try:
+        material_id = uuid.UUID(str(job["payload"].get("material_id", "")))
+        owner_id = uuid.UUID(str(job["owner_id"]))
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise PermanentTaskError("Material index owner or identifier is invalid") from exc
+    if job["payload"].get("allow_embedding") is not False:
+        raise PermanentTaskError("Paid embedding requires separate explicit consent")
+    async with async_session_factory() as session:
+        material = await session.get(Material, material_id)
+        if material is None or material.owner_id != owner_id or not material.is_library:
+            raise PermanentTaskError("Library material no longer belongs to task owner")
+        if Path(material.stored_filename).suffix.lower() not in {".pdf", ".pptx", ".docx", ".md", ".txt"}:
+            raise PermanentTaskError("Material type is not indexable")
+    if get_settings().material_parse_execution_mode == "sandbox":
+        extracted = await _extract_index_via_sandbox(material, job)
+    else:
+        with tempfile.TemporaryDirectory(prefix="eduflow-index-") as temp_dir:
+            path = Path(temp_dir) / f"source{Path(material.stored_filename).suffix.lower()}"
+            await _copy_material_to(material, path)
+            extracted = await asyncio.to_thread(extract_index_chunks, path)
+    if not extracted["chunks"]:
+        raise PermanentTaskError(
+            "material_ocr_required" if any("ocr_required" in warning for warning in extracted["warnings"])
+            else "material_no_extractable_text"
+        )
+    version = "sha256:" + hashlib.sha256(json.dumps(
+        extracted["chunks"], ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")).hexdigest()
+    now = datetime.now(UTC)
+    async with async_session_factory() as session:
+        queued_job = await session.get(BackgroundJob, uuid.UUID(job["job_id"]), with_for_update=True)
+        material = await session.get(Material, material_id, with_for_update=True)
+        if (
+            queued_job is None or queued_job.status != "running"
+            or queued_job.worker_id != TASK_WORKER_ID
+            or queued_job.attempt_count != job["attempt_no"]
+            or material is None or material.owner_id != owner_id or not material.is_library
+        ):
+            raise PermanentTaskError("Material index task lost ownership or input")
+        result = await index_source(
+            session, source_key=teacher_source_key(material_id), scope="teacher",
+            title=material.original_filename, version=version,
+            chunks=extracted["chunks"], owner_id=owner_id, material_id=material_id,
+            source_type="teacher_material", allow_embedding=False, publish=True,
+            metadata={"warnings": extracted["warnings"], "total_chars": extracted["total_chars"]},
+        )
+        queued_job.status = "completed"
+        queued_job.worker_id = None
+        queued_job.lease_expires_at = None
+        queued_job.completed_at = now
+        queued_job.error_class = None
+        await session.execute(update(BackgroundJobAttempt).where(
+            BackgroundJobAttempt.job_id == queued_job.id,
+            BackgroundJobAttempt.status == "running",
+        ).values(status="completed", finished_at=now))
+        await session.commit()
+        logger.info("material index complete: material=%s version=%s", material_id, result["version_id"])
+
+
 async def _mark_task_failure(
     job: dict[str, Any], *, error_class: str, retryable: bool
 ) -> None:
@@ -566,6 +696,7 @@ async def run_claimed_background_job(job: dict[str, Any]) -> None:
     handlers = {
         "feedback_reflection": _execute_feedback_reflection,
         "material_parse": _execute_material_parse,
+        "material_index": _execute_material_index,
     }
     handler = handlers.get(job["kind"])
     if handler is None:
@@ -593,7 +724,10 @@ async def run_claimed_background_job(job: dict[str, Any]) -> None:
         retryable = not isinstance(exc, (PermanentTaskError, CredentialReferenceUnavailableError))
         await _mark_task_failure(
             job,
-            error_class=type(exc).__name__,
+            error_class=(
+                str(exc) if isinstance(exc, PermanentTaskError)
+                and str(exc).startswith("material_") else type(exc).__name__
+            ),
             retryable=retryable,
         )
         logger.exception("background task failed: job=%s", job["job_id"])

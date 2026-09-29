@@ -471,6 +471,113 @@ async def parse_material(
     }
 
 
+@router.post("/{material_id}/index", status_code=202)
+async def queue_material_index(
+    material_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
+) -> dict:
+    """Explicit, free keyword-only indexing of an owned library material."""
+    from sqlalchemy import select
+
+    from db.models import BackgroundJob
+
+    owner_id = _require_library_owner(current_user)
+    material = await session.get(Material, _material_uuid(material_id), with_for_update=True)
+    if material is None or material.owner_id != owner_id or not material.is_library:
+        raise HTTPException(status_code=404, detail="Library material not found")
+    if Path(material.stored_filename).suffix.lower() not in {".pdf", ".pptx", ".docx", ".md", ".txt"}:
+        raise HTTPException(status_code=422, detail="Material type is not indexable")
+    existing = await session.scalar(select(BackgroundJob).where(
+        BackgroundJob.kind == "material_index",
+        BackgroundJob.owner_id == owner_id,
+        BackgroundJob.payload["material_id"].astext == material_id,
+    ).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()))
+    if existing is None:
+        existing = BackgroundJob(
+            id=uuid.uuid4(), project_id=None, owner_id=owner_id,
+            kind="material_index", idempotency_key=material_id,
+            payload={"material_id": material_id, "allow_embedding": False},
+            status="queued",
+        )
+        session.add(existing)
+        await session.flush()
+    return {
+        "id": material_id, "status": existing.status,
+        "job_id": str(existing.id),
+        "status_url": f"/api/background-jobs/{existing.id}",
+        "error_class": existing.error_class,
+    }
+
+
+@router.get("/{material_id}/index")
+async def get_material_index_status(
+    material_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+) -> dict:
+    from sqlalchemy import select
+
+    from db.models import BackgroundJob, KnowledgeSource
+
+    owner_id = _require_library_owner(current_user)
+    material = await session.get(Material, _material_uuid(material_id))
+    if material is None or material.owner_id != owner_id or not material.is_library:
+        raise HTTPException(status_code=404, detail="Library material not found")
+    job = await session.scalar(select(BackgroundJob).where(
+        BackgroundJob.kind == "material_index",
+        BackgroundJob.owner_id == owner_id,
+        BackgroundJob.payload["material_id"].astext == material_id,
+    ).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()))
+    source = await session.scalar(select(KnowledgeSource).where(
+        KnowledgeSource.material_id == material.id,
+        KnowledgeSource.owner_id == owner_id,
+        KnowledgeSource.scope == "teacher",
+    ))
+    return {
+        "id": material_id,
+        "status": job.status if job else "not_requested",
+        "job_id": str(job.id) if job else None,
+        "error_class": job.error_class if job else None,
+        "attempt_count": job.attempt_count if job else 0,
+        "source_status": source.status if source else None,
+    }
+
+
+@router.post("/{material_id}/index/retry", status_code=202)
+async def retry_material_index(
+    material_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
+) -> dict:
+    from sqlalchemy import select
+
+    from db.models import BackgroundJob
+
+    owner_id = _require_library_owner(current_user)
+    material = await session.get(Material, _material_uuid(material_id), with_for_update=True)
+    if material is None or material.owner_id != owner_id or not material.is_library:
+        raise HTTPException(status_code=404, detail="Library material not found")
+    job = await session.scalar(select(BackgroundJob).where(
+        BackgroundJob.kind == "material_index",
+        BackgroundJob.owner_id == owner_id,
+        BackgroundJob.payload["material_id"].astext == material_id,
+    ).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()).with_for_update())
+    if job is None or job.status != "failed":
+        raise HTTPException(status_code=409, detail="No failed index job to retry")
+    retry = BackgroundJob(
+        id=uuid.uuid4(), project_id=None, owner_id=owner_id,
+        kind="material_index", idempotency_key=f"{material_id}:{uuid.uuid4().hex}",
+        payload={"material_id": material_id, "allow_embedding": False},
+        status="queued",
+    )
+    session.add(retry)
+    await session.flush()
+    return {"id": material_id, "status": "queued", "job_id": str(retry.id)}
+
+
 @router.get("/{material_id}/preview")
 async def preview_material(
     material_id: str,

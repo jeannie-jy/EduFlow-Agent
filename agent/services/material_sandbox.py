@@ -25,6 +25,14 @@ class MaterialIntegrityError(RuntimeError):
     """The downloaded source changed after the privileged worker approved it."""
 
 
+class MaterialIndexNoTextError(MaterialIntegrityError):
+    """No extractable text was found; OCR or another source is required."""
+
+
+class MaterialIndexTooLargeError(MaterialIntegrityError):
+    """The extracted text exceeds the bounded sandbox exchange."""
+
+
 def process_one_request(root: Path) -> bool:
     """Claim, validate and parse one request without external service access."""
     resolved_root = root.resolve()
@@ -61,17 +69,58 @@ def process_one_request(root: Path) -> bool:
             actual_sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
             if len(expected_sha256) != 64 or expected_sha256 != actual_sha256:
                 raise MaterialIntegrityError("Material source integrity check failed")
+            operation = request.get("operation", "parse")
+            if operation == "parse":
+                parsed = _validate_parsed_result(_parse_material_path(source_path))
+                encoded = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+                if len(encoded) > settings.material_parse_result_max_bytes:
+                    raise MaterialIntegrityError("Material parse result exceeds its limit")
+                result = {
+                    "attempt_id": attempt_id,
+                    "status": "completed",
+                    "parsed_result": parsed,
+                    "error": None,
+                    "retryable": False,
+                }
+            elif operation == "index":
+                from services.material_indexing import extract_index_chunks
 
-            parsed = _validate_parsed_result(_parse_material_path(source_path))
-            encoded = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
-            if len(encoded) > settings.material_parse_result_max_bytes:
-                raise MaterialIntegrityError("Material parse result exceeds its limit")
+                if source_path.suffix.lower() not in {".pdf", ".pptx", ".docx", ".md", ".txt"}:
+                    raise MaterialIntegrityError("Material type is not indexable")
+                index_data = extract_index_chunks(source_path)
+                if not index_data["chunks"]:
+                    raise MaterialIndexNoTextError("No extractable text")
+                encoded = json.dumps(index_data, ensure_ascii=False).encode("utf-8")
+                if len(encoded) > settings.material_index_result_max_bytes:
+                    raise MaterialIndexTooLargeError("Material index result exceeds its limit")
+                output_tmp = job_dir / f".index-chunks-{attempt_id}.tmp"
+                output_tmp.write_bytes(encoded)
+                output_tmp.replace(job_dir / "index-chunks.json")
+                result = {
+                    "attempt_id": attempt_id,
+                    "status": "completed",
+                    "index_sha256": hashlib.sha256(encoded).hexdigest(),
+                    "index_size_bytes": len(encoded),
+                    "index_chunk_count": len(index_data["chunks"]),
+                    "error": None,
+                    "retryable": False,
+                }
+            else:
+                raise MaterialIntegrityError("Unsupported material operation")
+        except MaterialIndexNoTextError:
             result = {
-                "attempt_id": attempt_id,
-                "status": "completed",
-                "parsed_result": parsed,
-                "error": None,
-                "retryable": False,
+                "attempt_id": attempt_id, "status": "failed", "parsed_result": None,
+                "error": "Material has no extractable text",
+                "error_code": (
+                    "material_ocr_required" if source_path.suffix.lower() == ".pdf"
+                    else "material_no_extractable_text"
+                ), "retryable": False,
+            }
+        except MaterialIndexTooLargeError:
+            result = {
+                "attempt_id": attempt_id, "status": "failed", "parsed_result": None,
+                "error": "Extracted material exceeds the indexing limit",
+                "error_code": "material_index_too_large", "retryable": False,
             }
         except MaterialIntegrityError as exc:
             logger.warning(

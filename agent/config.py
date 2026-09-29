@@ -178,6 +178,9 @@ class Settings(BaseSettings):
     material_parse_result_max_bytes: int = Field(
         default=2 * 1024 * 1024, ge=1024, le=20 * 1024 * 1024
     )
+    material_index_result_max_bytes: int = Field(
+        default=64 * 1024 * 1024, ge=1024, le=128 * 1024 * 1024
+    )
     allowed_upload_types: list[str] = [
         "application/pdf",
         "text/plain",
