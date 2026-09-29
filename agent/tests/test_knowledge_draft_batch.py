@@ -36,6 +36,7 @@ SECOND_SOURCE_REVISION = BATCH.with_name("batch_002.source_revision_001.json")
 SECOND_SOURCE_REVISION_APPROVAL = BATCH.with_name("batch_002.source_revision_001.approval.json")
 SECOND_SOURCE_REVISION_002 = BATCH.with_name("batch_002.source_revision_002.json")
 SECOND_SOURCE_REVISION_002_FACTCHECK = BATCH.with_name("batch_002.source_revision_002_factcheck.json")
+SECOND_SOURCE_SUPPLEMENT_001 = BATCH.with_name("batch_002.source_supplement_001.json")
 SECOND_VERSION_PINS = BATCH.with_name("batch_002.version_pin_001.json")
 
 
@@ -419,9 +420,38 @@ def test_second_batch_readiness_gate_distinguishes_editorial_approval_from_relea
     assert "version_pins_candidate_only" in report["blockers"]
     assert "embedding_consent_missing" in report["blockers"]
     assert "source_revision_002_approval_missing" in report["blockers"]
+    assert "source_supplement_001_approval_missing" in report["blockers"]
     assert "source_supplement_pending_editorial_review:os_copy_on_write" in report["blockers"]
     assert "source_supplement_pending_editorial_review:net_udp_datagram" in report["blockers"]
+    assert "source_fit_unresolved:algo_kruskal,algo_radix_sort" in report["blockers"]
+
+
+def test_source_supplement_needs_exact_hash_editorial_approval(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    supplement_path = tmp_path / SECOND_SOURCE_SUPPLEMENT_001.name
+    approval = {
+        "batch_id": "core-cs-002",
+        "base_draft_sha256": hashlib.sha256(SECOND_BATCH.read_bytes()).hexdigest(),
+        "supplement_sha256": hashlib.sha256(supplement_path.read_bytes()).hexdigest(),
+        "editorial_review": {
+            "status": "approved",
+            "scope": ["algo_radix_sort", "algo_kruskal"],
+            "approved_by": "synthetic_test_reviewer",
+        },
+    }
+    (tmp_path / "batch_002.source_supplement_001.approval.json").write_text(
+        json.dumps(approval), encoding="utf-8"
+    )
+    report = check_batch(tmp_path, 2)
+    assert "source_supplement_001_approval_missing" not in report["blockers"]
     assert not any(code.startswith("source_fit_unresolved:") for code in report["blockers"])
+    assert report["ready_for_staging_import"] is False
+
+    supplement_path.write_bytes(supplement_path.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert "source_supplement_001_approval_mismatch" in report["blockers"]
+    assert "source_fit_unresolved:algo_kruskal,algo_radix_sort" in report["blockers"]
 
 
 def test_second_batch_source_resolution_covers_all_50_without_implying_release():
@@ -470,6 +500,16 @@ def test_second_batch_review_packet_covers_50_without_becoming_importable():
     assert rows["os_copy_on_write"]["source"]["candidate_status"] == "proposed_revision"
     assert rows["net_udp_datagram"]["source"]["url"].endswith("/rfc768.html")
     assert rows["algo_counting_sort"]["preliminary_license"]["disposition"] == "hold_per_entry"
+    assert rows["algo_lcs"]["source_fit_evidence"]["original_nist_audit"]["finding"] == (
+        "third_party_copyright_and_incomplete_source"
+    )
+    assert rows["algo_radix_sort"]["source_fit_evidence"]["supplement_001"]["finding"] == (
+        "supports_missing_variant"
+    )
+    assert "remaining_gap" in rows["os_copy_on_write"]["source_fit_evidence"][
+        "revision_002_factcheck"
+    ]
+    assert "source_supplement_001_approval_missing" in packet["global_blockers"]
     assert all("reviewed_by" not in row and "license" not in row for row in packet["entries"])
     with pytest.raises(ValidationError):
         ReviewedConcept.model_validate(rows["algo_a_star"])

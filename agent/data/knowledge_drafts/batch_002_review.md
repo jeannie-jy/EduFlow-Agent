@@ -10,13 +10,13 @@
 
 逐文件许可追查结果：man-pages 6.19 官方标签中的 `fork.2`、`pipe.2`、`open.2` 均标注 `Linux-man-pages-copyleft`，证据见 `batch_002.man_pages_license_evidence.json`。Coverage.py 7.16.1 标签的 `doc/index.rst` 与 `doc/branch.rst` 均有 Apache-2.0 标记，提交、文件对象与 NOTICE 见 `batch_002.coverage_doc_license_evidence.json`。这不是渲染网页所有素材的统一授权，当前仍仅使用原创摘要和链接，不复制来源文字。
 
-NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂度说明不足，已通过 `batch_002.source_supplement_001.json` 记录 Princeton Algorithms 4e 的补充论据，限于链接及原创摘要。独立预检 `python -m scripts.check_knowledge_batch_readiness --batch 2` 当前会拒绝测试库导入和向量索引：整批来源许可仍待签核、来源审核仍属初步、版本固定仍是候选，且没有 Embedding 同意。实际 PostgreSQL/pgvector 临时库的迁移、幂等、回滚和词法检索验证见 `../../evals/reports/rag_v2_stage1_tempdb_2026-09-29.md`。
+NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂度说明不足，已通过 `batch_002.source_supplement_001.json` 记录 Princeton Algorithms 4e 的补充论据，限于链接及原创摘要。AI 事实核查不等于编辑批准：这两条补充来源仍需绑定文件哈希的独立编辑复核，否则预检明确保留 `source_fit_unresolved`。独立预检 `python -m scripts.check_knowledge_batch_readiness --batch 2` 当前会拒绝测试库导入和向量索引：整批来源许可仍待签核、来源审核仍属初步、版本固定仍是候选，且没有 Embedding 同意。实际 PostgreSQL/pgvector 临时库的迁移、幂等、回滚和词法检索验证见 `../../evals/reports/rag_v2_stage1_tempdb_2026-09-29.md`。
 
 来源修订 002 的事实核查记录在 `batch_002.source_revision_002_factcheck.json`，绑定草稿与修订文件哈希。RFC 768 的 Introduction、Format、Fields、User Interface 足以定位 UDP 条目的通用主张；COW 的 `fork(2)` 只证明 Linux 使用 COW，Linux 6.19 文档说明缺页路径，作者公开提供的 *The Linux Programming Interface* 第 24 章第 521–522 页补足只读共享页、写入陷入与私有复制机制。教材章节有版权声明，未取得再分发许可，仍只保留链接、定位与原创概述。`恢复写入` 与网络重排表述还需编辑确认；这份机器事实核查不是用户或法律审批，修订 002 依旧待审核。
 
 `batch_002.web_response_evidence_001.json` 记录了 Berkeley A* 和 Princeton 两个补充页在 2026-09-29 的响应 SHA-256、抓取时间与可用的 ETag/Last-Modified。原始 HTML 未归档，哈希只能帮助检测后续漂移，不能在网页变化后重现原文，也不构成版权许可。NIST 词条的自动抓取收到 HTTP 403，因此没有伪造其响应哈希。逐条审计仍将上述网页列为缺少可重现内容快照的 9 条记录。
 
-逐条编辑复核可运行 `python -m scripts.build_knowledge_review_packet --batch 2`：它只向标准输出生成 50 条候选目录，合并已批准草稿的正文、候选来源、初步许可标签、引用缺口和全局预检阻断项。该结构明确不包含 `ReviewedConcept` 所需的 `license`、`reviewed_by`、`reviewed_at`，不能直接传给导入器；也不写库或调用 Embedding。来源修订 002 在目录中标为 `proposed_revision`，不会因为生成目录而获得批准。
+逐条编辑复核可运行 `python -m scripts.build_knowledge_review_packet --batch 2`：它只向标准输出生成 50 条候选目录，合并已批准草稿的正文、原 NIST 词条发现、补充来源与 COW/UDP 事实核查、候选来源、初步许可标签、引用缺口和全局预检阻断项。该结构明确不包含 `ReviewedConcept` 所需的 `license`、`reviewed_by`、`reviewed_at`，不能直接传给导入器；也不写库或调用 Embedding。来源修订 002 在目录中标为 `proposed_revision`，不会因为生成目录而获得批准。
 
 ## 算法（8）
 

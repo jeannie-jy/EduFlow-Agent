@@ -8,6 +8,7 @@ reviewed_by and reviewed_at fields, and never writes to a database or file.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -30,6 +31,16 @@ def build_packet(directory: Path, number: int) -> dict:
     citation_by_key = {item["source_key"]: item for item in citations["entries"]}
     if set(citation_by_key) != {entry.source_key for entry in batch.entries}:
         raise ValueError("citation inventory keys do not match draft keys")
+    nist = json.loads(
+        (directory / f"batch_{number:03d}.nist_entry_audit.json").read_text(encoding="utf-8")
+    )
+    supplement = json.loads(
+        (directory / f"batch_{number:03d}.source_supplement_001.json").read_text(encoding="utf-8")
+    )
+    if nist.get("draft_sha256") != citations["draft_sha256"] or supplement.get(
+        "base_draft_sha256"
+    ) != citations["draft_sha256"]:
+        raise ValueError("source-fit evidence is bound to another draft")
 
     revisions: dict[str, dict] = {}
     for ordinal in (1, 2):
@@ -41,13 +52,36 @@ def build_packet(directory: Path, number: int) -> dict:
             for key, replacement in revision["replacements"].items():
                 if key in revisions:
                     raise ValueError(f"overlapping source revisions for {key}")
-                revisions[key] = replacement["source"]
+                revisions[key] = replacement
+
+    factcheck_path = directory / f"batch_{number:03d}.source_revision_002_factcheck.json"
+    factcheck = json.loads(factcheck_path.read_text(encoding="utf-8"))
+    revision_002_path = directory / f"batch_{number:03d}.source_revision_002.json"
+    if (
+        factcheck.get("base_draft_sha256") != citations["draft_sha256"]
+        or factcheck.get("source_revision_sha256")
+        != hashlib.sha256(revision_002_path.read_bytes()).hexdigest()
+    ):
+        raise ValueError("source revision factcheck is not bound to the cited revision")
 
     entries = []
     for draft in batch.entries:
         citation = citation_by_key[draft.source_key]
-        source = revisions.get(draft.source_key, batch.sources[draft.source_ref].model_dump(mode="json"))
+        replacement = revisions.get(draft.source_key)
+        source = replacement["source"] if replacement else batch.sources[draft.source_ref].model_dump(
+            mode="json"
+        )
         policy = audit["sources"][draft.source_ref]
+        source_fit = {}
+        if draft.source_key in nist["entries"]:
+            source_fit["original_nist_audit"] = nist["entries"][draft.source_key]
+        if replacement:
+            source_fit["revision_reason"] = replacement["reason"]
+            source_fit["revision_editorial_check"] = replacement["editorial_check"]
+        if draft.source_key in supplement["entries"]:
+            source_fit["supplement_001"] = supplement["entries"][draft.source_key]
+        if draft.source_key in factcheck["checks"]:
+            source_fit["revision_002_factcheck"] = factcheck["checks"][draft.source_key]
         entries.append({
             "source_key": draft.source_key,
             "concept": draft.concept,
@@ -81,6 +115,7 @@ def build_packet(directory: Path, number: int) -> dict:
             },
             "citation_issues": citation["issues"],
             "version_warnings": citation["version_warnings"],
+            "source_fit_evidence": source_fit,
             "editorial_release_status": "not_approved_for_import",
         })
 

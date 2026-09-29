@@ -274,12 +274,31 @@ def check_batch(directory: Path, number: int) -> dict:
         if supplement.get("batch_id") != batch.batch_id or supplement.get("base_draft_sha256") != digest:
             blockers.append("source_supplement_hash_mismatch")
         elif supplement.get("status") == "agent_fact_checked_source_fit":
-            supported_supplements = {
+            candidate_supplements = {
                 key for key, row in supplement.get("entries", {}).items()
                 if key in {entry.source_key for entry in batch.entries}
                 and str(row.get("supplemental_url", "")).startswith("https://")
                 and str(row.get("finding", "")).startswith("supports_missing_")
             }
+            supplement_approval_path = directory / f"{stem}.source_supplement_001.approval.json"
+            if not supplement_approval_path.exists():
+                blockers.append("source_supplement_001_approval_missing")
+            else:
+                supplement_approval = _read_json(supplement_approval_path)
+                approved = (
+                    supplement_approval.get("batch_id") == batch.batch_id
+                    and supplement_approval.get("base_draft_sha256") == digest
+                    and supplement_approval.get("supplement_sha256")
+                    == hashlib.sha256(supplement_path.read_bytes()).hexdigest()
+                    and supplement_approval.get("editorial_review", {}).get("status") == "approved"
+                    and bool(supplement_approval.get("editorial_review", {}).get("approved_by"))
+                    and set(supplement_approval.get("editorial_review", {}).get("scope", []))
+                    == candidate_supplements
+                )
+                if approved:
+                    supported_supplements = candidate_supplements
+                else:
+                    blockers.append("source_supplement_001_approval_mismatch")
     for source_fit_sidecar in sorted(directory.glob(f"{stem}.source_supplement_*.json")):
         source_fit = _read_json(source_fit_sidecar)
         sidecar_id = source_fit_sidecar.stem.removeprefix(f"{stem}.source_supplement_")
