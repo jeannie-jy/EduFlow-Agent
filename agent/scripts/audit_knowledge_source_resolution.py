@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from scripts.check_knowledge_batch_readiness import check_batch
@@ -40,6 +41,12 @@ def audit_batch(directory: Path, number: int) -> dict:
     owasp = owasp_evidence["page"]
     man = _json(directory / f"{stem}.man_pages_license_evidence.json")["files"]
     supplement = _json(directory / f"{stem}.source_supplement_001.json")["entries"]
+    response_evidence = _json(directory / f"{stem}.web_response_evidence_001.json")
+    if response_evidence["base_draft_sha256"] != readiness["draft_sha256"]:
+        raise ValueError("web response evidence is bound to another draft")
+    response_hashes = response_evidence["responses"]
+    if any(not re.fullmatch(r"[0-9a-f]{64}", item.get("sha256", "")) for item in response_hashes.values()):
+        raise ValueError("invalid web response SHA-256 evidence")
     revisions: dict[str, tuple[dict, bool, str]] = {}
     for ordinal, approved_key in ((1, "source_revision_approved"), (2, "source_revision_002_approved")):
         path = directory / f"{stem}.source_revision_{ordinal:03d}.json"
@@ -113,6 +120,10 @@ def audit_batch(directory: Path, number: int) -> dict:
         if entry.source_key in supplement:
             supporting_urls.append(supplement[entry.source_key]["supplemental_url"])
             version_warnings.append("supplemental_web_page_no_content_snapshot")
+        response_digests = {
+            candidate_url: response_hashes[candidate_url]["sha256"]
+            for candidate_url in [url, *supporting_urls] if candidate_url in response_hashes
+        }
         if not url.startswith("https://"):
             issues.append("source_url_missing")
         if not locator:
@@ -125,6 +136,7 @@ def audit_batch(directory: Path, number: int) -> dict:
             "source_locator": locator,
             "source_status": status,
             "supporting_urls": supporting_urls,
+            "response_sha256": response_digests,
             "issues": issues,
             "version_warnings": version_warnings,
         })

@@ -1,0 +1,34 @@
+{
+  "batch_id": "core-cs-002",
+  "base_draft_sha256": "1e134aa6007f77f61fd4aa9784d0f2d98affa116f9b1da8b35f4372b89289ad5",
+  "status": "response_hash_evidence_not_archived_content_or_license_clearance",
+  "publication_clearance": false,
+  "method": "GET each public HTTPS URL with Python urllib.request and User-Agent Mozilla/5.0; SHA-256 over the exact response bytes returned on the stated fetch. Only URL, headers, time and digest were retained. A digest without archived bytes cannot reconstruct or independently verify the old response after the site changes.",
+  "responses": {
+    "https://inst.eecs.berkeley.edu/~cs188/textbook/search/informed.html": {
+      "fetched_at_utc": "2026-09-29T10:47:02.365499+00:00",
+      "resolved_url": "https://inst.eecs.berkeley.edu/~cs188/textbook/search/informed.html",
+      "sha256": "235f8f7d8620e03c0a8825cb858b2affb51d969c1c501df879cb33d8f3d6d4ad",
+      "etag": "\"94a1-64189bf0a8892\"",
+      "last_modified": "Sun, 19 Oct 2025 21:35:31 GMT",
+      "content_type": "text/html; charset=UTF-8"
+    },
+    "https://algs4.cs.princeton.edu/51radix/": {
+      "fetched_at_utc": "2026-09-29T10:47:16.408991+00:00",
+      "resolved_url": "https://algs4.cs.princeton.edu/51radix/",
+      "sha256": "8cde9a6245c945ac34b43fc521c51080eae55b85214ff445c18dbced49a2b41a",
+      "etag": null,
+      "last_modified": null,
+      "content_type": "text/html; charset=UTF-8"
+    },
+    "https://algs4.cs.princeton.edu/code/javadoc/edu/princeton/cs/algs4/KruskalMST.html": {
+      "fetched_at_utc": "2026-09-29T10:47:18.771638+00:00",
+      "resolved_url": "https://algs4.cs.princeton.edu/code/javadoc/edu/princeton/cs/algs4/KruskalMST.html",
+      "sha256": "2a6f7a9a92bd19b09deb44e176e8b58b73ddfe126baf662ec29a70f7fbc0b3b7",
+      "etag": "\"2f5c-659e30508be01\"",
+      "last_modified": "Tue, 25 Aug 2026 18:10:37 GMT",
+      "content_type": "text/html; charset=UTF-8"
+    }
+  },
+  "unresolved": "The cited HTML was not archived because permission to redistribute it has not been established. NIST DADS term pages returned HTTP 403 to automated fetch on this host, so no response hash is claimed for them. These response hashes are version-drift signals, not immutable content snapshots."
+}

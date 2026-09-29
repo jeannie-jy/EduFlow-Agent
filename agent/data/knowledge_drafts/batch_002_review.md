@@ -14,6 +14,8 @@ NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂�
 
 来源修订 002 的事实核查记录在 `batch_002.source_revision_002_factcheck.json`，绑定草稿与修订文件哈希。RFC 768 的 Introduction、Format、Fields、User Interface 足以定位 UDP 条目的通用主张；COW 的 `fork(2)` 只证明 Linux 使用 COW，Linux 6.19 文档说明缺页路径，作者公开提供的 *The Linux Programming Interface* 第 24 章第 521–522 页补足只读共享页、写入陷入与私有复制机制。教材章节有版权声明，未取得再分发许可，仍只保留链接、定位与原创概述。`恢复写入` 与网络重排表述还需编辑确认；这份机器事实核查不是用户或法律审批，修订 002 依旧待审核。
 
+`batch_002.web_response_evidence_001.json` 记录了 Berkeley A* 和 Princeton 两个补充页在 2026-09-29 的响应 SHA-256、抓取时间与可用的 ETag/Last-Modified。原始 HTML 未归档，哈希只能帮助检测后续漂移，不能在网页变化后重现原文，也不构成版权许可。NIST 词条的自动抓取收到 HTTP 403，因此没有伪造其响应哈希。逐条审计仍将上述网页列为缺少可重现内容快照的 9 条记录。
+
 ## 算法（8）
 
 - [ ] `algo_counting_sort` 计数排序

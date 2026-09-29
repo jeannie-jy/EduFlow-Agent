@@ -407,7 +407,23 @@ def test_second_batch_source_resolution_covers_all_50_without_implying_release()
     assert rows["os_copy_on_write"]["source_status"] == "proposed_revision"
     assert rows["net_udp_datagram"]["source_status"] == "proposed_revision"
     assert "unversioned_nist_page_no_content_snapshot" in rows["algo_counting_sort"]["version_warnings"]
+    assert rows["algo_counting_sort"]["response_sha256"] == {}
+    assert len(rows["algo_a_star"]["response_sha256"]) == 1
+    assert len(rows["algo_radix_sort"]["response_sha256"]) == 1
+    assert len(rows["algo_kruskal"]["response_sha256"]) == 1
+    assert rows["algo_a_star"]["version_warnings"] == ["unversioned_source_no_content_snapshot"]
     assert all(row["source_url"].startswith("https://") for row in rows.values())
+
+
+def test_source_resolution_rejects_response_evidence_bound_to_another_draft(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    path = tmp_path / "batch_002.web_response_evidence_001.json"
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    evidence["base_draft_sha256"] = "0" * 64
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(ValueError, match="bound to another draft"):
+        audit_batch(tmp_path, 2)
 
 
 def test_readiness_gate_detects_tampered_source_revision(tmp_path):
