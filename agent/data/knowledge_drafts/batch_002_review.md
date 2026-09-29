@@ -10,6 +10,8 @@
 
 逐文件许可追查的阶段结果也在修订记录中：旧版 `pipe.2` 可见 `Linux-man-pages-copyleft` 标识，旧版 `open.2` 可见单独复制许可，但均不能直接推断草稿标称的 man-pages 6.19 版本；Coverage.py 仓库 NOTICE 声明 Apache-2.0（另有例外），尚未确定引用文档的具体许可。三者保持“仅原创摘要+链接、禁止复制原文”，待精确版本核对。
 
+NIST 对 `algo_radix_sort` 的 MSD 变体及 `algo_kruskal` 的并查集/复杂度说明不足，已通过 `batch_002.source_supplement_001.json` 记录 Princeton Algorithms 4e 的补充论据，限于链接及原创摘要。独立预检 `python -m scripts.check_knowledge_batch_readiness --batch 2` 当前会拒绝测试库导入和向量索引：整批来源许可仍待签核、来源审核仍属初步、版本固定仍是候选，且没有 Embedding 同意。实际 PostgreSQL/pgvector 临时库的迁移、幂等、回滚和词法检索验证见 `../../evals/reports/rag_v2_stage1_tempdb_2026-09-29.md`。
+
 ## 算法（8）
 
 - [ ] `algo_counting_sort` 计数排序

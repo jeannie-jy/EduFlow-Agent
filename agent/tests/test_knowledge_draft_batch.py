@@ -1,14 +1,15 @@
 """Draft catalog is complete but cannot be mistaken for approved knowledge."""
 
-import json
 import hashlib
+import json
+import shutil
 from pathlib import Path
 
 import pytest
 
-from scripts.validate_knowledge_draft import validate_approval, validate_batch
+from scripts.check_knowledge_batch_readiness import check_batch
 from scripts.import_curated_knowledge import validate_catalog
-
+from scripts.validate_knowledge_draft import validate_approval, validate_batch
 
 BATCH = Path(__file__).resolve().parents[1] / "data" / "knowledge_drafts" / "batch_001.json"
 APPROVAL = BATCH.with_name("batch_001.approval.json")
@@ -183,6 +184,29 @@ def test_second_batch_version_pins_are_candidate_only_and_bound_to_draft():
     assert all(row["url"].startswith("https://") for row in pins["pins"].values())
     assert pins["pins"]["python_reference"]["version"] == "Python 3.14 documentation"
     assert pins["pins"]["coverage_py"]["version"] == "Coverage.py 7.16.1 documentation"
+
+
+def test_second_batch_readiness_gate_distinguishes_editorial_approval_from_release():
+    report = check_batch(SECOND_BATCH.parent, 2)
+    assert report["content_approved"] is True
+    assert report["source_revision_approved"] is True
+    assert report["ready_for_staging_import"] is False
+    assert report["ready_for_vector_index"] is False
+    assert "source_license_pending" in report["blockers"]
+    assert "source_audit_preliminary" in report["blockers"]
+    assert "version_pins_candidate_only" in report["blockers"]
+    assert "embedding_consent_missing" in report["blockers"]
+    assert not any(code.startswith("source_fit_unresolved:") for code in report["blockers"])
+
+
+def test_readiness_gate_detects_tampered_source_revision(tmp_path):
+    for path in SECOND_BATCH.parent.glob("batch_*.json"):
+        shutil.copy2(path, tmp_path / path.name)
+    revision = tmp_path / SECOND_SOURCE_REVISION.name
+    revision.write_bytes(revision.read_bytes() + b" ")
+    report = check_batch(tmp_path, 2)
+    assert report["source_revision_approved"] is False
+    assert "source_revision_approval_mismatch" in report["blockers"]
 
 
 def test_first_batch_rejects_missing_source(tmp_path):

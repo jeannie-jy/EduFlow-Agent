@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import uuid
 import json
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from services.knowledge_library import _vector_literal, search_library, split_text
+from services.knowledge_service import _lexical_search_terms, stable_source_key
 from services.retrieval import retrieve_knowledge_context
-from services.knowledge_service import stable_source_key
 
 
 def test_split_text_preserves_long_material_without_truncation():
@@ -34,6 +34,11 @@ def test_legacy_seed_has_22_distinct_stable_ids():
     assert len(keys) == 22
     assert len(set(keys)) == 22
     assert "algo-dijkstra-constraints" in keys
+
+
+def test_unknown_ascii_identifier_is_not_fragmented_into_false_positive_ngrams():
+    assert _lexical_search_terms("zzzxqv_missing_topic_928341") == ["zzzxqv_missing_topic_928341"]
+    assert "二分查找" in _lexical_search_terms("请解释二分查找")
 
 
 @pytest.mark.asyncio

@@ -107,6 +107,12 @@ def _lexical_search_terms(query: str) -> list[str]:
     for span in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", normalized):
         if span in _LEXICAL_STOPWORDS:
             continue
+        # ASCII words already have explicit token boundaries. Splitting them
+        # into tiny n-grams makes unrelated identifiers match common words in
+        # the corpus (for example an unknown topic matching "hash table").
+        if span.isascii():
+            terms.add(span)
+            continue
         if len(span) <= 8:
             terms.add(span)
             continue
