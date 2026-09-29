@@ -50,6 +50,142 @@ MAX_PPTX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 MAX_PPTX_COMPRESSION_RATIO = 200
 
 
+def _require_library_owner(user: User | None) -> uuid.UUID:
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required for teacher library")
+    if getattr(user, "role", None) not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Teacher library role required")
+    return user.id
+
+
+def _material_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=404, detail="Material not found") from exc
+
+
+@router.get("/library")
+async def list_teacher_library(
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+) -> dict:
+    """List only the signed-in teacher's persistent materials."""
+    from sqlalchemy import text
+
+    owner_id = _require_library_owner(current_user)
+    rows = (await session.execute(text("""
+        SELECT m.id, m.original_filename, m.status AS parse_status,
+               m.size_bytes, s.status AS source_status
+        FROM materials m
+        JOIN knowledge_sources s ON s.material_id = m.id
+            AND s.owner_id = :owner_id AND s.scope = 'teacher'
+        WHERE m.owner_id = :owner_id AND m.is_library
+        ORDER BY m.created_at DESC
+    """), {"owner_id": owner_id})).mappings().all()
+    return {"items": [
+        {
+            "id": str(row["id"]), "filename": row["original_filename"],
+            "parse_status": row["parse_status"],
+            "index_status": row["source_status"], "size_bytes": row["size_bytes"],
+        }
+        for row in rows
+    ]}
+
+
+@router.get("/projects/{project_id}")
+async def list_project_library_materials(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+) -> dict:
+    """List only persistent materials selected for the teacher's project."""
+    from services.teacher_library import list_project_materials
+
+    owner_id = _require_library_owner(current_user)
+    try:
+        items = await list_project_materials(
+            session, project_id=_material_uuid(project_id), owner_id=owner_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Project not found") from exc
+    return {"items": items}
+
+
+@router.post("/{material_id}/library")
+async def add_material_to_library(
+    material_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
+) -> dict:
+    """Opt an owned upload into retention and reuse, but do not index it yet."""
+    from services.teacher_library import enable_library_material
+
+    owner_id = _require_library_owner(current_user)
+    try:
+        result = await enable_library_material(
+            session, material_id=_material_uuid(material_id), owner_id=owner_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Material not found") from exc
+    record_audit(
+        session, action="material.library_enabled", resource_type="material",
+        resource_id=material_id, actor_id=owner_id,
+    )
+    return {**result, "index_status": "draft"}
+
+
+@router.put("/{material_id}/projects/{project_id}")
+async def attach_library_material(
+    material_id: str,
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
+) -> dict:
+    """Make a persistent teacher source available to one owned project."""
+    from services.teacher_library import attach_material_to_project
+
+    owner_id = _require_library_owner(current_user)
+    try:
+        source_id = await attach_material_to_project(
+            session, project_id=_material_uuid(project_id),
+            material_id=_material_uuid(material_id), owner_id=owner_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Project or library material not found") from exc
+    record_audit(
+        session, action="material.project_attached", resource_type="material",
+        resource_id=material_id, actor_id=owner_id,
+        details={"project_id": project_id},
+    )
+    return {"material_id": material_id, "project_id": project_id, "source_id": str(source_id)}
+
+
+@router.delete("/{material_id}/projects/{project_id}", status_code=204)
+async def detach_library_material(
+    material_id: str,
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: Annotated[User | None, Depends(get_current_user)] = None,
+    _editor: Annotated[User | None, Depends(require_editor)] = None,
+) -> None:
+    """Remove one project authorization; other projects remain linked."""
+    from services.teacher_library import detach_material_from_project
+
+    owner_id = _require_library_owner(current_user)
+    await detach_material_from_project(
+        session, project_id=_material_uuid(project_id),
+        material_id=_material_uuid(material_id), owner_id=owner_id,
+    )
+    record_audit(
+        session, action="material.project_detached", resource_type="material",
+        resource_id=material_id, actor_id=owner_id,
+        details={"project_id": project_id},
+    )
+
+
 @router.get("")
 async def list_materials(
     session: AsyncSession = Depends(get_session),
