@@ -12,6 +12,7 @@
       "authors": "Robert Sedgewick and Kevin Wayne",
       "locator": "Section 5.1 String Sorts / LSD radix sort; MSD radix sort",
       "finding": "supports_missing_variant",
+      "license_review": "No permission to reproduce the textbook page, diagrams or code was established. Use the direct link and an independently written summary only; retain Sedgewick and Wayne attribution.",
       "note": "The NIST term entry covers LSD; this booksite explicitly lists both LSD and MSD. It does not by itself prove every stated complexity case, so retain the draft's qualified formulation. No booksite prose or code is reused."
     },
     "algo_kruskal": {
@@ -20,6 +21,7 @@
       "authors": "Robert Sedgewick and Kevin Wayne",
       "locator": "KruskalMST class description and complexity paragraph",
       "finding": "supports_missing_implementation_and_complexity",
+      "license_review": "The Javadoc identifies Robert Sedgewick and Kevin Wayne as authors. No permission to reproduce its prose or code was established. Use the direct link and an independently written summary only.",
       "note": "The class documentation explicitly states union-find use, O(E log E) construction and minimum spanning forest behavior. The original NIST concept citation remains; no source prose or code is reused."
     }
   }

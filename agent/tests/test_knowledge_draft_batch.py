@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.audit_knowledge_source_resolution import audit_batch
 from scripts.check_knowledge_batch_readiness import check_batch
 from scripts.import_curated_knowledge import main as import_main
 from scripts.import_curated_knowledge import validate_catalog, validate_import_authorization
@@ -373,6 +374,25 @@ def test_second_batch_readiness_gate_distinguishes_editorial_approval_from_relea
     assert "source_supplement_pending_editorial_review:os_copy_on_write" in report["blockers"]
     assert "source_supplement_pending_editorial_review:net_udp_datagram" in report["blockers"]
     assert not any(code.startswith("source_fit_unresolved:") for code in report["blockers"])
+
+
+def test_second_batch_source_resolution_covers_all_50_without_implying_release():
+    report = audit_batch(SECOND_BATCH.parent, 2)
+    assert report["count"] == 50
+    assert report["release_ready"] is False
+    assert report["candidate_revisions"] == 2
+    assert report["rows_with_citation_issues"] == 2
+    assert report["rows_with_version_warnings"] == 9
+    rows = {row["source_key"]: row for row in report["entries"]}
+    assert rows["algo_counting_sort"]["source_url"].endswith("/countingsort.html")
+    assert "/blob/" in rows["algo_edmonds_karp"]["source_url"]
+    assert "/docs/16/transaction-iso.html" in rows["db_serializable_isolation"]["source_url"]
+    assert "/3.14/reference/datamodel.html" in rows["pl_python_iterator_protocol"]["source_url"]
+    assert rows["algo_a_star"]["source_status"] == "approved_revision"
+    assert rows["os_copy_on_write"]["source_status"] == "proposed_revision"
+    assert rows["net_udp_datagram"]["source_status"] == "proposed_revision"
+    assert "unversioned_nist_page_no_content_snapshot" in rows["algo_counting_sort"]["version_warnings"]
+    assert all(row["source_url"].startswith("https://") for row in rows.values())
 
 
 def test_readiness_gate_detects_tampered_source_revision(tmp_path):
