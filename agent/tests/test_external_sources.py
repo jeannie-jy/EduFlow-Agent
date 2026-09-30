@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from api.auth import get_current_user
+from api.external_sources import router as external_router
 from services.external_sources import fetch_external_fingerprint, validate_external_url
 
 
@@ -46,6 +52,22 @@ def test_curated_candidates_are_valid_but_not_preapproved_content():
     for source in manifest["sources"]:
         assert validate_external_url(source["url"]) == source["url"]
         assert source["license_note"] and "summary" not in source
+
+
+def test_external_admin_routes_reject_anonymous_and_teacher_before_database_writes():
+    app = FastAPI()
+    app.include_router(external_router, prefix="/api")
+    body = {
+        "url": "https://www.postgresql.org/docs/16/indexes-types.html",
+        "institution": "PostgreSQL Global Development Group",
+        "license_note": "Official source terms must be reviewed before release",
+    }
+    client = TestClient(app)
+    assert client.post("/api/admin/external-sources/allowlist", json=body).status_code == 401
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=uuid.uuid4(), role="teacher",
+    )
+    assert client.post("/api/admin/external-sources/allowlist", json=body).status_code == 403
 
 
 @pytest.mark.asyncio
