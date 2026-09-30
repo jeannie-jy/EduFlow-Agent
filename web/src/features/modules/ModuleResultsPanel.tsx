@@ -36,6 +36,7 @@ import { VideoStudioCard } from "@/features/artifacts/VideoStudioCard";
 import { InteractiveExperience } from "@/features/artifacts/InteractiveExperience";
 import { toUserFacingError } from "@/lib/user-facing-error";
 import { VersionHistoryPanel } from "@/features/artifacts/VersionHistoryPanel";
+import { SourceEvidencePanel } from "@/features/modules/SourceEvidencePanel";
 
 // ============================================================================
 // 模块配置
@@ -208,6 +209,8 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
 
   if (sorted.length === 0) {
     return (
+      <div>
+      <SourceEvidencePanel project={project} />
       <div className="flex flex-col items-center justify-center gap-4 p-12 text-center">
         <Layers size={48} className="text-[var(--muted-foreground)]" />
         <div>
@@ -221,6 +224,7 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
             前往计划
           </Button>
         )}
+      </div>
       </div>
     );
   }
@@ -323,6 +327,7 @@ export function ModuleResultsPanel({ project, onNavigateTab, onRefreshProject }:
               )}
             </div>
           </header>
+          <SourceEvidencePanel project={project} />
           {navigationMessage && (
             <div
               role="status"
