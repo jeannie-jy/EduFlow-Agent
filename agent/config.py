@@ -236,6 +236,8 @@ class Settings(BaseSettings):
     task_worker_max_attempts: int = Field(default=3, ge=1, le=10)
     task_retry_base_seconds: float = Field(default=5.0, ge=0.1, le=3600)
     task_retry_max_seconds: float = Field(default=300.0, ge=0.1, le=86400)
+    external_sync_enabled: bool = True
+    external_sync_scheduler_seconds: int = Field(default=3600, ge=60, le=86400)
 
     # ── 认证 ──────────────────────────────────────────────
     # 本地/既有测试默认兼容匿名模式；Compose 生产入口显式开启。

@@ -23,6 +23,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+)
+from sqlalchemy import (
     text as sa_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -356,6 +358,54 @@ class ProjectKnowledgeSource(Base):
 
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
     source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExternalSourceAllowlist(Base):
+    __tablename__ = "external_source_allowlist"
+    __table_args__ = (Index("ix_external_source_due", "active", "next_sync_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    institution: Mapped[str] = mapped_column(String(300), nullable=False)
+    license_note: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_sources.id", ondelete="SET NULL"), unique=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    next_sync_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_remote_checksum: Mapped[str | None] = mapped_column(String(64))
+    last_error: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExternalSyncCandidate(Base):
+    __tablename__ = "external_sync_candidates"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="ck_external_candidate_status"),
+        UniqueConstraint("allowlist_id", "remote_checksum", name="uq_external_candidate_remote_checksum"),
+        Index("ix_external_candidate_status", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    allowlist_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("external_source_allowlist.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    title: Mapped[str | None] = mapped_column(String(500))
+    section: Mapped[str | None] = mapped_column(String(500))
+    document_version: Mapped[str | None] = mapped_column(String(100))
+    summary: Mapped[str | None] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(String(300))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    license: Mapped[str | None] = mapped_column(String(300))
+    etag: Mapped[str | None] = mapped_column(String(500))
+    last_modified: Mapped[str | None] = mapped_column(String(200))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

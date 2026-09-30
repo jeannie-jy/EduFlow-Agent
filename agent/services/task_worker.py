@@ -627,6 +627,74 @@ async def _execute_material_index(job: dict[str, Any]) -> None:
         logger.info("material index complete: material=%s version=%s", material_id, result["version_id"])
 
 
+async def queue_due_external_syncs() -> int:
+    """Periodically enqueue due official URLs without fetching in the scheduler."""
+    from db.database import async_session_factory
+    from db.models import BackgroundJob, ExternalSourceAllowlist
+
+    now = datetime.now(UTC)
+    async with async_session_factory() as session:
+        rows = list((await session.scalars(
+            select(ExternalSourceAllowlist).where(
+                ExternalSourceAllowlist.active.is_(True),
+                ExternalSourceAllowlist.next_sync_at <= now,
+            ).order_by(ExternalSourceAllowlist.next_sync_at)
+            .with_for_update(skip_locked=True).limit(20)
+        )).all())
+        for row in rows:
+            session.add(BackgroundJob(
+                id=uuid.uuid4(), kind="external_sync",
+                idempotency_key=f"{row.id}:{int(row.next_sync_at.timestamp())}",
+                owner_id=None, project_id=None,
+                payload={"allowlist_id": str(row.id)}, status="queued",
+            ))
+            row.next_sync_at = now + timedelta(days=1)
+        await session.commit()
+        return len(rows)
+
+
+async def _execute_external_sync(job: dict[str, Any]) -> None:
+    """Fetch only the allowlisted URL and stage a private candidate on change."""
+    from db.database import async_session_factory
+    from db.models import BackgroundJob, BackgroundJobAttempt, ExternalSourceAllowlist
+    from services.external_sources import fetch_external_fingerprint, record_external_fingerprint
+
+    try:
+        allowlist_id = uuid.UUID(str(job["payload"].get("allowlist_id", "")))
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise PermanentTaskError("External source identifier is invalid") from exc
+    async with async_session_factory() as session:
+        row = await session.get(ExternalSourceAllowlist, allowlist_id)
+        if row is None or not row.active:
+            raise PermanentTaskError("External source is no longer allowlisted")
+        url = row.url
+    fingerprint = await fetch_external_fingerprint(url)
+    now = datetime.now(UTC)
+    async with async_session_factory() as session:
+        queued_job = await session.get(BackgroundJob, uuid.UUID(job["job_id"]), with_for_update=True)
+        row = await session.get(ExternalSourceAllowlist, allowlist_id, with_for_update=True)
+        if (
+            queued_job is None or queued_job.status != "running"
+            or queued_job.worker_id != TASK_WORKER_ID
+            or queued_job.attempt_count != job["attempt_no"]
+            or row is None or not row.active or row.url != url
+        ):
+            raise PermanentTaskError("External sync lost task ownership or source URL")
+        await record_external_fingerprint(
+            session, allowlist_id=allowlist_id, fingerprint=fingerprint,
+        )
+        queued_job.status = "completed"
+        queued_job.worker_id = None
+        queued_job.lease_expires_at = None
+        queued_job.completed_at = now
+        queued_job.error_class = None
+        await session.execute(update(BackgroundJobAttempt).where(
+            BackgroundJobAttempt.job_id == queued_job.id,
+            BackgroundJobAttempt.status == "running",
+        ).values(status="completed", finished_at=now))
+        await session.commit()
+
+
 async def _mark_task_failure(
     job: dict[str, Any], *, error_class: str, retryable: bool
 ) -> None:
@@ -670,6 +738,17 @@ async def _mark_task_failure(
                 material = await session.get(Material, material_id)
                 if material is not None:
                     material.status = "parse_failed"
+        if getattr(queued_job, "kind", None) == "external_sync" and not should_retry:
+            from db.models import ExternalSourceAllowlist
+
+            try:
+                allowlist_id = uuid.UUID(str(job.get("payload", {}).get("allowlist_id", "")))
+            except (ValueError, TypeError, AttributeError):
+                allowlist_id = None
+            if allowlist_id is not None:
+                source = await session.get(ExternalSourceAllowlist, allowlist_id)
+                if source is not None:
+                    source.last_error = error_class[:100]
         if not should_retry:
             await _finalize_generation_job_quota(
                 session,
@@ -697,6 +776,7 @@ async def run_claimed_background_job(job: dict[str, Any]) -> None:
         "feedback_reflection": _execute_feedback_reflection,
         "material_parse": _execute_material_parse,
         "material_index": _execute_material_index,
+        "external_sync": _execute_external_sync,
     }
     handler = handlers.get(job["kind"])
     if handler is None:
@@ -740,8 +820,14 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
     settings = get_settings()
     stop = stop_event or asyncio.Event()
     logger.info("background Agent task worker started")
+    next_external_check = 0.0
     while not stop.is_set():
         try:
+            if getattr(settings, "external_sync_enabled", False):
+                now_tick = asyncio.get_running_loop().time()
+                if now_tick >= next_external_check:
+                    next_external_check = now_tick + settings.external_sync_scheduler_seconds
+                    await queue_due_external_syncs()
             job = await claim_background_job()
             if job is not None:
                 await run_claimed_background_job(job)

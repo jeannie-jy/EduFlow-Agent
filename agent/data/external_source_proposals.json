@@ -1,0 +1,18 @@
+{
+  "status": "candidate_only_not_published",
+  "note": "These are official URLs for administrator allowlisting. No page text or summary is licensed, approved, or published by this file.",
+  "sources": [
+    {
+      "url": "https://www.postgresql.org/docs/16/indexes-types.html",
+      "institution": "PostgreSQL Global Development Group",
+      "license_note": "Official PostgreSQL 16 documentation; legal notice permits use with copyright and license notices retained. Index only an administrator-authored summary and cite this exact page. Review version and attribution before release: https://www.postgresql.org/docs/16/legalnotice.html",
+      "suggested_topic": "PostgreSQL 16 index types"
+    },
+    {
+      "url": "https://docs.python.org/3/library/bisect.html",
+      "institution": "Python Software Foundation",
+      "license_note": "Official Python documentation under the PSF License; code examples have separate Zero-Clause BSD terms. Index only an administrator-authored summary and record the precise Python 3 minor version seen at review: https://docs.python.org/3/license.html",
+      "suggested_topic": "bisect insertion points and complexity"
+    }
+  ]
+}

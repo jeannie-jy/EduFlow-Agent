@@ -11,6 +11,7 @@ from .audit import router as audit_router
 from .auth import require_project_owner
 from .auth import router as auth_router
 from .export import router as export_router
+from .external_sources import router as external_sources_router
 from .feedback import router as feedback_router
 from .frames import router as frames_router
 from .generate import router as generate_router
@@ -28,6 +29,7 @@ protected_router = APIRouter(dependencies=[Depends(require_project_owner)])
 # Auth 与 ping 公开；业务 API 在 AUTH_REQUIRED=true 时统一要求有效会话。
 api_router.include_router(auth_router)
 api_router.include_router(admin_router)
+api_router.include_router(external_sources_router)
 protected_router.include_router(projects_router)
 protected_router.include_router(generate_router)
 protected_router.include_router(frames_router)

@@ -44,7 +44,7 @@ async def test_two_teachers_multi_project_reuse_idempotency_and_delete_zero_reca
                 await session.execute(text("""
                     INSERT INTO users (id, email, nickname, password_hash, role)
                     VALUES (:id, :email, :nickname, 'test-only', 'teacher')
-                """), {"id": owner, "email": f"{name}@isolated.example", "nickname": name})
+                """), {"id": owner, "email": f"{name}-{owner}@isolated.example", "nickname": name})
             for project_id, owner in (
                 (project_a1, teacher_a), (project_a2, teacher_a), (project_b, teacher_b)
             ):
