@@ -14,6 +14,7 @@ export interface MaterialItem {
   type: string;
   size_bytes: number;
   status: MaterialStatus;
+  is_library?: boolean;
   created_at?: string;
 }
 
@@ -38,6 +39,59 @@ export interface BackgroundJobResponse {
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   attempt_count: number;
   error_code: string | null;
+}
+
+export interface LibraryMaterialItem {
+  id: string;
+  filename: string;
+  parse_status: string;
+  index_status: "draft" | "published" | "retired";
+  job_status: "queued" | "running" | "completed" | "failed" | null;
+  index_error: string | null;
+  size_bytes: number;
+}
+
+export interface MaterialIndexStatus {
+  id: string;
+  status: "not_requested" | "queued" | "running" | "completed" | "failed";
+  job_id: string | null;
+  error_class: string | null;
+  attempt_count: number;
+  source_status: string | null;
+}
+
+export function listTeacherLibrary() {
+  return api.get<{ items: LibraryMaterialItem[] }>("/materials/library");
+}
+
+export function enableTeacherLibrary(id: string) {
+  return api.post<{ material_id: string; source_id: string }>(`/materials/${id}/library`);
+}
+
+export function queueMaterialIndex(id: string) {
+  return api.post<MaterialIndexStatus>(`/materials/${id}/index`);
+}
+
+export function getMaterialIndexStatus(id: string) {
+  return api.get<MaterialIndexStatus>(`/materials/${id}/index`);
+}
+
+export function retryMaterialIndex(id: string) {
+  return api.post<MaterialIndexStatus>(`/materials/${id}/index/retry`);
+}
+
+export function listProjectLibraryMaterials(projectId: string) {
+  return api.get<{ items: Array<{ material_id: string; filename: string; source_id: string; index_status: string }> }>(
+    `/materials/projects/${projectId}`,
+  );
+}
+
+export function attachLibraryMaterial(id: string, projectId: string) {
+  return api.put(`/materials/${id}/projects/${projectId}`);
+}
+
+export function detachLibraryMaterial(id: string, projectId: string) {
+  return api.delete(`/materials/${id}/projects/${projectId}`);
 }
 
 export function listMaterials() {

@@ -48,6 +48,70 @@ describe("ProjectWorkspace", () => {
     }
   });
 
+  it("offers explicit teacher indexing and blocks strict mode without consent", async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    server.use(
+      http.get("http://localhost:8000/api/materials", () => HttpResponse.json({
+        items: [{ id: "mat-1", filename: "lesson.md", type: "md", size_bytes: 100,
+                  status: "parsed", is_library: false }],
+      })),
+      http.get("http://localhost:8000/api/materials/library", () => HttpResponse.json({ items: [] })),
+      http.post("http://localhost:8000/api/materials/:id/library", () => {
+        calls.push("enabled");
+        return HttpResponse.json({ material_id: "mat-1", source_id: "source-1" });
+      }),
+      http.post("http://localhost:8000/api/materials/:id/index", () => {
+        calls.push("indexed");
+        return HttpResponse.json({ id: "mat-1", status: "completed", job_id: "job-1" });
+      }),
+    );
+    renderWorkspace("/app/project/_new");
+    await user.click(await screen.findByRole("button", { name: "加入资料库并索引" }));
+    await waitFor(() => expect(calls).toEqual(["enabled", "indexed"]));
+    await user.click(screen.getByLabelText(/仅依据本项目选入的教师资料生成/));
+    await user.click(screen.getByRole("button", { name: /开始生成/ }));
+    expect(await screen.findByText(/仅依据指定资料需要授权模型处理/)).toBeInTheDocument();
+  });
+
+  it("attaches a selected indexed source before strict project generation", async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    const materialId = "00000000-0000-0000-0000-000000000011";
+    server.use(
+      http.get("http://localhost:8000/api/materials", () => HttpResponse.json({
+        items: [{ id: materialId, filename: "lecture.pdf", type: "pdf", size_bytes: 300,
+                  status: "parsed", is_library: true }],
+      })),
+      http.get("http://localhost:8000/api/materials/library", () => HttpResponse.json({
+        items: [{ id: materialId, filename: "lecture.pdf", parse_status: "parsed",
+                  index_status: "published", job_status: "completed", index_error: null, size_bytes: 300 }],
+      })),
+      http.post("http://localhost:8000/api/me/consents", () => HttpResponse.json({ accepted: true })),
+      http.put("http://localhost:8000/api/materials/:id/projects/:projectId", () => {
+        calls.push("attach");
+        return HttpResponse.json({ material_id: materialId, source_id: "source-1" });
+      }),
+      http.post("http://localhost:8000/api/projects/:id/generate", async ({ request }) => {
+        const body = await request.json() as { constraints?: Record<string, unknown> };
+        calls.push(`generate:${String(body.constraints?.knowledge_scope)}`);
+        expect(body.constraints?.material_ids).toEqual([]);
+        return HttpResponse.json({ stream_url: "/api/projects/new-proj-001/generate/stream" }, { status: 202 });
+      }),
+      http.get("*/api/projects/new-proj-001/generate/stream", () => new HttpResponse(
+        new ReadableStream({ start(controller) { controller.close(); } }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      )),
+    );
+    renderWorkspace("/app/project/_new");
+    await user.click(await screen.findByLabelText(/选入教师资料库检索/));
+    await user.click(screen.getByLabelText(/仅依据本项目选入的教师资料生成/));
+    await user.click(screen.getByLabelText(/允许将本项目选入的课件片段发送给模型/));
+    await user.type(screen.getByPlaceholderText("例如：Dijkstra 最短路径算法的工作原理和正确性证明"), "排序算法");
+    await user.click(screen.getByRole("button", { name: /开始生成/ }));
+    await waitFor(() => expect(calls).toEqual(["attach", "generate:selected_materials"]));
+  });
+
   it("renders results step for a completed project", async () => {
     renderWorkspace(`/app/project/${PROJECT_ID}`);
 

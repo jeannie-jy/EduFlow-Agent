@@ -93,6 +93,15 @@ async def _ensure_material_processing_consent(
     session: AsyncSession, current_user, constraints: dict | None
 ) -> None:
     """Require a current explicit consent before sending material to a model."""
+    if (
+        isinstance(constraints, dict)
+        and constraints.get("knowledge_scope") == "selected_materials"
+        and (current_user is None or not constraints.get("allow_material_model_processing", False))
+    ):
+        raise HTTPException(
+            status_code=428,
+            detail="Selected-material grounding requires explicit model-processing consent",
+        )
     if current_user is None or not isinstance(constraints, dict):
         return
     if not constraints.get("allow_material_model_processing", False):
@@ -668,7 +677,9 @@ async def start_generation(
         raise HTTPException(status_code=404, detail="Project not found")
 
     ensure_project_access(project, current_user)
-    await _ensure_material_processing_consent(session, current_user, body.constraints)
+    persisted_constraints = (project.dsl_snapshot or {}).get("constraints", {})
+    effective_constraints = body.constraints if body.constraints is not None else persisted_constraints
+    await _ensure_material_processing_consent(session, current_user, effective_constraints)
 
     resumable_stream_url = await _recover_or_resume_generation(
         session, current_user, project, project_id=project_id

@@ -50,6 +50,14 @@ import {
   parseMaterial,
   getBackgroundJob,
   deleteMaterial,
+  listTeacherLibrary,
+  enableTeacherLibrary,
+  queueMaterialIndex,
+  retryMaterialIndex,
+  getMaterialIndexStatus,
+  listProjectLibraryMaterials,
+  attachLibraryMaterial,
+  detachLibraryMaterial,
   type MaterialItem,
 } from "@/services";
 import { recordModelProcessingConsent } from "@/services/account";
@@ -250,6 +258,11 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const [allowMaterialModelProcessing, setAllowMaterialModelProcessing] = useState(false);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
+  const [linkedLibraryIds, setLinkedLibraryIds] = useState<string[]>([]);
+  const [libraryIndexStatus, setLibraryIndexStatus] = useState<Record<string, string>>({});
+  const [indexingMaterialId, setIndexingMaterialId] = useState<string | null>(null);
+  const [materialsOnly, setMaterialsOnly] = useState(false);
   const [materialError, setMaterialError] = useState<string | null>(null);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [removingMaterialId, setRemovingMaterialId] = useState<string | null>(null);
@@ -290,6 +303,36 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       });
   }, [projectId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    listTeacherLibrary().then((res) => {
+      if (cancelled) return;
+      const known = new Set(res.items.map((item) => item.id));
+      setMaterials((current) => current.map((item) => (
+        known.has(item.id) ? { ...item, is_library: true } : item
+      )));
+      setLibraryIndexStatus(Object.fromEntries(
+        res.items.map((item) => [
+          item.id,
+          item.index_status === "published" ? "published" : item.job_status || item.index_status,
+        ]),
+      ));
+    }).catch(() => { /* Anonymous and non-teacher users retain legacy upload flow. */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (isNew || !projectId) return;
+    let cancelled = false;
+    listProjectLibraryMaterials(projectId).then((res) => {
+      if (cancelled) return;
+      const ids = res.items.map((item) => item.material_id);
+      setSelectedLibraryIds(ids);
+      setLinkedLibraryIds(ids);
+    }).catch(() => { /* Project may be legacy or current actor may not be a teacher. */ });
+    return () => { cancelled = true; };
+  }, [isNew, projectId]);
+
   // 加载当前账户已有课件，上传入口和历史课件共用同一份列表。
   useEffect(() => {
     let cancelled = false;
@@ -312,7 +355,40 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     if (Array.isArray(ids)) {
       setSelectedMaterialIds(ids.filter((id): id is string => typeof id === "string"));
     }
+    setMaterialsOnly((constraints as { knowledge_scope?: unknown }).knowledge_scope === "selected_materials");
   }, [isNew, project?.dsl]);
+
+  const handleIndexLibraryMaterial = useCallback(async (id: string, retry = false) => {
+    setMaterialError(null);
+    setIndexingMaterialId(id);
+    try {
+      if (!retry) await enableTeacherLibrary(id);
+      setMaterials((current) => current.map((item) => (
+        item.id === id ? { ...item, is_library: true } : item
+      )));
+      const queued = retry ? await retryMaterialIndex(id) : await queueMaterialIndex(id);
+      setLibraryIndexStatus((current) => ({ ...current, [id]: queued.status }));
+      if (queued.status === "completed") {
+        setLibraryIndexStatus((current) => ({ ...current, [id]: "published" }));
+        return;
+      }
+      for (let attempt = 0; attempt < MATERIAL_PARSE_MAX_POLLS; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, MATERIAL_PARSE_POLL_INTERVAL_MS));
+        const status = await getMaterialIndexStatus(id);
+        setLibraryIndexStatus((current) => ({
+          ...current, [id]: status.status === "completed" ? "published" : status.status,
+        }));
+        if (status.status === "completed") return;
+        if (status.status === "failed") throw new Error(status.error_class || "资料索引失败");
+      }
+      setMaterialError("资料索引仍在后台运行，请稍后刷新查看状态");
+    } catch (err) {
+      setLibraryIndexStatus((current) => ({ ...current, [id]: "failed" }));
+      setMaterialError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "资料索引失败");
+    } finally {
+      setIndexingMaterialId(null);
+    }
+  }, []);
 
   const updateMaterialStatus = useCallback((id: string, status: MaterialItem["status"]) => {
     setMaterials((current) => current.map((material) => (
@@ -375,6 +451,13 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       await deleteMaterial(id);
       setMaterials((current) => current.filter((material) => material.id !== id));
       setSelectedMaterialIds((current) => current.filter((materialId) => materialId !== id));
+      setSelectedLibraryIds((current) => current.filter((materialId) => materialId !== id));
+      setLinkedLibraryIds((current) => current.filter((materialId) => materialId !== id));
+      setLibraryIndexStatus((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
     } catch (err) {
       setMaterialError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "课件删除失败");
     } finally {
@@ -518,7 +601,14 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
   const handleStart = useCallback(async (selected: string[]) => {
     if (startedRef.current) return;
     const attempt = ++generationAttemptRef.current;
-    if (allowMaterialModelProcessing) {
+    if (materialsOnly && (
+      !allowMaterialModelProcessing || selectedLibraryIds.length === 0
+      || selectedLibraryIds.some((id) => libraryIndexStatus[id] !== "published")
+    )) {
+      setErrorMsg("仅依据指定资料需要授权模型处理，并至少选入一份已索引的教师资料");
+      return;
+    }
+    if (allowMaterialModelProcessing && !materialsOnly) {
       const pendingMaterial = selectedMaterialIds.some((id) => (
         materials.find((material) => material.id === id)?.status !== "parsed"
       ));
@@ -534,6 +624,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
     resetTimeout();
 
     let effectiveProjectId = projectId;
+    const effectiveMaterialIds = materialsOnly ? [] : selectedMaterialIds;
 
     if (isNew) {
       try {
@@ -545,7 +636,8 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           difficulty: "intermediate",
           constraints: {
             allow_material_model_processing: allowMaterialModelProcessing,
-            material_ids: selectedMaterialIds,
+            material_ids: effectiveMaterialIds,
+            knowledge_scope: materialsOnly ? "selected_materials" : "open",
           },
         });
         effectiveProjectId = res.id;
@@ -581,13 +673,23 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
           if (!(err instanceof ApiError && err.status === 401)) throw err;
         }
       }
+      if (effectiveProjectId) {
+        for (const id of linkedLibraryIds.filter((item) => !selectedLibraryIds.includes(item))) {
+          await detachLibraryMaterial(id, effectiveProjectId);
+        }
+        for (const id of selectedLibraryIds.filter((item) => !linkedLibraryIds.includes(item))) {
+          await attachLibraryMaterial(id, effectiveProjectId);
+        }
+        setLinkedLibraryIds([...selectedLibraryIds]);
+      }
       const generation = await startGeneration(
         effectiveProjectId,
         "modules",
         selected,
         {
           allow_material_model_processing: allowMaterialModelProcessing,
-          material_ids: selectedMaterialIds,
+          material_ids: effectiveMaterialIds,
+          knowledge_scope: materialsOnly ? "selected_materials" : "open",
         },
       );
       if (attempt !== generationAttemptRef.current) {
@@ -647,7 +749,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
       if (err instanceof NetworkError) setErrorMsg("无法连接到服务器");
       else setErrorMsg(err instanceof Error ? err.message : "生成启动失败");
     }
-  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing, selectedMaterialIds, materials, discardCreatedProject]);
+  }, [projectId, onDone, isNew, title, topic, onStepChange, onCreated, refreshProject, resetTimeout, allowMaterialModelProcessing, selectedMaterialIds, selectedLibraryIds, linkedLibraryIds, libraryIndexStatus, materialsOnly, materials, discardCreatedProject]);
 
   const handleCancelGeneration = useCallback(async () => {
     generationAttemptRef.current += 1;
@@ -838,7 +940,7 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
               ref={materialInputRef}
               type="file"
               className="hidden"
-              accept=".pdf,.pptx,.txt,.md,.py,.c,.java,.cpp"
+              accept=".pdf,.pptx,.docx,.txt,.md,.py,.c,.java,.cpp"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
@@ -858,7 +960,8 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
                   const selected = selectedMaterialIds.includes(material.id);
                   const canSelect = material.status === "parsed";
                   return (
-                    <div key={material.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                    <div key={material.id} className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
                       <label className="flex min-w-0 items-center gap-3">
                         <input
                           type="checkbox"
@@ -902,6 +1005,36 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
                         </Button>
                       </div>
                     </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-2 text-xs">
+                      {libraryIndexStatus[material.id] === "published" ? (
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedLibraryIds.includes(material.id)}
+                            onChange={() => setSelectedLibraryIds((current) => (
+                              current.includes(material.id)
+                                ? current.filter((id) => id !== material.id)
+                                : [...current, material.id]
+                            ))}
+                          />
+                          选入教师资料库检索（可跨项目复用）
+                        </label>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={indexingMaterialId !== null || !["pdf", "pptx", "docx", "md", "txt"].includes(material.type)}
+                          onClick={() => void handleIndexLibraryMaterial(material.id, libraryIndexStatus[material.id] === "failed")}
+                        >
+                          {indexingMaterialId === material.id ? "索引中…" : libraryIndexStatus[material.id] === "failed" ? "重试索引" : material.is_library ? "开始索引" : "加入资料库并索引"}
+                        </Button>
+                      )}
+                      {libraryIndexStatus[material.id] && libraryIndexStatus[material.id] !== "published" && (
+                        <span className="text-muted-foreground">索引状态：{libraryIndexStatus[material.id]}</span>
+                      )}
+                    </div>
+                    </div>
                   );
                 })}
               </div>
@@ -913,6 +1046,14 @@ function PlanTabContent({ projectId, project, currentStep, onStepChange, onDone,
             <p className="mt-3 text-xs text-muted-foreground">
               只有勾选下方授权后，选中的课件片段才会发送给模型；未选中的课件不会参与本次生成。
             </p>
+            <label className="mt-3 flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={materialsOnly}
+                onChange={(event) => setMaterialsOnly(event.target.checked)}
+              />
+              <span>仅依据本项目选入的教师资料生成；资料证据不足时提示补充，不编造确定性内容。</span>
+            </label>
           </div>
           <div className="rounded-xl border border-[var(--border)] p-4">
             <p className="text-sm font-medium text-[var(--foreground)] mb-3">选择产出形式</p>

@@ -14,7 +14,7 @@ export function PrivacyPage() {
     <section><h2 className="text-lg font-medium">我们处理什么</h2><p>服务会处理账户资料、教学主题、项目内容、用户主动上传的材料、生成产物、模型调用用量、安全日志和审计记录。用户的供应商 API Key 以加密形式保存，接口不会返回明文。</p></section>
     <section><h2 className="text-lg font-medium">第三方模型处理</h2><p>执行生成时，教学主题、提示内容以及用户明确选入上下文的材料片段会发送至用户选择的 DeepSeek 或阿里百炼账户。供应商对这些数据的处理同时受用户与该供应商之间的条款约束。</p></section>
     <section><h2 className="text-lg font-medium">密钥边界</h2><p>密钥通过 HTTPS 提交并在服务端进行信封加密。为代表用户调用模型，受授权的 API 或 Worker 可在内存中短暂解密，因此该设计不是端到端加密。解析和视频执行沙箱不持有密钥解密权限。</p></section>
-    <section><h2 className="text-lg font-medium">保留与权利</h2><p>上传材料默认保留 30 天，安全审计默认保留 90 天。项目和产物在账户有效期间保存，用户可在账户设置导出数据或申请注销；注销有 7 天冷静期，随后会删除数据库记录、对象存储产物、缓存和待执行任务（受法律要求保留的不可变审计归档除外）。</p></section>
+    <section><h2 className="text-lg font-medium">保留与权利</h2><p>普通上传材料默认保留 30 天；教师主动加入资料库的材料会保留至主动删除或账户注销。安全审计默认保留 90 天。项目和产物在账户有效期间保存，用户可在账户设置导出数据或申请注销；注销有 7 天冷静期，随后会删除数据库记录、对象存储产物、缓存和待执行任务（受法律要求保留的不可变审计归档除外）。</p></section>
   </LegalLayout>;
 }
 

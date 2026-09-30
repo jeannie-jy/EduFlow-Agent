@@ -76,10 +76,17 @@ async def list_teacher_library(
     owner_id = _require_library_owner(current_user)
     rows = (await session.execute(text("""
         SELECT m.id, m.original_filename, m.status AS parse_status,
-               m.size_bytes, s.status AS source_status
+               m.size_bytes, s.status AS source_status, j.status AS job_status,
+               j.error_class AS index_error
         FROM materials m
         JOIN knowledge_sources s ON s.material_id = m.id
             AND s.owner_id = :owner_id AND s.scope = 'teacher'
+        LEFT JOIN LATERAL (
+            SELECT status, error_class FROM background_jobs
+            WHERE kind = 'material_index' AND owner_id = :owner_id
+              AND payload ->> 'material_id' = m.id::text
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        ) j ON true
         WHERE m.owner_id = :owner_id AND m.is_library
         ORDER BY m.created_at DESC
     """), {"owner_id": owner_id})).mappings().all()
@@ -88,6 +95,7 @@ async def list_teacher_library(
             "id": str(row["id"]), "filename": row["original_filename"],
             "parse_status": row["parse_status"],
             "index_status": row["source_status"], "size_bytes": row["size_bytes"],
+            "job_status": row["job_status"], "index_error": row["index_error"],
         }
         for row in rows
     ]}
@@ -210,6 +218,7 @@ async def list_materials(
                 "type": Path(row.stored_filename).suffix.lower().lstrip("."),
                 "size_bytes": row.size_bytes,
                 "status": row.status,
+                "is_library": row.is_library,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
             }
             for row in rows

@@ -104,3 +104,28 @@ async def test_worker_rejects_paid_or_changed_owner_before_copy():
         with pytest.raises(PermanentTaskError, match="Paid embedding"):
             await _execute_material_index(job)
         copier.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_selected_material_generation_requires_explicit_model_processing_consent():
+    from api.generate import _ensure_material_processing_consent
+
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=None)
+    owner = SimpleNamespace(id=uuid.uuid4())
+    with pytest.raises(HTTPException) as missing_toggle:
+        await _ensure_material_processing_consent(
+            session, owner, {"knowledge_scope": "selected_materials"},
+        )
+    assert missing_toggle.value.status_code == 428
+    with pytest.raises(HTTPException) as missing_record:
+        await _ensure_material_processing_consent(
+            session, owner,
+            {"knowledge_scope": "selected_materials", "allow_material_model_processing": True},
+        )
+    assert missing_record.value.status_code == 428
+    session.scalar = AsyncMock(return_value=object())
+    await _ensure_material_processing_consent(
+        session, owner,
+        {"knowledge_scope": "selected_materials", "allow_material_model_processing": True},
+    )
